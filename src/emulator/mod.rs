@@ -1,0 +1,113 @@
+pub mod cpu;
+pub mod loader;
+pub mod mmu;
+pub mod peripherals;
+
+pub use cpu::{Cpu, DisassembledInst, Disassembler, Mode, Registers, StepResult};
+pub use loader::FirmwareLoader;
+pub use mmu::{BootRom, InternalSram, MemoryBus, SpiFlash};
+pub use peripherals::{DisplayController, GpioController, Peripherals, SysRegisters, Timers, UartController};
+
+use std::collections::HashSet;
+use std::path::Path;
+
+pub struct Machine {
+    pub cpu: Cpu,
+    pub bus: MemoryBus,
+    pub periph: Peripherals,
+    pub breakpoints: HashSet<u32>,
+    pub is_running: bool,
+    pub instructions_per_frame: u32,
+    pub firmware_path: Option<String>,
+}
+
+impl Default for Machine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Machine {
+    pub fn new() -> Self {
+        let mut bus = MemoryBus::default();
+        let mut periph = Peripherals::default();
+        FirmwareLoader::install_default_firmware(&mut bus);
+
+        let mut cpu = Cpu::default();
+        cpu.reset(&mut bus, &mut periph);
+
+        Self {
+            cpu,
+            bus,
+            periph,
+            breakpoints: HashSet::new(),
+            is_running: true,
+            instructions_per_frame: 20_000,
+            firmware_path: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.cpu.reset(&mut self.bus, &mut self.periph);
+    }
+
+    pub fn step(&mut self) -> StepResult {
+        self.cpu.step(&mut self.bus, &mut self.periph)
+    }
+
+    pub fn run_frame(&mut self) -> StepResult {
+        if !self.is_running {
+            return StepResult::Halt;
+        }
+
+        let mut executed = 0;
+        while executed < self.instructions_per_frame {
+            let pc = self.cpu.regs.pc;
+            if self.breakpoints.contains(&pc) {
+                self.is_running = false;
+                return StepResult::Breakpoint;
+            }
+
+            match self.cpu.step(&mut self.bus, &mut self.periph) {
+                StepResult::Ok(_) => executed += 1,
+                StepResult::Breakpoint => {
+                    self.is_running = false;
+                    return StepResult::Breakpoint;
+                }
+                StepResult::Halt => {
+                    self.is_running = false;
+                    return StepResult::Halt;
+                }
+                StepResult::Undefined(_) => {
+                    executed += 1;
+                }
+            }
+        }
+
+        StepResult::Ok(executed)
+    }
+
+    pub fn load_firmware_file<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, String> {
+        let p = path.as_ref();
+        let len = FirmwareLoader::load_flash_dump(&mut self.bus, p)?;
+        self.firmware_path = Some(p.to_string_lossy().to_string());
+        self.reset();
+        Ok(len)
+    }
+
+    pub fn get_disassembly_window(&mut self, count: usize) -> Vec<DisassembledInst> {
+        let mut list = Vec::new();
+        let mut cur_pc = self.cpu.regs.pc;
+
+        for _ in 0..count {
+            let w1 = self.bus.read_u16(cur_pc, &mut self.periph, &self.cpu.nvic);
+            let w2 = self.bus.read_u16(cur_pc + 2, &mut self.periph, &self.cpu.nvic);
+            let inst = Disassembler::disassemble(cur_pc, &[w1, w2]);
+            let advance = if inst.is_32bit { 4 } else { 2 };
+            list.push(inst);
+            cur_pc += advance;
+        }
+
+        list
+    }
+}

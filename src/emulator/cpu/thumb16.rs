@@ -1,0 +1,517 @@
+use super::registers::Registers;
+use crate::emulator::cpu::nvic::Nvic;
+use crate::emulator::mmu::MemoryBus;
+use crate::emulator::peripherals::Peripherals;
+
+pub enum StepResult {
+    Ok(u32), // Cycles consumed
+    Breakpoint,
+    Halt,
+    Undefined(u16),
+}
+
+pub struct Thumb16;
+
+impl Thumb16 {
+    pub fn execute(
+        w: u16,
+        regs: &mut Registers,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+        nvic: &mut Nvic,
+    ) -> StepResult {
+        // NOP
+        if w == 0xBF00 {
+            return StepResult::Ok(1);
+        }
+        // WFI / WFE
+        if w == 0xBF30 || w == 0xBF20 {
+            return StepResult::Ok(1);
+        }
+        // BKPT
+        if (w & 0xFF00) == 0xBE00 {
+            return StepResult::Breakpoint;
+        }
+
+        // Shift by immediate: 000 op imm5 rm rd
+        if (w & 0xE000) == 0x0000 {
+            let op = (w >> 11) & 0x3;
+            let imm5 = ((w >> 6) & 0x1F) as u32;
+            let rm = (w >> 3) & 0x7;
+            let rd = w & 0x7;
+            let rm_val = regs.get_reg(rm as u8);
+
+            let res = match op {
+                0 => {
+                    // LSL
+                    if imm5 == 0 {
+                        rm_val
+                    } else {
+                        regs.set_flag_c((rm_val & (1 << (32 - imm5))) != 0);
+                        rm_val << imm5
+                    }
+                }
+                1 => {
+                    // LSR
+                    let shift = if imm5 == 0 { 32 } else { imm5 };
+                    regs.set_flag_c((rm_val & (1 << (shift - 1))) != 0);
+                    if shift >= 32 { 0 } else { rm_val >> shift }
+                }
+                2 => {
+                    // ASR
+                    let shift = if imm5 == 0 { 32 } else { imm5 };
+                    regs.set_flag_c((rm_val & (1 << (shift - 1))) != 0);
+                    let s = rm_val as i32;
+                    if shift >= 32 {
+                        if s < 0 { 0xFFFF_FFFF } else { 0 }
+                    } else {
+                        (s >> shift) as u32
+                    }
+                }
+                _ => {
+                    // Add/Sub 3-register: 0001 10 op rn rd / rm rn rd
+                    return Self::exec_add_sub(w, regs);
+                }
+            };
+
+            regs.set_reg(rd as u8, res);
+            regs.set_nz(res);
+            return StepResult::Ok(1);
+        }
+
+        // Move/Compare/Add/Sub immediate: 001 op rd/rn imm8
+        if (w & 0xE000) == 0x2000 {
+            let op = (w >> 11) & 0x3;
+            let rd = ((w >> 8) & 0x7) as u8;
+            let imm8 = (w & 0xFF) as u32;
+
+            match op {
+                0 => {
+                    // MOVS rd, #imm8
+                    regs.set_reg(rd, imm8);
+                    regs.set_nz(imm8);
+                }
+                1 => {
+                    // CMP rn, #imm8
+                    let rn_val = regs.get_reg(rd);
+                    let (res, borrow) = rn_val.overflowing_sub(imm8);
+                    regs.set_nz(res);
+                    regs.set_flag_c(!borrow);
+                    regs.set_flag_v(((rn_val ^ imm8) & (rn_val ^ res) & 0x8000_0000) != 0);
+                }
+                2 => {
+                    // ADDS rd, #imm8
+                    let rd_val = regs.get_reg(rd);
+                    let (res, carry) = rd_val.overflowing_add(imm8);
+                    regs.set_reg(rd, res);
+                    regs.set_nz(res);
+                    regs.set_flag_c(carry);
+                    regs.set_flag_v((!(rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
+                }
+                3 => {
+                    // SUBS rd, #imm8
+                    let rd_val = regs.get_reg(rd);
+                    let (res, borrow) = rd_val.overflowing_sub(imm8);
+                    regs.set_reg(rd, res);
+                    regs.set_nz(res);
+                    regs.set_flag_c(!borrow);
+                    regs.set_flag_v(((rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
+                }
+                _ => {}
+            }
+            return StepResult::Ok(1);
+        }
+
+        // ALU operations: 0100 00 op rm rdn
+        if (w & 0xFC00) == 0x4000 {
+            return Self::exec_alu(w, regs);
+        }
+
+        // High register operations / BX / BLX: 0100 01 op h1 h2 rm rdn
+        if (w & 0xFC00) == 0x4400 {
+            return Self::exec_high_reg(w, regs);
+        }
+
+        // LDR PC-relative: 0100 1 rd imm8
+        if (w & 0xF800) == 0x4800 {
+            let rd = ((w >> 8) & 0x7) as u8;
+            let imm = ((w & 0xFF) as u32) * 4;
+            let addr = (regs.pc & !3) + imm;
+            let val = bus.read_u32(addr, periph, nvic);
+            regs.set_reg(rd, val);
+            return StepResult::Ok(2);
+        }
+
+        // Load/Store register offset: 0101 op rm rn rd
+        if (w & 0xF000) == 0x5000 {
+            return Self::exec_ldr_str_reg(w, regs, bus, periph, nvic);
+        }
+
+        // Load/Store word/byte immediate: 011 op imm5 rn rd
+        if (w & 0xE000) == 0x6000 || (w & 0xE000) == 0x7000 {
+            return Self::exec_ldr_str_imm(w, regs, bus, periph, nvic);
+        }
+
+        // Load/Store halfword immediate: 1000 op imm5 rn rd
+        if (w & 0xF000) == 0x8000 {
+            return Self::exec_ldr_str_half(w, regs, bus, periph, nvic);
+        }
+
+        // Load/Store SP-relative: 1001 op rd imm8
+        if (w & 0xF000) == 0x9000 {
+            let is_ldr = (w & 0x0800) != 0;
+            let rd = ((w >> 8) & 0x7) as u8;
+            let imm = ((w & 0xFF) as u32) * 4;
+            let addr = regs.get_sp() + imm;
+            if is_ldr {
+                let val = bus.read_u32(addr, periph, nvic);
+                regs.set_reg(rd, val);
+            } else {
+                let val = regs.get_reg(rd);
+                bus.write_u32(addr, val, periph, nvic);
+            }
+            return StepResult::Ok(2);
+        }
+
+        // Add to SP / PC: 1010 op rd imm8
+        if (w & 0xF000) == 0xA000 {
+            let is_sp = (w & 0x0800) != 0;
+            let rd = ((w >> 8) & 0x7) as u8;
+            let imm = ((w & 0xFF) as u32) * 4;
+            let base = if is_sp { regs.get_sp() } else { regs.pc & !3 };
+            regs.set_reg(rd, base + imm);
+            return StepResult::Ok(1);
+        }
+
+        // Miscellaneous: 1011 op
+        if (w & 0xF000) == 0xB000 {
+            return Self::exec_misc(w, regs, bus, periph, nvic);
+        }
+
+        // Multiple Load/Store: 1100 op rn reg_list
+        if (w & 0xF000) == 0xC000 {
+            return Self::exec_ldm_stm(w, regs, bus, periph, nvic);
+        }
+
+        // Conditional branch: 1101 cond imm8
+        if (w & 0xF000) == 0xD000 && (w & 0x0F00) != 0x0E00 && (w & 0x0F00) != 0x0F00 {
+            let cond = (w >> 8) & 0xF;
+            let imm8 = (w & 0xFF) as i8 as i32;
+            if Self::eval_condition(cond, regs) {
+                regs.pc = (regs.pc as i32 + (imm8 * 2)) as u32;
+                return StepResult::Ok(2);
+            }
+            return StepResult::Ok(1);
+        }
+
+        // Unconditional branch: 1110 0 imm11
+        if (w & 0xF800) == 0xE000 {
+            let mut imm11 = (w & 0x07FF) as i32;
+            if (imm11 & 0x0400) != 0 {
+                imm11 |= !0x07FF;
+            }
+            regs.pc = (regs.pc as i32 + (imm11 * 2)) as u32;
+            return StepResult::Ok(2);
+        }
+
+        StepResult::Undefined(w)
+    }
+
+    fn exec_add_sub(w: u16, regs: &mut Registers) -> StepResult {
+        let is_sub = (w & 0x0200) != 0;
+        let is_imm = (w & 0x0400) != 0;
+        let rn = ((w >> 3) & 0x7) as u8;
+        let rd = (w & 0x7) as u8;
+        let val1 = regs.get_reg(rn);
+        let val2 = if is_imm {
+            ((w >> 6) & 0x7) as u32
+        } else {
+            let rm = ((w >> 6) & 0x7) as u8;
+            regs.get_reg(rm)
+        };
+
+        if is_sub {
+            let (res, borrow) = val1.overflowing_sub(val2);
+            regs.set_reg(rd, res);
+            regs.set_nz(res);
+            regs.set_flag_c(!borrow);
+            regs.set_flag_v(((val1 ^ val2) & (val1 ^ res) & 0x8000_0000) != 0);
+        } else {
+            let (res, carry) = val1.overflowing_add(val2);
+            regs.set_reg(rd, res);
+            regs.set_nz(res);
+            regs.set_flag_c(carry);
+            regs.set_flag_v((!(val1 ^ val2) & (val1 ^ res) & 0x8000_0000) != 0);
+        }
+
+        StepResult::Ok(1)
+    }
+
+    fn exec_alu(w: u16, regs: &mut Registers) -> StepResult {
+        let op = (w >> 6) & 0xF;
+        let rm = ((w >> 3) & 0x7) as u8;
+        let rdn = (w & 0x7) as u8;
+        let val_m = regs.get_reg(rm);
+        let val_dn = regs.get_reg(rdn);
+
+        let res = match op {
+            0 => val_dn & val_m,  // AND
+            1 => val_dn ^ val_m,  // EOR
+            2 => {                // LSL
+                let shift = val_m & 0xFF;
+                if shift == 0 { val_dn } else if shift < 32 {
+                    regs.set_flag_c((val_dn & (1 << (32 - shift))) != 0);
+                    val_dn << shift
+                } else { 0 }
+            }
+            8 => val_dn & val_m,  // TST
+            12 => val_dn | val_m, // ORR
+            13 => val_dn * val_m, // MUL
+            14 => val_dn & !val_m,// BIC
+            15 => !val_m,         // MVN
+            _ => val_dn,
+        };
+
+        if op != 8 {
+            regs.set_reg(rdn, res);
+        }
+        regs.set_nz(res);
+        StepResult::Ok(1)
+    }
+
+    fn exec_high_reg(w: u16, regs: &mut Registers) -> StepResult {
+        let op = (w >> 8) & 0x3;
+        let h1 = (w >> 7) & 1;
+        let h2 = (w >> 6) & 1;
+        let rm = (((w >> 3) & 0x7) | (h2 << 3)) as u8;
+        let rdn = ((w & 0x7) | (h1 << 3)) as u8;
+        let val_m = regs.get_reg(rm);
+
+        match op {
+            0 => {
+                // ADD
+                let val_dn = regs.get_reg(rdn);
+                regs.set_reg(rdn, val_dn.wrapping_add(val_m));
+            }
+            1 => {
+                // CMP
+                let val_dn = regs.get_reg(rdn);
+                let (res, borrow) = val_dn.overflowing_sub(val_m);
+                regs.set_nz(res);
+                regs.set_flag_c(!borrow);
+                regs.set_flag_v(((val_dn ^ val_m) & (val_dn ^ res) & 0x8000_0000) != 0);
+            }
+            2 => {
+                // MOV
+                regs.set_reg(rdn, val_m);
+            }
+            3 => {
+                // BX / BLX
+                let is_blx = (w & 0x0080) != 0;
+                if is_blx {
+                    regs.lr = (regs.pc | 1) + 2;
+                }
+                regs.pc = val_m & !1;
+                return StepResult::Ok(2);
+            }
+            _ => {}
+        }
+        StepResult::Ok(1)
+    }
+
+    fn exec_ldr_str_reg(
+        w: u16,
+        regs: &mut Registers,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+        nvic: &mut Nvic,
+    ) -> StepResult {
+        let op = (w >> 9) & 0x7;
+        let rm = ((w >> 6) & 0x7) as u8;
+        let rn = ((w >> 3) & 0x7) as u8;
+        let rd = (w & 0x7) as u8;
+        let addr = regs.get_reg(rn).wrapping_add(regs.get_reg(rm));
+
+        match op {
+            0 => bus.write_u32(addr, regs.get_reg(rd), periph, nvic), // STR
+            1 => bus.write_u16(addr, regs.get_reg(rd) as u16, periph, nvic), // STRH
+            2 => bus.write_u8(addr, regs.get_reg(rd) as u8, periph, nvic), // STRB
+            4 => {
+                let v = bus.read_u32(addr, periph, nvic);
+                regs.set_reg(rd, v);
+            } // LDR
+            5 => {
+                let v = bus.read_u16(addr, periph, nvic) as u32;
+                regs.set_reg(rd, v);
+            } // LDRH
+            6 => {
+                let v = bus.read_u8(addr, periph, nvic) as u32;
+                regs.set_reg(rd, v);
+            } // LDRB
+            _ => {}
+        }
+        StepResult::Ok(2)
+    }
+
+    fn exec_ldr_str_imm(
+        w: u16,
+        regs: &mut Registers,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+        nvic: &mut Nvic,
+    ) -> StepResult {
+        let is_byte = (w & 0x2000) != 0;
+        let is_ldr = (w & 0x0800) != 0;
+        let imm5 = ((w >> 6) & 0x1F) as u32;
+        let rn = ((w >> 3) & 0x7) as u8;
+        let rd = (w & 0x7) as u8;
+        let imm = if is_byte { imm5 } else { imm5 * 4 };
+        let addr = regs.get_reg(rn) + imm;
+
+        if is_byte {
+            if is_ldr {
+                let v = bus.read_u8(addr, periph, nvic) as u32;
+                regs.set_reg(rd, v);
+            } else {
+                bus.write_u8(addr, regs.get_reg(rd) as u8, periph, nvic);
+            }
+        } else if is_ldr {
+            let v = bus.read_u32(addr, periph, nvic);
+            regs.set_reg(rd, v);
+        } else {
+            bus.write_u32(addr, regs.get_reg(rd), periph, nvic);
+        }
+
+        StepResult::Ok(2)
+    }
+
+    fn exec_ldr_str_half(
+        w: u16,
+        regs: &mut Registers,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+        nvic: &mut Nvic,
+    ) -> StepResult {
+        let is_ldr = (w & 0x0800) != 0;
+        let imm5 = (((w >> 6) & 0x1F) as u32) * 2;
+        let rn = ((w >> 3) & 0x7) as u8;
+        let rd = (w & 0x7) as u8;
+        let addr = regs.get_reg(rn) + imm5;
+
+        if is_ldr {
+            let v = bus.read_u16(addr, periph, nvic) as u32;
+            regs.set_reg(rd, v);
+        } else {
+            bus.write_u16(addr, regs.get_reg(rd) as u16, periph, nvic);
+        }
+        StepResult::Ok(2)
+    }
+
+    fn exec_misc(
+        w: u16,
+        regs: &mut Registers,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+        nvic: &mut Nvic,
+    ) -> StepResult {
+        // Adjust SP: 1011 0000 s imm7
+        if (w & 0xFF00) == 0xB000 {
+            let is_sub = (w & 0x0080) != 0;
+            let imm = ((w & 0x007F) as u32) * 4;
+            let sp = regs.get_sp();
+            regs.set_sp(if is_sub { sp - imm } else { sp + imm });
+            return StepResult::Ok(1);
+        }
+
+        // PUSH: 1011 010 m reg_list
+        if (w & 0xFE00) == 0xB400 {
+            let has_lr = (w & 0x0100) != 0;
+            let list = w & 0xFF;
+            let mut sp = regs.get_sp();
+
+            if has_lr {
+                sp -= 4;
+                bus.write_u32(sp, regs.lr, periph, nvic);
+            }
+            for i in (0..8).rev() {
+                if (list & (1 << i)) != 0 {
+                    sp -= 4;
+                    bus.write_u32(sp, regs.get_reg(i), periph, nvic);
+                }
+            }
+            regs.set_sp(sp);
+            return StepResult::Ok(2);
+        }
+
+        // POP: 1011 110 p reg_list
+        if (w & 0xFE00) == 0xBC00 {
+            let has_pc = (w & 0x0100) != 0;
+            let list = w & 0xFF;
+            let mut sp = regs.get_sp();
+
+            for i in 0..8 {
+                if (list & (1 << i)) != 0 {
+                    let v = bus.read_u32(sp, periph, nvic);
+                    regs.set_reg(i, v);
+                    sp += 4;
+                }
+            }
+            if has_pc {
+                let pc_val = bus.read_u32(sp, periph, nvic);
+                regs.pc = pc_val & !1;
+                sp += 4;
+            }
+            regs.set_sp(sp);
+            return StepResult::Ok(2);
+        }
+
+        StepResult::Ok(1)
+    }
+
+    fn exec_ldm_stm(
+        w: u16,
+        regs: &mut Registers,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+        nvic: &mut Nvic,
+    ) -> StepResult {
+        let is_ldm = (w & 0x0800) != 0;
+        let rn = ((w >> 8) & 0x7) as u8;
+        let list = w & 0xFF;
+        let mut addr = regs.get_reg(rn);
+
+        for i in 0..8 {
+            if (list & (1 << i)) != 0 {
+                if is_ldm {
+                    let v = bus.read_u32(addr, periph, nvic);
+                    regs.set_reg(i, v);
+                } else {
+                    bus.write_u32(addr, regs.get_reg(i), periph, nvic);
+                }
+                addr += 4;
+            }
+        }
+        regs.set_reg(rn, addr);
+        StepResult::Ok(2)
+    }
+
+    fn eval_condition(cond: u16, regs: &Registers) -> bool {
+        match cond {
+            0 => regs.flag_z(),                 // EQ
+            1 => !regs.flag_z(),                // NE
+            2 => regs.flag_c(),                 // CS / HS
+            3 => !regs.flag_c(),                // CC / LO
+            4 => regs.flag_n(),                 // MI
+            5 => !regs.flag_n(),                // PL
+            6 => regs.flag_v(),                 // VS
+            7 => !regs.flag_v(),                // VC
+            8 => regs.flag_c() && !regs.flag_z(), // HI
+            9 => !regs.flag_c() || regs.flag_z(), // LS
+            10 => regs.flag_n() == regs.flag_v(), // GE
+            11 => regs.flag_n() != regs.flag_v(), // LT
+            12 => !regs.flag_z() && (regs.flag_n() == regs.flag_v()), // GT
+            13 => regs.flag_z() || (regs.flag_n() != regs.flag_v()),  // LE
+            _ => true,
+        }
+    }
+}

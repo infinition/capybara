@@ -1,58 +1,56 @@
-# Tamagotchi Paradise Desktop (Rust)
+# Tamagotchi Paradise Hardware Emulator & Virtual Pet (Rust)
 
-Desktop virtual pet simulator and firmware inspector for Tamagotchi Paradise, built in Rust for Windows with eframe and egui.
+A high-performance ARM Cortex-M3 (Sonix SNC73410) hardware emulator and virtual pet simulator for Tamagotchi Paradise on Windows, built with Rust, eframe, and egui.
 
 ## Features
 
-- **Full Life Cycle Simulation**: Egg, Baby, Child, Teen, Adult, and Senior evolution stages with care mistake tracking, discipline training, hunger, happiness, energy, and hygiene vitals.
-- **Paradise Rotary Dial & 3-Level Zoom**:
-  - **Micro Level**: Cell health inspection, microscopic parasite cleansing.
-  - **Normal Level**: Pet habitat, feeding, pet interaction, poop cleaning, sleeping.
-  - **Paradise Island Level**: Island biomes (Lush Garden, Turquoise Ocean, Starry Sky), fruit tree watering and harvesting.
-- **Interactive Controls**:
-  - Physical shell buttons A, B, C (Mouse click and keyboard shortcuts: A / Left Arrow, B / Space / Enter, C / Escape / Right Arrow).
-  - Side rotary wheel with real rotation simulation (Drag or mouse wheel scroll).
-- **Mini-Games**:
-  - Berry Catcher: Fast-paced falling fruit catching game.
-  - Paradise Wheel of Fortune: Precision timing stop game for Gotchi-Coins.
-- **Chiptune Audio Synthesizer**: Procedural square/sine wave sound effects for button clicks, eating, dial ticks, alerts, cures, and victory jingles.
-- **Persistent State**: Automatic real-time save system in user AppData.
-- **Firmware & Hardware Inspector**:
-  - Sonix SNC73410 flash layout parser for SPI NOR Macronix KH25L12833F (128 Mbit).
-  - Virtual UART / P-COM protocol simulation.
-- **Internationalization (i18n)**: English and French language support switchable dynamically.
-- **Customizable Shell Themes**: Ocean Blue, Jungle Green, Sunset Pink, Cyber Grey.
+### 1. Low-Level Hardware Emulation (Sonix SNC73410)
+- **ARM Cortex-M3 (ARMv7-M) Core**:
+  - Full support for Thumb-16 and Thumb-2 (32-bit) instruction sets.
+  - Hardware registers (R0-R12, MSP, PSP, LR, PC, xPSR, PRIMASK).
+  - Exception handler and NVIC interrupt controller with SysTick timer.
+- **Memory Bus Architecture**:
+  - 16 MB Macronix KH25L12833F SPI NOR Flash (XIP mapped).
+  - 128 KB internal SRAM / PRAM + 16 KB Mailbox RAM.
+  - 64 KB Boot ROM with `OSC_CTRL` protection bit logic.
+- **Peripherals**:
+  - Sonix SYS0 system control registers.
+  - Hardware LCD controller with 128x128 RGB565 VRAM framebuffer.
+  - GPIO controller for physical Buttons A, B, C and rotary dial encoder.
+  - UART serial port with bidirectional FIFO and real-time console logging.
+  - Timers and Watchdog Timer (WDT).
+- **Firmware Loading**: Load any raw `flash.bin`, `bootrom.bin`, or custom firmware dumps.
 
-## Building and Running
+### 2. Interactive GUI & Live Debugger
+- **Emulated LCD Display**: Real-time pixel output drawn directly from emulated hardware VRAM inside a virtual Tamagotchi shell.
+- **Live Disassembler**: Real-time instruction stream around PC, Step Into (F10), Step Over, Run, Pause, and Reset.
+- **CPU Register Inspector**: Live view of all 16 registers and APSR condition flags (N, Z, C, V).
+- **Hex Memory Viewer**: Real-time hex inspection across Flash, SRAM, BootROM, and MMIO address ranges.
+- **UART Serial Terminal**: Live text output emitted by the running firmware.
 
-### Prerequisites
+### 3. Simulation & Companion Tools
+- Includes full Paradise virtual pet simulation engine, mini-games, secret code validation, and sound synthesis.
 
-- Rust 1.80+ (MSVC toolchain on Windows)
-- Cargo
+## Quick Start
 
-### Compilation
-
-```bash
-cargo build --release
-```
-
-### Running
+### Build & Run
 
 ```bash
 cargo run --release
 ```
 
-## Running Tests
+### Run Tests
 
 ```bash
 cargo test
 ```
 
-## Keyboard Shortcuts
+### Keyboard Shortcuts
 
 | Key | Action |
 | --- | --- |
-| `A` / `Left Arrow` | Button A (Move Left / Select / Water / Cuddle) |
-| `B` / `Space` / `Enter` | Button B (Confirm / Action / Stop Wheel / Sleep / Biome) |
-| `C` / `Escape` / `Right Arrow` | Button C (Cancel / Move Right / Clean Room) |
-| `Mouse Wheel` / `Drag on Dial` | Turn Paradise Zoom Dial |
+| `A` / `Left Arrow` | Button A (Select / Action) |
+| `B` / `Space` / `Enter` | Button B (Confirm / Action) |
+| `C` / `Escape` / `Right Arrow` | Button C (Cancel / Back) |
+| `Mouse Wheel` | Turn Side Rotary Dial |
+| `F10` | Single Step Instruction (Debugger) |

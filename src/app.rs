@@ -1,406 +1,240 @@
 use eframe::egui;
-use egui::{CentralPanel, Context, Key, TopBottomPanel};
+use egui::{CentralPanel, Context, Key, SidePanel, TopBottomPanel};
 
 use crate::audio::{AudioEngine, SoundEffect};
-use crate::core::minigames::{BerryCatchState, ParadiseWheelState};
-use crate::core::pet::PetActionFeedback;
-use crate::core::{BiomeType, ParadiseIsland, Pet, SaveManager, SaveState};
-use crate::gui::widgets::ActionButtonAction;
-use crate::gui::{
-    ActiveModal, GuiWidgets, ShellColor, VirtualScreen, VirtualShell, ZoomLevel,
-};
-use crate::hw_bridge::FlashInspector;
-use crate::i18n::I18n;
+use crate::emulator::Machine;
+use crate::gui::ShellColor;
+use crate::i18n::{I18n, Language};
+use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
 pub struct TamagotchiApp {
-    pub pet: Pet,
-    pub island: ParadiseIsland,
-    pub screen: VirtualScreen,
-    pub shell: VirtualShell,
+    pub machine: Machine,
     pub audio: AudioEngine,
     pub i18n: I18n,
-    pub flash_inspector: FlashInspector,
-    pub active_modal: ActiveModal,
-    pub berry_game: Option<BerryCatchState>,
-    pub wheel_game: Option<ParadiseWheelState>,
-    pub code_input: String,
-    pub status_feedback: Option<String>,
-    pub save_timer: f32,
+    pub shell_color: ShellColor,
+    pub show_debugger: bool,
+    pub hex_base_addr: u32,
     pub last_frame_time: std::time::Instant,
-    pub shell_color_index: usize,
-    pub always_on_top: bool,
-    pub zoom_accumulator: f32,
+    pub load_path_input: String,
+    pub status_msg: Option<String>,
 }
 
 impl TamagotchiApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let loaded = SaveManager::load();
-        let mut audio = AudioEngine::new();
-        audio.volume = loaded.sound_volume;
-
-        let shell_color = match loaded.shell_color_index {
-            1 => ShellColor::JungleGreen,
-            2 => ShellColor::SunsetPink,
-            3 => ShellColor::CyberGrey,
-            _ => ShellColor::OceanBlue,
-        };
-
-        let mut shell = VirtualShell::default();
-        shell.color_theme = shell_color;
-
-        let i18n = I18n::new(loaded.language);
+        let audio = AudioEngine::new();
+        let i18n = I18n::default();
+        let machine = Machine::new();
 
         Self {
-            pet: loaded.pet,
-            island: loaded.island,
-            screen: VirtualScreen::default(),
-            shell,
+            machine,
             audio,
             i18n,
-            flash_inspector: FlashInspector::default(),
-            active_modal: ActiveModal::None,
-            berry_game: None,
-            wheel_game: None,
-            code_input: String::new(),
-            status_feedback: None,
-            save_timer: 0.0,
+            shell_color: ShellColor::OceanBlue,
+            show_debugger: true,
+            hex_base_addr: 0x0800_0000,
             last_frame_time: std::time::Instant::now(),
-            shell_color_index: loaded.shell_color_index,
-            always_on_top: loaded.always_on_top,
-            zoom_accumulator: 1.0, // starts at Normal
+            load_path_input: String::new(),
+            status_msg: Some("Tamagotchi Paradise Hardware Emulation Ready.".to_string()),
         }
-    }
-
-    fn persist_state(&self) {
-        let state = SaveState {
-            pet: self.pet.clone(),
-            island: self.island.clone(),
-            language: self.i18n.language(),
-            sound_volume: self.audio.volume,
-            shell_color_index: self.shell_color_index,
-            always_on_top: self.always_on_top,
-            window_scale: 1.0,
-        };
-        SaveManager::save(&state);
     }
 }
 
 impl eframe::App for TamagotchiApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let now = std::time::Instant::now();
-        let dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
+        let _dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
         self.last_frame_time = now;
 
-        // Auto request repaint for 60 FPS animations
+        // Auto repaint for 60 FPS emulator loop
         ctx.request_repaint();
 
-        // 1. Tick simulation & screen
-        let events = self.pet.tick(dt, &mut self.island);
-        for event in events {
-            match event.as_str() {
-                "egg_hatched" | "evolved" | "birthday" => {
-                    self.audio.play(SoundEffect::Happy);
-                    self.screen.show_message(self.i18n.t("dialog_heal_success"));
-                }
-                "hungry_alert" | "hygiene_alert" => {
-                    self.audio.play(SoundEffect::Alert);
-                }
-                _ => {}
-            }
+        // 1. Run CPU execution frame
+        if self.machine.is_running {
+            self.machine.run_frame();
         }
-
-        self.screen.update(dt);
-
-        // Update active minigames
-        if let Some(game) = &mut self.berry_game {
-            if let Some(won) = game.update(dt) {
-                if won {
-                    self.pet.happiness = 4;
-                    self.pet.coins += 25;
-                    self.audio.play(SoundEffect::Happy);
-                    self.screen.show_message(self.i18n.t("game_win"));
-                } else {
-                    self.screen.show_message(self.i18n.t("game_lose"));
-                }
-                self.berry_game = None;
-            }
-        }
-
-        if let Some(game) = &mut self.wheel_game {
-            game.update(dt);
-        }
-
-        // Auto save timer
-        self.save_timer += dt;
-        if self.save_timer >= 10.0 {
-            self.save_timer = 0.0;
-            self.persist_state();
-        }
-
-        // Sync shell color
-        self.shell.color_theme = match self.shell_color_index {
-            1 => ShellColor::JungleGreen,
-            2 => ShellColor::SunsetPink,
-            3 => ShellColor::CyberGrey,
-            _ => ShellColor::OceanBlue,
-        };
 
         // 2. Keyboard Inputs
-        let key_a = ctx.input(|i| i.key_pressed(Key::A) || i.key_pressed(Key::ArrowLeft));
-        let key_b = ctx.input(|i| {
-            i.key_pressed(Key::B) || i.key_pressed(Key::Space) || i.key_pressed(Key::Enter)
-        });
-        let key_c = ctx.input(|i| {
-            i.key_pressed(Key::C) || i.key_pressed(Key::Escape) || i.key_pressed(Key::ArrowRight)
-        });
+        let key_a = ctx.input(|i| i.key_down(Key::A) || i.key_down(Key::ArrowLeft));
+        let key_b = ctx.input(|i| i.key_down(Key::B) || i.key_down(Key::Space) || i.key_down(Key::Enter));
+        let key_c = ctx.input(|i| i.key_down(Key::C) || i.key_down(Key::Escape) || i.key_down(Key::ArrowRight));
+        let key_f10 = ctx.input(|i| i.key_pressed(Key::F10));
 
-        // 3. UI Layout
-        TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            ui.add_space(4.0);
-            GuiWidgets::render_hud(ui, &self.i18n, &self.pet);
-            ui.add_space(4.0);
-        });
-
-        let mut triggered_action = ActionButtonAction::None;
-        TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            ui.add_space(6.0);
-            triggered_action =
-                GuiWidgets::render_action_buttons(ui, &self.i18n, &mut self.active_modal);
-            ui.add_space(6.0);
-        });
-
-        // Process bottom bar actions
-        match triggered_action {
-            ActionButtonAction::Clean => {
-                let res = self.pet.clean_room();
-                match res {
-                    PetActionFeedback::Success => {
-                        self.audio.play(SoundEffect::ButtonClick);
-                        self.screen
-                            .show_message(self.i18n.t("dialog_clean_success"));
-                    }
-                    PetActionFeedback::AlreadyClean => {
-                        self.screen.show_message(self.i18n.t("dialog_clean_none"));
-                    }
-                    _ => {}
-                }
-            }
-            ActionButtonAction::Heal => {
-                let res = self.pet.heal();
-                match res {
-                    PetActionFeedback::Success => {
-                        self.audio.play(SoundEffect::Cure);
-                        self.screen
-                            .show_message(self.i18n.t("dialog_heal_success"));
-                    }
-                    PetActionFeedback::AlreadyHealthy => {
-                        self.screen.show_message(self.i18n.t("dialog_heal_none"));
-                    }
-                    _ => {}
-                }
-            }
-            ActionButtonAction::Discipline => {
-                let res = self.pet.train_discipline();
-                if matches!(res, PetActionFeedback::Success) {
-                    self.audio.play(SoundEffect::Happy);
-                    self.screen
-                        .show_message(self.i18n.t("dialog_discipline_success"));
-                }
-            }
-            ActionButtonAction::PlayBerry => {
-                self.berry_game = Some(BerryCatchState::new());
-                self.audio.play(SoundEffect::ButtonClick);
-            }
-            ActionButtonAction::PlayWheel => {
-                self.wheel_game = Some(ParadiseWheelState::new());
-                self.audio.play(SoundEffect::ButtonClick);
-            }
-            ActionButtonAction::None => {}
+        if key_f10 {
+            self.machine.is_running = false;
+            self.machine.step();
         }
 
+        // 3. Top Status & Menu Bar
+        TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Tamagotchi Paradise SNC73410 Emulator").strong());
+
+                ui.separator();
+
+                if ui.button(if self.show_debugger { "Hide Debugger" } else { "Show Debugger" }).clicked() {
+                    self.show_debugger = !self.show_debugger;
+                }
+
+                ui.separator();
+
+                ui.label("Shell Color:");
+                if ui.selectable_label(self.shell_color == ShellColor::OceanBlue, "Ocean").clicked() {
+                    self.shell_color = ShellColor::OceanBlue;
+                }
+                if ui.selectable_label(self.shell_color == ShellColor::JungleGreen, "Jungle").clicked() {
+                    self.shell_color = ShellColor::JungleGreen;
+                }
+                if ui.selectable_label(self.shell_color == ShellColor::SunsetPink, "Sunset").clicked() {
+                    self.shell_color = ShellColor::SunsetPink;
+                }
+                if ui.selectable_label(self.shell_color == ShellColor::CyberGrey, "Cyber").clicked() {
+                    self.shell_color = ShellColor::CyberGrey;
+                }
+
+                ui.separator();
+
+                ui.label("Language:");
+                if ui.selectable_label(self.i18n.language() == Language::Fr, "FR").clicked() {
+                    self.i18n.set_language(Language::Fr);
+                }
+                if ui.selectable_label(self.i18n.language() == Language::En, "EN").clicked() {
+                    self.i18n.set_language(Language::En);
+                }
+            });
+        });
+
+        // 4. Debugger Side Panel
+        if self.show_debugger {
+            SidePanel::right("debug_panel")
+                .min_width(420.0)
+                .default_width(480.0)
+                .show(ctx, |ui| {
+                    ui.add_space(4.0);
+
+                    // Firmware File Loader Box
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Load Firmware / Flash Dump (.bin):").strong());
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(&mut self.load_path_input);
+                            if ui.button("📂 Load File").clicked() {
+                                if !self.load_path_input.is_empty() {
+                                    match self.machine.load_firmware_file(&self.load_path_input) {
+                                        Ok(bytes) => {
+                                            self.status_msg = Some(format!("Loaded {} bytes into Flash.", bytes));
+                                        }
+                                        Err(e) => {
+                                            self.status_msg = Some(format!("Load error: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        if let Some(msg) = &self.status_msg {
+                            ui.label(egui::RichText::new(msg).small().color(egui::Color32::from_rgb(255, 230, 80)));
+                        }
+                    });
+
+                    ui.separator();
+
+                    // CPU Registers Inspector
+                    CpuPanel::render(
+                        ui,
+                        &self.machine.cpu.regs,
+                        self.machine.cpu.cycles,
+                        self.machine.is_running,
+                        &self.i18n,
+                    );
+
+                    ui.separator();
+
+                    // Disassembly Stream
+                    let instructions = self.machine.get_disassembly_window(10);
+                    let current_pc = self.machine.cpu.regs.pc;
+                    let is_running_ref = &mut self.machine.is_running;
+
+                    let mut step_requested = false;
+                    let mut reset_requested = false;
+                    DisasmPanel::render(
+                        ui,
+                        &instructions,
+                        current_pc,
+                        is_running_ref,
+                        || {
+                            step_requested = true;
+                        },
+                        || {
+                            reset_requested = true;
+                        },
+                    );
+
+                    if step_requested {
+                        self.machine.step();
+                    }
+                    if reset_requested {
+                        self.machine.reset();
+                    }
+
+                    ui.separator();
+
+                    // Hex Memory Viewer
+                    MemoryPanel::render(
+                        ui,
+                        &mut self.machine.bus,
+                        &mut self.machine.periph,
+                        &self.machine.cpu.nvic,
+                        &mut self.hex_base_addr,
+                    );
+
+                    ui.separator();
+
+                    // UART Console
+                    ConsolePanel::render(ui, &mut self.machine.periph.uart);
+                });
+        }
+
+        // 5. Central Virtual Device Display & Controls
         CentralPanel::default().show(ctx, |ui| {
             let available_rect = ui.available_rect_before_wrap();
-            let (screen_rect, controls) = self.shell.render(ui, available_rect);
 
-            // Handle Dial rotation for Zoom
-            let dial_movement = controls.dial_delta;
-            if dial_movement.abs() > 0.1 {
-                self.zoom_accumulator += dial_movement * 0.05;
-                self.zoom_accumulator = self.zoom_accumulator.clamp(0.0, 2.0);
-                let new_zoom_idx = self.zoom_accumulator.round() as usize;
-                let new_zoom = ZoomLevel::from_index(new_zoom_idx);
-                if new_zoom != self.screen.zoom {
-                    self.screen.zoom = new_zoom;
-                    self.audio.play(SoundEffect::DialTick);
-                    self.screen.show_message(self.i18n.t(new_zoom.title_key()));
-                }
-            }
+            let mut btn_a_pressed = key_a;
+            let mut btn_b_pressed = key_b;
+            let mut btn_c_pressed = key_c;
+            let mut dial_delta = 0;
 
-            // Handle Buttons A, B, C (from GUI clicks or Keyboard)
-            let btn_a = controls.btn_a_clicked || key_a;
-            let btn_b = controls.btn_b_clicked || key_b;
-            let btn_c = controls.btn_c_clicked || key_c;
-
-            if btn_a {
-                self.audio.play(SoundEffect::ButtonClick);
-                if let Some(game) = &mut self.berry_game {
-                    game.move_left(0.1);
-                } else {
-                    match self.screen.zoom {
-                        ZoomLevel::Micro => {
-                            self.island.cleanse_micro_cells();
-                            self.screen
-                                .show_message("Micro-cellules purifiées.".to_string());
-                        }
-                        ZoomLevel::Paradise => {
-                            let (watered, level) = self.island.water_plants();
-                            if watered {
-                                self.screen
-                                    .show_message(format!("Plantes arrosées (Niveau {}).", level));
-                            } else {
-                                self.pet.coins += 10;
-                                self.screen.show_message(format!(
-                                    "Fruit récolté (+10 G) ! Total: {}.",
-                                    level
-                                ));
-                            }
-                        }
-                        ZoomLevel::Normal => {
-                            self.pet.happiness = (self.pet.happiness + 1).min(4);
-                            self.screen.show_message("Caresses données.".to_string());
-                        }
+            LcdPanel::render(
+                ui,
+                available_rect,
+                &self.machine.periph.display,
+                self.shell_color,
+                |p| {
+                    if p {
+                        btn_a_pressed = true;
                     }
-                }
-            }
-
-            if btn_b {
-                self.audio.play(SoundEffect::ButtonClick);
-                if let Some(game) = &mut self.wheel_game {
-                    let won = game.stop();
-                    if won {
-                        self.pet.happiness = 4;
-                        self.pet.coins += 40;
-                        self.audio.play(SoundEffect::Happy);
-                        self.screen.show_message(self.i18n.t("game_win"));
-                    } else {
-                        self.screen.show_message(self.i18n.t("game_lose"));
+                },
+                |p| {
+                    if p {
+                        btn_b_pressed = true;
                     }
-                    self.wheel_game = None;
-                } else if self.berry_game.is_none() {
-                    match self.screen.zoom {
-                        ZoomLevel::Paradise => {
-                            // Cycle unlocked biomes
-                            let next_biome = match self.island.active_biome {
-                                BiomeType::Garden => {
-                                    if self.island.ocean_unlocked {
-                                        BiomeType::Ocean
-                                    } else if self.island.sky_unlocked {
-                                        BiomeType::Sky
-                                    } else {
-                                        BiomeType::Garden
-                                    }
-                                }
-                                BiomeType::Ocean => {
-                                    if self.island.sky_unlocked {
-                                        BiomeType::Sky
-                                    } else {
-                                        BiomeType::Garden
-                                    }
-                                }
-                                BiomeType::Sky => BiomeType::Garden,
-                            };
-                            self.island.active_biome = next_biome;
-                            self.screen
-                                .show_message(self.i18n.t(next_biome.title_key()));
-                        }
-                        _ => {
-                            // Wake up or toggle sleep
-                            self.pet.toggle_sleep();
-                            let msg = if self.pet.is_sleeping {
-                                self.i18n.t("dialog_sleeping")
-                            } else {
-                                "Réveil en pleine forme.".to_string()
-                            };
-                            self.screen.show_message(msg);
-                        }
+                },
+                |p| {
+                    if p {
+                        btn_c_pressed = true;
                     }
-                }
-            }
-
-            if btn_c {
-                self.audio.play(SoundEffect::ButtonClick);
-                if let Some(game) = &mut self.berry_game {
-                    game.move_right(0.1);
-                } else if self.wheel_game.is_some() {
-                    self.wheel_game = None;
-                } else {
-                    let _ = self.pet.clean_room();
-                    self.screen
-                        .show_message(self.i18n.t("dialog_clean_success"));
-                }
-            }
-
-            // Render virtual LCD screen
-            let painter = ui.painter();
-            self.screen.render(
-                painter,
-                screen_rect,
-                &self.pet,
-                &self.island,
-                self.berry_game.as_ref(),
-                self.wheel_game.as_ref(),
+                },
+                |d| {
+                    dial_delta = d;
+                },
             );
+
+            // Inject controls into GPIO peripheral
+            self.machine.periph.gpio.set_button_a(btn_a_pressed);
+            self.machine.periph.gpio.set_button_b(btn_b_pressed);
+            self.machine.periph.gpio.set_button_c(btn_c_pressed);
+
+            if dial_delta != 0 {
+                self.machine.periph.gpio.step_dial(dial_delta);
+                self.audio.play(SoundEffect::DialTick);
+            }
         });
-
-        // 4. Modals
-        let mut food_eaten = None;
-        GuiWidgets::render_feed_modal(
-            ctx,
-            &self.i18n,
-            &mut self.active_modal,
-            &mut self.pet,
-            |item_name| {
-                food_eaten = Some(item_name.to_string());
-            },
-        );
-        if food_eaten.is_some() {
-            self.audio.play(SoundEffect::Eat);
-            self.screen
-                .show_message(self.i18n.t("dialog_feed_success"));
-        }
-
-        GuiWidgets::render_shop_modal(
-            ctx,
-            &self.i18n,
-            &mut self.active_modal,
-            &mut self.pet,
-            &mut self.island,
-        );
-
-        GuiWidgets::render_secret_code_modal(
-            ctx,
-            &self.i18n,
-            &mut self.active_modal,
-            &mut self.code_input,
-            &mut self.pet,
-            &mut self.island,
-            &mut self.status_feedback,
-        );
-
-        GuiWidgets::render_flash_inspector_modal(
-            ctx,
-            &self.i18n,
-            &mut self.active_modal,
-            &self.flash_inspector,
-        );
-
-        GuiWidgets::render_settings_modal(
-            ctx,
-            &mut self.i18n,
-            &mut self.active_modal,
-            &mut self.audio.volume,
-            &mut self.shell_color_index,
-            &mut self.always_on_top,
-        );
     }
 }
