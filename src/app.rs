@@ -64,6 +64,23 @@ impl eframe::App for TamagotchiApp {
             self.machine.step();
         }
 
+        // Support Drag and Drop of firmware files onto the emulator
+        ctx.input(|i| {
+            if let Some(dropped) = i.raw.dropped_files.first() {
+                if let Some(path) = &dropped.path {
+                    self.load_path_input = path.to_string_lossy().to_string();
+                    match self.machine.load_firmware_file(path) {
+                        Ok(bytes) => {
+                            self.status_msg = Some(format!("Loaded {} bytes from dropped file.", bytes));
+                        }
+                        Err(e) => {
+                            self.status_msg = Some(format!("Load error: {}", e));
+                        }
+                    }
+                }
+            }
+        });
+
         // 3. Top Status & Menu Bar
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -113,18 +130,34 @@ impl eframe::App for TamagotchiApp {
 
                     // Firmware File Loader Box
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Load Firmware / Flash Dump (.bin):").strong());
+                        ui.label(egui::RichText::new("Firmware / Flash Dump (.bin):").strong());
                         ui.horizontal(|ui| {
-                            ui.text_edit_singleline(&mut self.load_path_input);
-                            if ui.button("📂 Load File").clicked() {
-                                if !self.load_path_input.is_empty() {
-                                    match self.machine.load_firmware_file(&self.load_path_input) {
+                            if ui.button(egui::RichText::new("📂 Parcourir / Browse...").strong()).clicked() {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter("Firmware Binary (*.bin, *.rom, *.hex, *.elf)", &["bin", "rom", "hex", "elf", "raw", "dump"])
+                                    .set_title("Sélectionner un dump de firmware Tamagotchi")
+                                    .pick_file()
+                                {
+                                    self.load_path_input = path.to_string_lossy().to_string();
+                                    match self.machine.load_firmware_file(&path) {
                                         Ok(bytes) => {
                                             self.status_msg = Some(format!("Loaded {} bytes into Flash.", bytes));
                                         }
                                         Err(e) => {
                                             self.status_msg = Some(format!("Load error: {}", e));
                                         }
+                                    }
+                                }
+                            }
+
+                            ui.text_edit_singleline(&mut self.load_path_input);
+                            if ui.button("Load").clicked() && !self.load_path_input.is_empty() {
+                                match self.machine.load_firmware_file(&self.load_path_input) {
+                                    Ok(bytes) => {
+                                        self.status_msg = Some(format!("Loaded {} bytes into Flash.", bytes));
+                                    }
+                                    Err(e) => {
+                                        self.status_msg = Some(format!("Load error: {}", e));
                                     }
                                 }
                             }
