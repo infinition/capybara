@@ -283,34 +283,60 @@ impl Thumb32 {
         // 7. 32-bit Single Data Transfer: LDR / STR (Byte, Halfword, Word)
         if (w1 & 0xFE00) == 0xF800 || (w1 & 0xFE00) == 0xF900 {
             let is_ldr = (w1 & 0x0010) != 0;
-            let size = (w1 >> 7) & 3; // 0 = byte, 1 = halfword, 2 = word
+            // La largeur est codee en w1[6:5], pas en w1[8:7] : LDR.W etait lu
+            // comme un LDRH et ne ramenait que les 16 bits de poids faible.
+            let size = (w1 >> 5) & 3; // 0 = octet, 1 = demi-mot, 2 = mot
+            // Le groupe 0xF9xx est la variante a extension de signe.
+            let is_signed = (w1 & 0x0100) != 0;
             let rn = (w1 & 0xF) as u8;
             let rd = ((w2 >> 12) & 0xF) as u8;
 
+            // Mise a jour differee de la base, pour les formes indexees.
+            let mut writeback: Option<(u8, u32)> = None;
+
             let addr = if (w1 & 0x0080) != 0 {
-                // Immediate 12-bit offset
+                // Forme T3 : offset immediat 12 bits, toujours positif, sans
+                // mise a jour de la base.
                 let imm12 = (w2 & 0x0FFF) as u32;
                 let base = if rn == 0xF { regs.pc & !3 } else { regs.get_reg(rn) };
                 base.wrapping_add(imm12)
             } else if (w2 & 0x0800) != 0 {
-                // 8-bit immediate with sign/indexing
-                let is_add = (w2 & 0x0200) != 0;
+                // Forme T4 : immediat 8 bits avec indexation P / U / W.
+                // P = 0 designe le post-indexe : l'acces se fait a la base, et la
+                // base est mise a jour ensuite. Sans cela, une boucle de recopie
+                // relisait indefiniment le meme octet sans jamais avancer.
+                let pre_index = (w2 & 0x0400) != 0;
+                let add = (w2 & 0x0200) != 0;
+                let write_base = (w2 & 0x0100) != 0;
                 let imm8 = (w2 & 0xFF) as u32;
                 let base = if rn == 0xF { regs.pc & !3 } else { regs.get_reg(rn) };
-                if is_add { base.wrapping_add(imm8) } else { base.wrapping_sub(imm8) }
+                let offset_addr = if add {
+                    base.wrapping_add(imm8)
+                } else {
+                    base.wrapping_sub(imm8)
+                };
+                if write_base && rn != 0xF {
+                    writeback = Some((rn, offset_addr));
+                }
+                if pre_index {
+                    offset_addr
+                } else {
+                    base
+                }
             } else {
-                // Register shifted offset
+                // Offset registre, decale de 0 a 3 bits.
                 let rm = (w2 & 0xF) as u8;
                 let shift = ((w2 >> 4) & 3) as u32;
-                let base = regs.get_reg(rn);
-                let off = regs.get_reg(rm) << shift;
-                base.wrapping_add(off)
+                let base = if rn == 0xF { regs.pc & !3 } else { regs.get_reg(rn) };
+                base.wrapping_add(regs.get_reg(rm) << shift)
             };
 
             if is_ldr {
-                let val = match size {
-                    0 => bus.read_u8(addr, periph, nvic) as u32,
-                    1 => bus.read_u16(addr, periph, nvic) as u32,
+                let val = match (size, is_signed) {
+                    (0, false) => bus.read_u8(addr, periph, nvic) as u32,
+                    (0, true) => bus.read_u8(addr, periph, nvic) as i8 as i32 as u32,
+                    (1, false) => bus.read_u16(addr, periph, nvic) as u32,
+                    (1, true) => bus.read_u16(addr, periph, nvic) as i16 as i32 as u32,
                     _ => bus.read_u32(addr, periph, nvic),
                 };
                 regs.set_reg(rd, val);
@@ -321,6 +347,10 @@ impl Thumb32 {
                     1 => bus.write_u16(addr, val as u16, periph, nvic),
                     _ => bus.write_u32(addr, val, periph, nvic),
                 }
+            }
+            // La base est mise a jour apres l'acces, jamais avant.
+            if let Some((r, v)) = writeback {
+                regs.set_reg(r, v);
             }
             return StepResult::Ok(2);
         }
@@ -406,16 +436,47 @@ impl Thumb32 {
             return StepResult::Ok(1);
         }
 
-        // 10. MRS / MSR (Move to/from special register)
-        if (w1 & 0xFFE0) == 0xF3E0 {
-            let is_mrs = (w1 & 0x0010) == 0;
-            let rd = ((w2 >> 8) & 0xF) as u8;
-            if is_mrs {
-                regs.set_reg(rd, regs.xpsr);
-            } else {
-                let val = regs.get_reg(rd);
-                regs.xpsr = val;
+        // 10. MSR : 1111 0011 100 0 nnnn | 1000 10mm 0000 SYSm.
+        //     L'ancien test attrapait la plage MRS et inversait les deux sens,
+        //     si bien qu'un MSR PRIMASK n'etait pas decode du tout.
+        if (w1 & 0xFFF0) == 0xF380 && (w2 & 0xF000) == 0x8000 {
+            let rn = (w1 & 0xF) as u8;
+            let sysm = (w2 & 0xFF) as u8;
+            let val = regs.get_reg(rn);
+            match sysm {
+                // APSR et alias : seuls les drapeaux de condition sont ecrits.
+                0..=3 => regs.xpsr = (regs.xpsr & 0x07FF_FFFF) | (val & 0xF800_0000),
+                8 => regs.msp = val & !3,
+                9 => regs.psp = val & !3,
+                16 => regs.primask = val & 1,
+                17 | 18 => regs.basepri = val & 0xFF,
+                19 => regs.faultmask = val & 1,
+                20 => regs.control = val & 3,
+                _ => {}
             }
+            return StepResult::Ok(2);
+        }
+
+        // 11. MRS : 1111 0011 1110 1111 | 1000 dddd 0000 SYSm.
+        if w1 == 0xF3EF && (w2 & 0xF000) == 0x8000 {
+            let rd = ((w2 >> 8) & 0xF) as u8;
+            let sysm = (w2 & 0xFF) as u8;
+            let val = match sysm {
+                0 => regs.xpsr & 0xF800_0000,                    // APSR
+                1 => regs.xpsr & (0xF800_0000 | 0x1FF),          // IAPSR
+                2 => regs.xpsr & (0xF800_0000 | 0x0100_0000),    // EAPSR
+                3 | 7 => regs.xpsr,                              // xPSR / IEPSR
+                5 => regs.xpsr & 0x1FF,                          // IPSR
+                6 => regs.xpsr & 0x0100_0000,                    // EPSR
+                8 => regs.msp,
+                9 => regs.psp,
+                16 => regs.primask,
+                17 | 18 => regs.basepri,
+                19 => regs.faultmask,
+                20 => regs.control,
+                _ => 0,
+            };
+            regs.set_reg(rd, val);
             return StepResult::Ok(2);
         }
 
@@ -427,7 +488,7 @@ impl Thumb32 {
 
 /// Addition avec retenue, telle que definie par AddWithCarry de l'architecture.
 /// Rend le resultat, la retenue sortante et le debordement signe.
-fn add_with_carry(a: u32, b: u32, carry_in: bool) -> (u32, bool, bool) {
+pub(crate) fn add_with_carry(a: u32, b: u32, carry_in: bool) -> (u32, bool, bool) {
     let (s1, c1) = a.overflowing_add(b);
     let (res, c2) = s1.overflowing_add(carry_in as u32);
     let carry = c1 || c2;

@@ -72,10 +72,28 @@ impl Cpu {
         self.regs.pc = self.regs.pc.wrapping_add(2);
 
         let is_32 = (w1 & 0xF800) == 0xE800 || (w1 & 0xF800) == 0xF000 || (w1 & 0xF800) == 0xF800;
+        let w2 = if is_32 {
+            let w = bus.read_u16(self.regs.pc, periph, &self.nvic);
+            self.regs.pc = self.regs.pc.wrapping_add(2);
+            w
+        } else {
+            0
+        };
+
+        // Bloc IT : l'instruction courante est conditionnee par ITSTATE[7:4].
+        // On fait avancer l'etat avant d'executer, car une instruction IT ne peut
+        // pas elle-meme se trouver dans un bloc.
+        if (self.regs.itstate & 0x0F) != 0 {
+            let cond = ((self.regs.itstate >> 4) & 0xF) as u16;
+            let taken = Thumb16::eval_condition(cond, &self.regs);
+            self.advance_itstate();
+            if !taken {
+                self.cycles += 1;
+                return StepResult::Ok(1);
+            }
+        }
 
         let result = if is_32 {
-            let w2 = bus.read_u16(self.regs.pc, periph, &self.nvic);
-            self.regs.pc = self.regs.pc.wrapping_add(2);
             Thumb32::execute(w1, w2, &mut self.regs, bus, periph, &mut self.nvic)
         } else {
             Thumb16::execute(w1, &mut self.regs, bus, periph, &mut self.nvic)
@@ -100,6 +118,17 @@ impl Cpu {
                 StepResult::Halt
             }
             StepResult::Undefined(op) => StepResult::Undefined(op),
+        }
+    }
+
+    /// ITAdvance : le masque est decale d'un cran, et le bloc se termine quand
+    /// les trois bits de poids faible sont nuls.
+    fn advance_itstate(&mut self) {
+        if (self.regs.itstate & 0x07) == 0 {
+            self.regs.itstate = 0;
+        } else {
+            let low = (self.regs.itstate & 0x1F) << 1;
+            self.regs.itstate = (self.regs.itstate & 0xE0) | (low & 0x1F);
         }
     }
 

@@ -1,4 +1,5 @@
 use super::registers::Registers;
+use super::thumb32::add_with_carry;
 use crate::emulator::cpu::nvic::Nvic;
 use crate::emulator::mmu::MemoryBus;
 use crate::emulator::peripherals::Peripherals;
@@ -20,6 +21,13 @@ impl Thumb16 {
         periph: &mut Peripherals,
         nvic: &mut Nvic,
     ) -> StepResult {
+        // IT : 1011 1111 cccc mmmm, avec masque non nul. Un masque nul designe
+        // les hints (NOP, WFI, WFE, SEV), traites juste apres.
+        if (w & 0xFF00) == 0xBF00 && (w & 0x000F) != 0 {
+            regs.itstate = (w & 0xFF) as u8;
+            return StepResult::Ok(1);
+        }
+
         // NOP
         if w == 0xBF00 {
             return StepResult::Ok(1);
@@ -249,35 +257,106 @@ impl Thumb16 {
         StepResult::Ok(1)
     }
 
+    /// Traitement de donnees 16 bits, forme registre : 0100 00 oooo mmm ddd.
+    ///
+    /// La table etait incomplete : CMP, CMN, ADC, SBC, RSB, LSR, ASR et ROR
+    /// tombaient dans la branche par defaut. CMP en particulier ne posait aucun
+    /// drapeau, ce qui faisait echouer tous les BEQ et BNE qui la suivent.
     fn exec_alu(w: u16, regs: &mut Registers) -> StepResult {
         let op = (w >> 6) & 0xF;
         let rm = ((w >> 3) & 0x7) as u8;
         let rdn = (w & 0x7) as u8;
         let val_m = regs.get_reg(rm);
         let val_dn = regs.get_reg(rdn);
+        let carry_in = regs.flag_c();
+
+        // Retenue et debordement ne bougent que si l'operation les produit.
+        let mut c_out = carry_in;
+        let mut v_out = regs.flag_v();
+        // TST, CMP et CMN ne rangent pas leur resultat.
+        let mut writes_back = true;
 
         let res = match op {
             0 => val_dn & val_m,  // AND
             1 => val_dn ^ val_m,  // EOR
-            2 => {                // LSL
-                let shift = val_m & 0xFF;
-                if shift == 0 { val_dn } else if shift < 32 {
-                    regs.set_flag_c((val_dn & (1 << (32 - shift))) != 0);
-                    val_dn << shift
-                } else { 0 }
+            2 => {
+                // LSL par registre, decalage sur les 8 bits de poids faible.
+                let (v, c) = shift_by_reg(val_dn, val_m & 0xFF, 0, carry_in);
+                c_out = c;
+                v
             }
-            8 => val_dn & val_m,  // TST
-            12 => val_dn | val_m, // ORR
+            3 => {
+                // LSR
+                let (v, c) = shift_by_reg(val_dn, val_m & 0xFF, 1, carry_in);
+                c_out = c;
+                v
+            }
+            4 => {
+                // ASR
+                let (v, c) = shift_by_reg(val_dn, val_m & 0xFF, 2, carry_in);
+                c_out = c;
+                v
+            }
+            5 => {
+                // ADC
+                let (v, c, o) = add_with_carry(val_dn, val_m, carry_in);
+                c_out = c;
+                v_out = o;
+                v
+            }
+            6 => {
+                // SBC
+                let (v, c, o) = add_with_carry(val_dn, !val_m, carry_in);
+                c_out = c;
+                v_out = o;
+                v
+            }
+            7 => {
+                // ROR
+                let (v, c) = shift_by_reg(val_dn, val_m & 0xFF, 3, carry_in);
+                c_out = c;
+                v
+            }
+            8 => {
+                // TST
+                writes_back = false;
+                val_dn & val_m
+            }
+            9 => {
+                // RSB rd, rm, #0, alias NEG
+                let (v, c, o) = add_with_carry(!val_m, 0, true);
+                c_out = c;
+                v_out = o;
+                v
+            }
+            10 => {
+                // CMP
+                writes_back = false;
+                let (v, c, o) = add_with_carry(val_dn, !val_m, true);
+                c_out = c;
+                v_out = o;
+                v
+            }
+            11 => {
+                // CMN
+                writes_back = false;
+                let (v, c, o) = add_with_carry(val_dn, val_m, false);
+                c_out = c;
+                v_out = o;
+                v
+            }
+            12 => val_dn | val_m,             // ORR
             13 => val_dn.wrapping_mul(val_m), // MUL
-            14 => val_dn & !val_m,// BIC
-            15 => !val_m,         // MVN
-            _ => val_dn,
+            14 => val_dn & !val_m,            // BIC
+            _ => !val_m,                      // MVN
         };
 
-        if op != 8 {
+        if writes_back {
             regs.set_reg(rdn, res);
         }
         regs.set_nz(res);
+        regs.set_flag_c(c_out);
+        regs.set_flag_v(v_out);
         StepResult::Ok(1)
     }
 
@@ -311,7 +390,9 @@ impl Thumb16 {
                 // BX / BLX
                 let is_blx = (w & 0x0080) != 0;
                 if is_blx {
-                    regs.lr = (regs.pc | 1) + 2;
+                    // step() a deja avance de 2 : regs.pc est l'adresse de retour.
+                    // L'ancien calcul ajoutait 2 de trop et sautait une instruction.
+                    regs.lr = regs.pc | 1;
                 }
                 regs.pc = val_m & !1;
                 return StepResult::Ok(2);
@@ -571,6 +652,47 @@ impl Thumb16 {
             12 => !regs.flag_z() && (regs.flag_n() == regs.flag_v()), // GT
             13 => regs.flag_z() || (regs.flag_n() != regs.flag_v()),  // LE
             _ => true,
+        }
+    }
+}
+
+/// Decalage par registre, avec la retenue sortante. Un decalage nul laisse la
+/// retenue intacte, une amplitude superieure a 32 vide le registre.
+fn shift_by_reg(val: u32, amount: u32, type_: u32, carry_in: bool) -> (u32, bool) {
+    if amount == 0 {
+        return (val, carry_in);
+    }
+    match type_ {
+        // LSL
+        0 => match amount {
+            n if n < 32 => (val << n, (val >> (32 - n)) & 1 != 0),
+            32 => (0, val & 1 != 0),
+            _ => (0, false),
+        },
+        // LSR
+        1 => match amount {
+            n if n < 32 => (val >> n, (val >> (n - 1)) & 1 != 0),
+            32 => (0, (val >> 31) & 1 != 0),
+            _ => (0, false),
+        },
+        // ASR
+        2 => {
+            if amount < 32 {
+                (((val as i32) >> amount) as u32, (val >> (amount - 1)) & 1 != 0)
+            } else {
+                let s = ((val as i32) >> 31) as u32;
+                (s, (val >> 31) & 1 != 0)
+            }
+        }
+        // ROR
+        _ => {
+            let n = amount % 32;
+            if n == 0 {
+                (val, (val >> 31) & 1 != 0)
+            } else {
+                let v = val.rotate_right(n);
+                (v, (v >> 31) & 1 != 0)
+            }
         }
     }
 }

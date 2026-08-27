@@ -168,13 +168,23 @@ fn alu_32_bits_forme_registre_additionne_et_soustrait() {
 
     regs.set_reg(0, 0x20);
     regs.set_reg(1, 0x0F);
-    // ADD r0, r0, r1 = 0xEA80 0x0001 (op=100).
-    Thumb32::execute(0xEA80, 0x0001, &mut regs, &mut bus, &mut periph, &mut nvic);
+    // Le champ d'operation tient sur 4 bits, comme la forme immediat.
+    // ADD.W r0, r0, r1 : op = 1000, donc w1 = 0xEB00.
+    Thumb32::execute(0xEB00, 0x0001, &mut regs, &mut bus, &mut periph, &mut nvic);
     assert_eq!(regs.get_reg(0), 0x2F);
 
-    // SUB r0, r0, r1 = 0xEA40 0x0001 (op=010).
-    Thumb32::execute(0xEA40, 0x0001, &mut regs, &mut bus, &mut periph, &mut nvic);
+    // SUB.W r0, r0, r1 : op = 1101, donc w1 = 0xEBA0.
+    Thumb32::execute(0xEBA0, 0x0001, &mut regs, &mut bus, &mut periph, &mut nvic);
     assert_eq!(regs.get_reg(0), 0x20);
+
+    // MOV.W r2, r1 : op = 0010 avec Rn = PC, donc w1 = 0xEA4F.
+    // Cette forme s'executait en SUB avec l'ancien decodage sur 3 bits.
+    Thumb32::execute(0xEA4F, 0x0201, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(2), 0x0F);
+
+    // ORR.W r3, r0, r1 : op = 0010 avec un Rn reel.
+    Thumb32::execute(0xEA40, 0x0301, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(3), 0x2F);
 }
 
 #[test]
@@ -399,4 +409,98 @@ fn dump_reel_avec_cle_demarre_sur_le_vrai_vecteur() {
     assert_eq!(machine.bus.pram.read_u32(0x10), 0x0000_0321);
     assert_eq!(machine.bus.pram.read_u32(0x14), 0x0000_0323);
     assert_eq!(machine.bus.pram.read_u32(0x18), 0x0000_0325);
+}
+
+#[test]
+fn blx_registre_revient_sur_l_instruction_suivante() {
+    let mut regs = Registers::default();
+
+    // BLX r3 a l'adresse 0x1000 : step() a deja avance le PC de 2.
+    regs.pc = 0x1002;
+    regs.set_reg(3, 0x2001);
+    Thumb16::execute(0x4798, &mut regs, &mut MemoryBus::default(), &mut Peripherals::default(), &mut Nvic::default());
+    assert_eq!(regs.pc, 0x2000, "la cible perd le bit Thumb");
+    assert_eq!(regs.lr, 0x1003, "LR doit viser l'instruction suivante, pas celle d'apres");
+}
+
+#[test]
+fn cmp_registre_16_bits_pose_les_drapeaux() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // CMP r0, r1 avec deux valeurs egales : Z doit monter.
+    regs.set_reg(0, 0x494E4F53);
+    regs.set_reg(1, 0x494E4F53);
+    Thumb16::execute(0x4288, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert!(regs.flag_z(), "Z apres une comparaison egale");
+    assert!(regs.flag_c(), "C apres une soustraction sans emprunt");
+    assert_eq!(regs.get_reg(0), 0x494E4F53, "CMP ne range pas de resultat");
+
+    // CMP avec r0 < r1 : Z tombe, C tombe.
+    regs.set_reg(1, 0x494E4F54);
+    Thumb16::execute(0x4288, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert!(!regs.flag_z());
+    assert!(!regs.flag_c(), "emprunt sur une soustraction negative");
+}
+
+#[test]
+fn ldr_post_indexe_avance_la_base() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    bus.write_u8(0x100, 0xAB, &mut periph, &mut nvic);
+    bus.write_u8(0x101, 0xCD, &mut periph, &mut nvic);
+
+    // LDRB r6, [r0], #1 : l'acces se fait a la base, qui avance ensuite.
+    regs.set_reg(0, 0x100);
+    Thumb32::execute(0xF810, 0x6B01, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(6), 0xAB, "l'octet lu est celui de la base");
+    assert_eq!(regs.get_reg(0), 0x101, "la base avance de 1 apres l'acces");
+
+    Thumb32::execute(0xF810, 0x6B01, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(6), 0xCD);
+    assert_eq!(regs.get_reg(0), 0x102);
+}
+
+#[test]
+fn push_w_ecrit_sous_le_pointeur_de_pile() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    regs.msp = 0x1000;
+    regs.set_reg(4, 0x11111111);
+    regs.set_reg(5, 0x22222222);
+
+    // PUSH.W {r4, r5} = STMDB SP!, {r4, r5}
+    Thumb32::execute(0xE92D, 0x0030, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_sp(), 0x0FF8, "la pile descend de deux mots");
+    assert_eq!(bus.read_u32(0x0FF8, &mut periph, &nvic), 0x11111111);
+    assert_eq!(bus.read_u32(0x0FFC, &mut periph, &nvic), 0x22222222);
+}
+
+#[test]
+fn bloc_it_saute_l_instruction_quand_la_condition_est_fausse() {
+    let mut machine = Machine::new();
+    // IT NE puis SUBS r3, r7, r3, a executer depuis la PRAM.
+    // Pas a l'adresse 0 : le coeur y voit un saut nul et s'arrete.
+    machine.bus.pram.write_u8(0x100, 0x18);
+    machine.bus.pram.write_u8(0x101, 0xBF); // 0xBF18 = IT NE
+    machine.bus.pram.write_u8(0x102, 0xFB);
+    machine.bus.pram.write_u8(0x103, 0x1A); // 0x1AFB = SUBS r3, r7, r3
+    machine.cpu.regs.pc = 0x100;
+    machine.cpu.regs.set_reg(3, 5);
+    machine.cpu.regs.set_reg(7, 100);
+    machine.cpu.regs.set_flag_z(true); // condition NE fausse
+
+    machine.step(); // IT NE
+    assert_eq!(machine.cpu.regs.itstate & 0x0F, 0x08, "le bloc IT est arme");
+    machine.step(); // SUBNE, ne doit pas s'executer
+    assert_eq!(machine.cpu.regs.get_reg(3), 5, "l'instruction conditionnelle est sautee");
+    assert_eq!(machine.cpu.regs.itstate, 0, "le bloc IT est termine");
 }

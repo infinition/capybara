@@ -19,7 +19,11 @@ pub struct Registers {
     pub pc: u32,      // R15 (Program Counter)
     pub xpsr: u32,    // Program Status Register
     pub primask: u32, // Interrupt mask
+    pub basepri: u32, // Seuil de priorite d'interruption
+    pub faultmask: u32, // Masque de faute
     pub control: u32, // Control register
+    /// ITSTATE : [7:4] condition courante, [3:0] masque du bloc IT.
+    pub itstate: u8,
     pub mode: Mode,
 }
 
@@ -33,7 +37,10 @@ impl Default for Registers {
             pc: 0x0000_0000,
             xpsr: 0x0100_0000, // Thumb bit set by default
             primask: 0,
+            basepri: 0,
+            faultmask: 0,
             control: 0,
+            itstate: 0,
             mode: Mode::Thread,
         }
     }
