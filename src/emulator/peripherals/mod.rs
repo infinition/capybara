@@ -38,6 +38,8 @@ pub struct Peripherals {
     pub flashctl: FlashController,
     pub crc: ChecksumUnit,
     /// Port 2, celui dont le firmware lit les broches 0 et 1.
+    pub port0: GpioPort,
+    pub port1: GpioPort,
     pub port2: GpioPort,
 }
 
@@ -55,6 +57,8 @@ impl Default for Peripherals {
             adc: Default::default(),
             flashctl: FlashController::default(),
             crc: ChecksumUnit::default(),
+            port0: GpioPort::default(),
+            port1: GpioPort::port1(),
             port2: GpioPort::default(),
         }
     }

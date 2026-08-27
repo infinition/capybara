@@ -75,9 +75,14 @@ pub mod periph {
     pub const SAR_ADC1: u32 = 0x4000_B000;
     pub const I2S4: u32 = 0x4000_E000;
     pub const I2S2: u32 = 0x4001_2000;
-    pub const I2S0: u32 = 0x4001_9000;
-    /// Port d'entrees-sorties numero 2, resolu par la table de broches du
-    /// firmware. Ses broches 0 et 1 sont lues au demarrage.
+    /// Ports d'entrees-sorties 0 a 2, resolus par la table de broches du
+    /// firmware : un identifiant de broche encode `port = id >> 4` et
+    /// `pin = id & 15`, et la table en SRAM rend le decalage a ajouter a
+    /// 0x40018000. La figure 4-1 annonce I2S0 en 0x40019000, mais le firmware
+    /// y lit des broches par la fenetre bit-band.
+    pub const GPIO_PORT0: u32 = 0x4001_8000;
+    pub const GPIO_PORT1: u32 = 0x4001_9000;
+    /// Ses broches 0 et 1 sont lues au demarrage.
     pub const GPIO_PORT2: u32 = 0x4001_A000;
     pub const SPI1: u32 = 0x4002_0000;
     /// Controleur de la flash SPI NOR externe et son DMA.
@@ -114,7 +119,8 @@ pub mod periph {
             SAR_ADC1 => "SAR_ADC1",
             I2S4 => "I2S4",
             I2S2 => "I2S2",
-            I2S0 => "I2S0",
+            GPIO_PORT0 => "GPIO_P0",
+            GPIO_PORT1 => "GPIO_P1",
             GPIO_PORT2 => "GPIO_P2",
             SPI1 => "SPI1",
             FLASH_CTL => "FLASH_CTL",
@@ -163,6 +169,9 @@ pub struct MmioTrace {
     /// Page dont les acces sont journalises dans l'ordre, pour reconstituer un
     /// protocole. Les compteurs seuls ne disent pas la sequence.
     pub log_page: Option<u32>,
+    /// Ne journaliser que les ecritures. Une boucle de scrutation noie sinon la
+    /// sequence de configuration sous des millions de lectures identiques.
+    pub log_ecritures_seules: bool,
     pub log: Vec<LogEntry>,
 }
 
@@ -179,6 +188,9 @@ impl MmioTrace {
     /// Journalise un acces si sa page est celle observee. Le journal est borne
     /// pour ne pas gonfler indefiniment sur une boucle de scrutation.
     fn journalise(&mut self, addr: u32, is_write: bool, value: u32, pc: u32) {
+        if self.log_ecritures_seules && !is_write {
+            return;
+        }
         if self.log_page == Some(addr & !0xFFF) && self.log.len() < 60000 {
             self.log.push(LogEntry { pc, addr, is_write, value });
         }
@@ -554,6 +566,12 @@ impl MemoryBus {
             periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
                 p.adc[1].read_reg(off)
             }
+            periph::GPIO_PORT0 if crate::emulator::peripherals::GpioPort::handles(off) => {
+                p.port0.read_reg(off)
+            }
+            periph::GPIO_PORT1 if crate::emulator::peripherals::GpioPort::handles(off) => {
+                p.port1.read_reg(off)
+            }
             periph::GPIO_PORT2 if crate::emulator::peripherals::GpioPort::handles(off) => {
                 p.port2.read_reg(off)
             }
@@ -598,6 +616,15 @@ impl MemoryBus {
                 if let Some(t) = p.flashctl.write_reg(off, val) {
                     self.executer_transfert(t, p);
                 }
+            }
+            periph::GPIO_PORT0 if crate::emulator::peripherals::GpioPort::handles(off) => {
+                p.port0.write_reg(off, val)
+            }
+            periph::GPIO_PORT1 if crate::emulator::peripherals::GpioPort::handles(off) => {
+                p.port1.write_reg(off, val)
+            }
+            periph::GPIO_PORT2 if crate::emulator::peripherals::GpioPort::handles(off) => {
+                p.port2.write_reg(off, val)
             }
             periph::XIP_CTRL => p.xip.write_reg(off, val),
             periph::FUSES => p.snsys.write_reg(off, val),

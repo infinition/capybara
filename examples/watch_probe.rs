@@ -39,6 +39,19 @@ fn main() {
         }
     }
 
+    // WATCH_MEM=<adresse SRAM> arrete a la Nieme modification d'un mot, au lieu
+    // d'une adresse de code. C'est le seul moyen de trouver qui entretient un
+    // compteur que le firmware scrute sans jamais l'ecrire lui-meme.
+    let surveille: Option<u32> = std::env::var("WATCH_MEM")
+        .ok()
+        .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok());
+    let lire_surveille = |m: &Machine, a: u32| -> u32 {
+        let o = (a - 0x1800_0000) as usize;
+        let b = |i: usize| m.bus.sram.read_u8(o + i) as u32;
+        b(0) | (b(1) << 8) | (b(2) << 16) | (b(3) << 24)
+    };
+    let mut precedent = surveille.map(|a| lire_surveille(&m, a));
+
     let mut seen = 0u64;
     let mut steps = 0u64;
     let mut reached = false;
@@ -55,12 +68,28 @@ fn main() {
         .unwrap_or(0);
     let mut trace: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
     while steps < budget {
-        let condition_ok = cond.map_or(true, |(r, v)| m.cpu.regs.get_reg(r) == v);
-        if m.cpu.regs.pc == watch && condition_ok {
-            seen += 1;
-            if seen == nth {
-                reached = true;
-                break;
+        if let (Some(a), Some(avant)) = (surveille, precedent) {
+            let maintenant = lire_surveille(&m, a);
+            if maintenant != avant {
+                precedent = Some(maintenant);
+                seen += 1;
+                println!(
+                    "  {:#010x} passe de {:#010x} a {:#010x}, PC={:#010x}, apres {} pas",
+                    a, avant, maintenant, m.cpu.regs.pc, steps
+                );
+                if seen == nth {
+                    reached = true;
+                    break;
+                }
+            }
+        } else {
+            let condition_ok = cond.map_or(true, |(r, v)| m.cpu.regs.get_reg(r) == v);
+            if m.cpu.regs.pc == watch && condition_ok {
+                seen += 1;
+                if seen == nth {
+                    reached = true;
+                    break;
+                }
             }
         }
         let pc_avant = m.cpu.regs.pc;

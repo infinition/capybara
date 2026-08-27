@@ -40,6 +40,7 @@ fn main() {
     // MMIO_FORCE="adresse:valeur,adresse:valeur" impose des lectures sur des
     // registres non modelises, pour eprouver une hypothese sans coder un
     // peripherique entier.
+    m.bus.mmio_trace.log_ecritures_seules = std::env::var("MMIO_ECR").is_ok();
     if let Ok(v) = std::env::var("MMIO_FORCE") {
         for paire in v.split(',') {
             if let Some((a, val)) = paire.split_once(':') {

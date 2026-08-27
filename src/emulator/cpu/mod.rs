@@ -127,6 +127,9 @@ impl Cpu {
                 // Le SysTick pose lui-meme son drapeau d'attente : c'est une
                 // exception systeme, pas une IRQ externe a inscrire dans ISPR.
                 self.nvic.tick_systick(c);
+                // Le TE de l'ecran est entretenu ici : c'est un signal
+                // exterieur, sans quoi le firmware l'attend sans fin.
+                periph.port1.tick(c);
                 // Tick Peripherals
                 if periph.timers.tick(c) {
                     self.nvic.request_irq(16); // Timer IRQ

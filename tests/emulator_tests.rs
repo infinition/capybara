@@ -917,6 +917,44 @@ fn le_firmware_reel_accepte_la_flash_et_quitte_son_identification() {
 }
 
 #[test]
+fn le_port_relit_ses_sorties_et_le_niveau_de_ses_entrees() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+    let p1 = periph::GPIO_PORT1;
+
+    // Broche 5 en sortie, broche 10 en entree : c'est le brochage reel, ou la
+    // broche 5 commande le CS de l'ecran et la broche 10 recoit son TE.
+    bus.write_u32(p1 + 0x04, 1 << 5, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(p1 + 0x04, &mut periph, &nvic), 1 << 5);
+
+    // Une sortie doit se relire telle qu'ecrite, sinon la lecture-modification
+    // -ecriture du bit-band perd l'etat a chaque bit repositionne.
+    let donnees = bus.read_u32(p1, &mut periph, &nvic) & !(1 << 5);
+    bus.write_u32(p1, donnees, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(p1, &mut periph, &nvic) & (1 << 5), 0);
+
+    // Une entree ignore le verrou de sortie et suit le niveau exterieur.
+    periph.port1.entrees &= !(1 << 10);
+    assert_eq!(bus.read_u32(p1, &mut periph, &nvic) & (1 << 10), 0);
+    periph.port1.entrees |= 1 << 10;
+    assert_ne!(bus.read_u32(p1, &mut periph, &nvic) & (1 << 10), 0);
+}
+
+#[test]
+fn le_te_de_l_ecran_bat_sur_la_broche_dix_du_port_un() {
+    let mut periph = Peripherals::default();
+    let demi = tamagotchi_paradise_rs::emulator::peripherals::gpio_port::TE_DEMI_PERIODE;
+
+    let etat = |p: &Peripherals| (p.port1.read_reg(0) >> 10) & 1;
+    let depart = etat(&periph);
+    periph.port1.tick(demi as u32 + 1);
+    assert_ne!(etat(&periph), depart, "le TE doit changer d'etat a la demi-periode");
+    periph.port1.tick(demi as u32);
+    assert_eq!(etat(&periph), depart, "puis revenir, sinon aucun front ne se produit");
+}
+
+#[test]
 fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();
