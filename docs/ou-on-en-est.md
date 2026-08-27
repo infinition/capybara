@@ -101,17 +101,43 @@ et decremente un compteur. Son pointeur part de `0x180142A8`, soit le debut du
 tampon d'image, et devrait s'arreter au bout. Il atteint `0x18B83F0C`, tres
 au-dela de la memoire vive, et ne s'arrete jamais. Seuls 64 pixels sont ecrits.
 
-La cause est en amont : la source decodee, en `0x1800ECF4`, est **entierement a
-zero**. Aucun transfert ne l'a remplie. Le seul acces aux ressources releve est
-`flash 0x25F33C -> 0x1800FFB4`, sur 32 octets, soit un en-tete. Le corps de la
-ressource n'est jamais charge, et le decodeur tourne sur du vide.
+La cause est en amont. Le decodeur est un lecteur de flux binaire : il lit ses
+symboles dans une table dont l'adresse est calculee en `0x00006E86`, a partir de
+l'en-tete de ressource pose en `0x1800FFB4`. Cette table tombe sur `0x1800ECF4`,
+qui est **entierement a zero**. Un symbole toujours nul donne une longueur de
+repetition absurde, et le remplissage part.
 
-**Piste concrete** : trouver qui devrait charger ce corps. Poser `WATCH_MEM` sur
-`0x1800ECF4` pour confirmer que rien ne l'ecrit, puis remonter le chemin qui lit
-l'en-tete en `0x1800FFB4` et voir quelle branche, apres cette lecture, aurait du
-declencher la lecture du corps. La zone des ressources va de `0x111000` a
-`0x8286C3`, bien au-dela de la fenetre XIP de 1 Mo : le chargement passe donc
-par le DMA de la flash ou par un rebasage de la fenetre.
+La chronologie explique pourquoi, et elle est verifiable au `WATCH_MEM` :
+
+```text
+  50 323 960  0x1800FFB4 recoit l'en-tete 0xF8008C71, depuis flash 0x25F33C
+  50 325 111  0x1800FFB4 est ecrase par 0x17171717, depuis 0x00000A7A
+  50 337 197  le decodeur lit l'en-tete, deja detruit, et s'emballe
+  50 419 737  0x1800FFB4 recoit de nouveau l'en-tete
+  50 420 888  0x1800FFB4 est ecrase par 0x42424242
+```
+
+Le tampon d'en-tete est donc recycle entre son chargement et sa lecture. Soit le
+firmware attend que la copie soit ailleurs, soit c'est nous qui laissons passer
+une ecriture qui ne devrait pas atteindre cette adresse.
+
+`0x00000A7A` est un remplissage generique, appele de partout : le tracer sans
+condition ne mene nulle part. Il faut `WATCH_COND` sur le registre de
+destination, ou mieux, une surveillance d'ecriture sur `0x1800FFB4` couplee a la
+pile d'appels reelle, pour savoir quelle fonction recycle ce tampon.
+
+**Deux hypotheses a departager**, dans cet ordre :
+
+1. Le tampon est legitimement partage, et c'est l'ordonnancement qui est faux
+   chez nous : le rendu devrait suivre immediatement le chargement de l'en-tete.
+   Verifier si un evenement manquant, encore non modelise, devrait declencher le
+   rendu plus tot.
+2. Le rendu vise le bon tampon mais nous laissons passer une ecriture qui
+   deborde d'un objet voisin, auquel cas sa longueur vient d'un registre non
+   modelise.
+
+La geometrie, elle, est bonne : les globaux `0x18014290` et `0x18014294` valent
+tous deux 64, soit une vignette de 64 x 64 dans un ecran de 128 x 128.
 
 ## Ce qu'il ne faut pas refaire
 
