@@ -268,7 +268,7 @@ impl Thumb16 {
             }
             8 => val_dn & val_m,  // TST
             12 => val_dn | val_m, // ORR
-            13 => val_dn * val_m, // MUL
+            13 => val_dn.wrapping_mul(val_m), // MUL
             14 => val_dn & !val_m,// BIC
             15 => !val_m,         // MVN
             _ => val_dn,
@@ -554,7 +554,7 @@ impl Thumb16 {
         StepResult::Ok(2)
     }
 
-    fn eval_condition(cond: u16, regs: &Registers) -> bool {
+    pub(crate) fn eval_condition(cond: u16, regs: &Registers) -> bool {
         match cond {
             0 => regs.flag_z(),                 // EQ
             1 => !regs.flag_z(),                // NE
