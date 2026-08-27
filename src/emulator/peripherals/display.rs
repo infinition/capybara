@@ -66,6 +66,21 @@ impl DisplayController {
         }
     }
 
+    pub fn sync_from_sram(&mut self, sram: &[u8]) {
+        let vram_offset = (self.fb_base_addr.saturating_sub(0x2000_0000)) as usize;
+        let pixel_count = self.width * self.height;
+        let vram_byte_len = pixel_count * 2;
+        if vram_offset + vram_byte_len <= sram.len() {
+            for i in 0..pixel_count {
+                let off = vram_offset + i * 2;
+                let b0 = sram[off] as u16;
+                let b1 = sram[off + 1] as u16;
+                self.vram[i] = b0 | (b1 << 8);
+            }
+            self.dirty = true;
+        }
+    }
+
     pub fn get_rgba_buffer(&self) -> Vec<Color32> {
         let mut pixels = Vec::with_capacity(self.width * self.height);
         for &raw in &self.vram {

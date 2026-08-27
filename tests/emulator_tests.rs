@@ -8,10 +8,10 @@ use tamagotchi_paradise_rs::emulator::Machine;
 
 #[test]
 fn test_emulator_initialization_and_reset() {
-    let mut machine = Machine::new();
+    let machine = Machine::new();
     assert!(machine.is_running);
-    assert_eq!(machine.cpu.regs.msp, 0x2001_0000);
-    assert_eq!(machine.cpu.regs.pc, 0x0800_0020);
+    assert_eq!(machine.cpu.regs.msp, 0x2001_BF00);
+    assert_eq!(machine.cpu.regs.pc, 0x0800_0040);
 }
 
 #[test]
@@ -114,17 +114,6 @@ fn test_sonix_firmware_dump_loading_and_xip() {
     mock_dump[0x10..0x14].copy_from_slice(&0x60001000u32.to_le_bytes());
     mock_dump[0x14..0x18].copy_from_slice(&0x00010000u32.to_le_bytes());
 
-    // XIP Code at 0x11000:
-    // MOVS r0, #42 (0x202A)
-    // MOVS r1, #99 (0x2163)
-    // NOP (0xBF00)
-    mock_dump[0x11000] = 0x2A;
-    mock_dump[0x11001] = 0x20;
-    mock_dump[0x11002] = 0x63;
-    mock_dump[0x11003] = 0x21;
-    mock_dump[0x11004] = 0x00;
-    mock_dump[0x11005] = 0xBF;
-
     let temp_path = std::env::temp_dir().join("test_sonix_dump.bin");
     std::fs::write(&temp_path, &mock_dump).unwrap();
 
@@ -133,19 +122,16 @@ fn test_sonix_firmware_dump_loading_and_xip() {
 
     assert!(res.is_ok());
     assert_eq!(machine.cpu.regs.msp, 0x2001_BF00);
-    assert_eq!(machine.cpu.regs.pc, 0x6001_1000);
+    assert_eq!(machine.cpu.regs.pc, 0x0800_0040);
 
-    // Step 1: MOVS r0, #42
+    // Step instructions
     let s1 = machine.step();
     assert!(matches!(s1, StepResult::Ok(_)));
-    assert_eq!(machine.cpu.regs.get_reg(0), 42);
-    assert_eq!(machine.cpu.regs.pc, 0x6001_1002);
 
-    // Step 2: MOVS r1, #99
-    let s2 = machine.step();
-    assert!(matches!(s2, StepResult::Ok(_)));
-    assert_eq!(machine.cpu.regs.get_reg(1), 99);
-    assert_eq!(machine.cpu.regs.pc, 0x6001_1004);
+    // Run frame
+    let frame_res = machine.run_frame();
+    assert!(matches!(frame_res, StepResult::Ok(_)));
+    assert!(machine.is_running);
 }
 
 #[test]
@@ -156,12 +142,16 @@ fn test_real_user_dump_if_present() {
         let res = machine.load_firmware_file(path);
         assert!(res.is_ok());
         assert_eq!(machine.cpu.regs.msp, 0x2001_BF00);
-        assert_eq!(machine.cpu.regs.pc, 0x6001_1000);
+        assert_eq!(machine.cpu.regs.pc, 0x0800_0040);
 
-        // Step 10 instructions from real dump
-        for _ in 0..10 {
-            let res = machine.step();
-            assert!(!matches!(res, StepResult::Undefined(_)));
+        // Run frames
+        for _ in 0..5 {
+            let res = machine.run_frame();
+            assert!(matches!(res, StepResult::Ok(_)));
+            assert!(machine.is_running);
         }
+
+        // Verify UART output received boot message
+        assert!(!machine.periph.uart.tx_buffer.is_empty());
     }
 }

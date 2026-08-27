@@ -84,6 +84,7 @@ impl Machine {
             }
         }
 
+        self.periph.display.sync_from_sram(&self.bus.sram.data);
         StepResult::Ok(executed)
     }
 
@@ -92,6 +93,8 @@ impl Machine {
         let len = FirmwareLoader::load_flash_dump(&mut self.bus, p)?;
         self.firmware_path = Some(p.to_string_lossy().to_string());
         self.reset();
+        self.is_running = true;
+        self.periph.display.sync_from_sram(&self.bus.sram.data);
         Ok(len)
     }
 
