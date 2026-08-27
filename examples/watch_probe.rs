@@ -27,6 +27,17 @@ fn main() {
     let mut m = Machine::new();
     m.device_key = Some(key);
     m.load_firmware_file(&path).unwrap();
+    if let Ok(v) = std::env::var("MMIO_FORCE") {
+        for paire in v.split(',') {
+            if let Some((a, val)) = paire.split_once(':') {
+                let a = u32::from_str_radix(a.trim().trim_start_matches("0x"), 16);
+                let val = u32::from_str_radix(val.trim().trim_start_matches("0x"), 16);
+                if let (Ok(a), Ok(val)) = (a, val) {
+                    m.bus.mmio_trace.forcees.insert(a, val);
+                }
+            }
+        }
+    }
 
     let mut seen = 0u64;
     let mut steps = 0u64;

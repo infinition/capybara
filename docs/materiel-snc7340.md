@@ -153,6 +153,16 @@ de veille posés dans `0x45000300`, instruction `WFI`, effacement des interrupti
 en attente, boucle. SysTick désactivé, `PRIMASK` à 1, seule l'IRQ externe 3 armée,
 le RTC ayant été configuré juste avant. La source de réveil reste à modéliser.
 
+### Adressage des broches
+
+Le firmware lit ses entrées par la fenêtre bit-band. Un identifiant de broche
+encode `port = id >> 4` et `pin = id & 15`, cinq ports étant dispatchés par une
+table `TBB`, chacun résolu à travers un tableau de descripteurs en SRAM.
+
+Le registre de données du **port 2 est en `0x4001A000`**. Water y lit les broches
+`0x20` et `0x21`, les combine en `pin20 | (pin21 << 1)` et attend la valeur **3**,
+donc les deux broches hautes, l'état de repos d'entrées à résistance de tirage.
+
 **Water, Sky et Jade Forest** vont plus loin : SysTick actif (`CSR = 0x00010007`,
 donc horloge cœur, interruption armée, compteur en marche) et deux IRQ armées.
 Elles butent sur un bit de `0x4001A000`, lu par la fenêtre bit-band et attendu
