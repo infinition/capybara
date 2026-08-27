@@ -83,6 +83,35 @@ fn main() {
         m.cpu.regs.pc
     );
 
+    // MEM_CMP="a:b:longueur" compare deux zones et signale le premier ecart,
+    // ce qui permet de verifier une recopie sans la relire a la main.
+    if let Ok(v) = std::env::var("MEM_CMP") {
+        let p: Vec<&str> = v.split(':').collect();
+        if p.len() == 3 {
+            let a = u32::from_str_radix(p[0].trim_start_matches("0x"), 16).unwrap();
+            let b = u32::from_str_radix(p[1].trim_start_matches("0x"), 16).unwrap();
+            let n = u32::from_str_radix(p[2].trim_start_matches("0x"), 16).unwrap();
+            let mut ecarts = 0u32;
+            let mut premier = None;
+            for i in 0..n {
+                let x = m.bus.read_u8(a + i, &mut m.periph, &m.cpu.nvic);
+                let y = m.bus.read_u8(b + i, &mut m.periph, &m.cpu.nvic);
+                if x != y {
+                    ecarts += 1;
+                    if premier.is_none() {
+                        premier = Some((i, x, y));
+                    }
+                }
+            }
+            println!("
+== comparaison {:#010x} contre {:#010x} sur {:#x} octets", a, b, n);
+            println!("  octets differents : {}", ecarts);
+            if let Some((i, x, y)) = premier {
+                println!("  premier ecart a +{:#06x} : {:#04x} contre {:#04x}", i, x, y);
+            }
+        }
+    }
+
     if let Ok(v) = std::env::var("MEM_DUMP") {
         if let Ok(base) = u32::from_str_radix(v.trim_start_matches("0x"), 16) {
             println!("

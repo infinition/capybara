@@ -18,7 +18,7 @@
 /// deux bits distincts, releves dans la fonction de depart du firmware :
 ///
 /// ```text
-///   ctrl |= 2   ; direction : 0 = flash vers memoire, 1 = memoire vers flash
+///   ctrl |= 2   ; direction : 1 = flash vers memoire, 0 = memoire vers flash
 ///   ctrl &= ~2
 ///   ctrl |= 1   ; bit 0 : depart
 /// ```
@@ -48,6 +48,9 @@ pub struct FlashController {
     pub dma_ctrl: u32,
     /// Derniere copie effectuee, pour l'affichage de diagnostic.
     pub last_transfer: Option<(u32, u32, u32)>,
+    /// Journal des transferts, avec leur sens. Sert a verifier qui ecrit en
+    /// flash plutot qu'a le deduire de l'ordre des ecritures de registres.
+    pub transferts: Vec<(u32, u32, u32, bool)>,
 }
 
 pub const CTRL: u32 = 0x000;
@@ -60,11 +63,14 @@ pub const DMA_CTRL: u32 = 0x108;
 pub const DMA_FLASH: u32 = 0x10C;
 /// Bit de depart du transfert, dans DMA_CTRL.
 pub const DMA_START: u32 = 0x1;
-/// Bit de direction. A zero le transfert va de la flash vers la memoire, pose
-/// il remonte la memoire vers la flash. Le sens est etabli par l'ordre des
-/// transferts : le tout premier lit une page de sauvegarde pour la valider, et
-/// il a ce bit a zero.
-pub const DMA_VERS_FLASH: u32 = 0x2;
+/// Bit de direction. Pose, le transfert va de la flash vers la memoire ; a zero
+/// il remonte la memoire vers la flash.
+///
+/// Le sens est etabli par la trace : les trois premiers transferts lisent les
+/// pages 0xD49000, 0xEFE000 et 0xEFF000 pour les valider, et ils ont ce bit
+/// pose. Pris a l'envers, ils ecrasaient ces pages avec un tampon fraichement
+/// alloue, rempli du motif de poison 0xAB.
+pub const DMA_VERS_MEMOIRE: u32 = 0x2;
 
 /// Macronix MX25L12835F : fabricant 0xC2, type 0x20, capacite 0x18 (128 Mbit).
 /// C'est la puce reellement montee sur la console.
@@ -90,6 +96,7 @@ impl Default for FlashController {
             dma_flash_addr: 0,
             dma_ctrl: 0,
             last_transfer: None,
+            transferts: Vec::new(),
         }
     }
 }
@@ -154,9 +161,12 @@ impl FlashController {
                         flash_offset: self.dma_flash_addr & 0x00FF_FFFF,
                         mem_addr: self.dma_mem_addr,
                         len: self.dma_len,
-                        vers_memoire: val & DMA_VERS_FLASH == 0,
+                        vers_memoire: val & DMA_VERS_MEMOIRE != 0,
                     };
                     self.last_transfer = Some((t.flash_offset, t.mem_addr, t.len));
+                    if self.transferts.len() < 200 {
+                        self.transferts.push((t.flash_offset, t.mem_addr, t.len, t.vers_memoire));
+                    }
                     return Some(t);
                 }
             }

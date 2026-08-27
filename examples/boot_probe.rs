@@ -239,6 +239,19 @@ fn main() {
     }
 
     println!("
+== transferts du controleur de flash ({})", m.periph.flashctl.transferts.len());
+    for (i, (f, mem, len, vers_mem)) in m.periph.flashctl.transferts.iter().enumerate().take(12) {
+        println!(
+            "  {:>2}  flash {:#08x}  {}  memoire {:#010x}  {:#x} octets",
+            i,
+            f,
+            if *vers_mem { "->" } else { "<-" },
+            mem,
+            len
+        );
+    }
+
+    println!("
 == console du firmware ({} caracteres)", console.len());
     for l in console.lines().take(40) {
         if !l.trim().is_empty() {
