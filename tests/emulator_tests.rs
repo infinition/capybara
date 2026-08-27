@@ -58,6 +58,40 @@ fn test_thumb32_movw_movt() {
     assert_eq!(regs.get_reg(1), 0x4500_4100);
 }
 
+#[test]
+fn str_word_immediate_ecrit_32_bits_pas_un_octet() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // STR r1, [r2, #0] = 0x6011. Le flag octet est le bit 12, pas le bit 13.
+    regs.set_reg(1, 0xA55A_0000);
+    regs.set_reg(2, map::SRAM_BASE);
+    assert!(matches!(
+        Thumb16::execute(0x6011, &mut regs, &mut bus, &mut periph, &mut nvic),
+        StepResult::Ok(_)
+    ));
+    assert_eq!(bus.read_u32(map::SRAM_BASE, &mut periph, &nvic), 0xA55A_0000);
+}
+
+#[test]
+fn ldr_word_immediate_lit_32_bits_pas_un_octet() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // LDR r1, [r1, #0] = 0x6809.
+    bus.write_u32(map::SRAM_BASE, 0xDEAD_BEEF, &mut periph, &mut nvic);
+    regs.set_reg(1, map::SRAM_BASE);
+    assert!(matches!(
+        Thumb16::execute(0x6809, &mut regs, &mut bus, &mut periph, &mut nvic),
+        StepResult::Ok(_)
+    ));
+    assert_eq!(regs.get_reg(1), 0xDEAD_BEEF);
+}
+
 // -- Carte memoire, datasheet SNC7340 V1.7 section 4 --
 
 #[test]

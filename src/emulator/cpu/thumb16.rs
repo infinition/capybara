@@ -362,7 +362,7 @@ impl Thumb16 {
         periph: &mut Peripherals,
         nvic: &mut Nvic,
     ) -> StepResult {
-        let is_byte = (w & 0x2000) != 0;
+        let is_byte = (w & 0x1000) != 0;
         let is_ldr = (w & 0x0800) != 0;
         let imm5 = ((w >> 6) & 0x1F) as u32;
         let rn = ((w >> 3) & 0x7) as u8;
