@@ -98,11 +98,49 @@ d'elles n'est pas endormie, elle a échoué son autodiagnostic.
 Le bootrom n'étant pas émulé, le chargeur reconstruit le bloc boot-info
 (voir `install_boot_info` dans `src/emulator/loader.rs`).
 
+## Console de debug du firmware
+
+Le firmware embarque le code d'exemple du SDK Sonix et son `printf`. Dans la
+boucle de formatage, l'instruction en `0x1070` appelle la fonction de sortie avec
+le caractère dans `r0`. L'intercepter donne la console complète sans avoir à
+modéliser le DMA de l'UART :
+
+```bash
+cargo run --release --example boot_probe -- <dump.bin> <CLE> 300000000
+```
+
+Sortie actuelle :
+
+```
+[example]flash id:
+unsupport chip, please check your flash vender
+```
+
+## Périphériques établis par la trace
+
+| Base | Rôle | État |
+|---|---|---|
+| `0x4000A000` / `0x4000B000` | Convertisseurs SAR. Canal en `+0x00`, fin de conversion au bit 6 de `+0x14` | modélisé |
+| `0x40022000` | Contrôleur de flash externe. `+0x100` adresse mémoire, `+0x104` longueur, `+0x108` contrôle, `+0x10C` adresse flash | DMA modélisé, identifiant JEDEC non résolu |
+| `0x4002F000` | Contrôleur de la fenêtre XIP | modélisé |
+| `0x45000000` | SN_SYS0, horloges et PLL | partiellement modélisé |
+| `0x4001A000`, `0x40018000` | scrutés en statut, rôle non établi | à faire |
+
+La région bit-band du Cortex-M (`0x22000000` et `0x42000000`) est implémentée :
+le firmware scrute un statut par l'alias `0x42340000`, qui vise `0x4001A000` bit 0.
+
 ## État de l'émulation
 
-Les cinq éditions démarrent et exécutent des dizaines de millions
-d'instructions sans encodage inconnu, basculent en XIP et pilotent WDT,
-SN_SYS0 et le contrôleur XIP.
+Les cinq éditions démarrent, exécutent des centaines de millions d'instructions
+sans encodage inconnu, passent en code applicatif XIP et pilotent le watchdog,
+SN_SYS0, le contrôleur XIP, les convertisseurs et le contrôleur de flash.
+
+Le blocage actuel est identifié précisément : le firmware lit l'identifiant JEDEC
+de la flash, ne le reconnaît pas et boucle sur son message d'erreur. La fonction
+de lecture ne garde que l'octet de poids faible du registre `0x40022014`, donc
+l'identifiant se lit octet par octet, mais rendre `C2 20 18` dans cet ordre ne
+suffit pas. Le rôle du registre `0x40022010`, écrit à `0x00` puis `0x40` avant
+chaque lecture, reste à déterminer.
 
 Registres encore non modélisés, relevés par la trace MMIO :
 
