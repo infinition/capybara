@@ -103,13 +103,13 @@ fn main() {
     hot_pc.truncate(16);
     println!("
 == adresses les plus executees");
-    let lo = hot_pc.iter().map(|(a, _)| *a).min().unwrap_or(0);
+    let top = hot_pc.first().map(|(a, _)| *a).unwrap_or(0);
     for (addr, count) in &hot_pc {
         println!("  {:#010x}  {:>9} fois", addr, count);
     }
     println!("
 == desassemblage autour de la boucle");
-    for inst in m.get_disassembly_at(lo.saturating_sub(16), 32) {
+    for inst in m.get_disassembly_at(top.saturating_sub(16), 32) {
         let here = if inst.address == m.cpu.regs.pc { "<-- PC" } else { "" };
         println!("  {:#010x}  {:<8} {:<20} {}", inst.address, inst.mnemonic, inst.operands, here);
     }
