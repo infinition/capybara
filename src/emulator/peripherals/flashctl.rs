@@ -8,11 +8,15 @@
 ///   STR  0x800, [base, #0x04]     ; puis 0x4000
 ///   LDR  id,    [base, #0x14]     ; resultat
 /// ```
-/// Le firmware compare l'identifiant JEDEC obtenu a sa table de fabricants et
-/// affiche "unsupport chip, please check your flash vender" quand il ne le
-/// reconnait pas. Le protocole exact de cette lecture n'est pas encore etabli :
-/// rendre l'identifiant du MX25L12835F octet par octet ne suffit pas a le
-/// satisfaire, le role du registre 0x10 reste a determiner.
+/// Identification d'un bloc, registres 0x04 et 0x18 :
+/// ```text
+///   ctrl |= 1 << 15    ; sur 0x04, lance la lecture d'identification
+///   attendre que le bit 15 retombe, puis le bit 1
+///   LDR  paire, [base, #0x18]
+/// ```
+/// Le firmware compare le fabricant a sa table et se fige en imprimant
+/// "unsupport chip, please check your flash vender" quand il ne le reconnait
+/// pas. Ce message n'est pas du texte de repli : c'est une boucle sans sortie.
 ///
 /// Transfert par DMA, registres 0x100 a 0x10C. Le registre de controle porte
 /// deux bits distincts, releves dans la fonction de depart du firmware :
@@ -33,8 +37,6 @@ pub struct FlashController {
     pub ctrl: u32,
     pub command: u32,
     pub index: u32,
-    /// Identifiant JEDEC rendu par le registre de donnee.
-    pub jedec_id: u32,
     /// Reponse d'identification sur deux octets : fabricant puis composant.
     ///
     /// La fonction de lecture du firmware ne garde que l'octet de poids faible
@@ -57,6 +59,22 @@ pub const CTRL: u32 = 0x000;
 pub const COMMAND: u32 = 0x004;
 pub const INDEX: u32 = 0x010;
 pub const DATA: u32 = 0x014;
+/// Paire d'identification, rendue d'un bloc : fabricant en bits 15:8,
+/// composant en bits 7:0. C'est la meme reponse que le registre 0x14 rend
+/// octet par octet.
+///
+/// Le firmware pose le bit 15 de COMMAND, attend qu'il retombe, attend aussi
+/// que le bit 1 retombe, puis lit ce registre d'un seul LDR en 0x000039E8. Il
+/// en fait `(valeur & 0xFFFF) << 8` puis compare les bits 23:16 a 0xC2
+/// (Macronix) et 0xC8 (GigaDevice). Tout autre fabricant le fige dans une
+/// boucle d'impression sans sortie, en 0x1006A018.
+///
+/// La verification a ete faite en imposant des valeurs arbitraires : 0x01020304
+/// donne 0x00030400, ce qui etablit la transformation sans ambiguite.
+pub const ID_JEDEC: u32 = 0x018;
+/// Second mot d'identification, lu juste apres. Verifie sans effet : imposer
+/// une valeur ici ne change rien au resultat construit par le firmware.
+pub const ID_ETENDU: u32 = 0x01C;
 pub const DMA_MEM: u32 = 0x100;
 pub const DMA_LEN: u32 = 0x104;
 pub const DMA_CTRL: u32 = 0x108;
@@ -72,9 +90,6 @@ pub const DMA_START: u32 = 0x1;
 /// alloue, rempli du motif de poison 0xAB.
 pub const DMA_VERS_MEMOIRE: u32 = 0x2;
 
-/// Macronix MX25L12835F : fabricant 0xC2, type 0x20, capacite 0x18 (128 Mbit).
-/// C'est la puce reellement montee sur la console.
-pub const MX25L12835F_JEDEC: u32 = 0x00C2_2018;
 /// Reponse REMS du meme composant : fabricant 0xC2, identifiant 0x17.
 pub const MX25L12835F_REMS: u32 = 0x0000_C217;
 
@@ -84,7 +99,6 @@ impl Default for FlashController {
             ctrl: 0,
             command: 0,
             index: 0,
-            jedec_id: MX25L12835F_JEDEC,
             // Surchargeable pour balayer les candidats sans recompiler.
             reponse: std::env::var("SONIX_FLASH_ID")
                 .ok()
@@ -126,6 +140,8 @@ impl FlashController {
                 self.id_index += 1;
                 v
             }
+            ID_JEDEC => self.reponse,
+            ID_ETENDU => 0,
             DMA_MEM => self.dma_mem_addr,
             DMA_LEN => self.dma_len,
             // Le bit de depart retombe des la fin du transfert, instantanee ici,

@@ -9,6 +9,10 @@ use tamagotchi_paradise_rs::emulator::Machine;
 /// Dump de la console de l'auteur, absent du depot. Les tests qui en dependent
 /// sont neutres quand il n'est pas la.
 const REAL_DUMP: &str = r"%SONIX_DUMPS%\Tamagotchi_Paradise_Earth_MX25L12835F.bin";
+/// Water est la seule edition qui imprime sa console de debug pendant le boot.
+/// C'est donc elle qui rend visible le rejet du fabricant de flash.
+const REAL_DUMP_WATER: &str =
+    r"%SONIX_DUMPS%\Tamagotchi_Paradise_Water_MX25L12835F.bin";
 const REAL_DEVICE_KEY: u32 = 0x0000_0000;
 const REAL_ENTRY_SP: u32 = 0x1801_EE38;
 const REAL_ENTRY_PC: u32 = 0x0000_02F5;
@@ -855,6 +859,61 @@ fn le_firmware_reel_valide_sa_sauvegarde_et_cesse_de_se_plaindre() {
         "la sauvegarde doit etre validee, console obtenue : {}",
         texte
     );
+}
+
+#[test]
+fn le_controleur_rend_le_fabricant_de_la_flash_montee() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+    let fc = periph::FLASH_CTL;
+
+    // Sequence relevee en 0x000039C0 : poser le bit 15 de la commande, attendre
+    // qu'il retombe ainsi que le bit 1, puis lire la paire d'identification.
+    bus.write_u32(fc + 0x04, 1 << 15, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(fc + 0x04, &mut periph, &nvic) & ((1 << 15) | 2), 0);
+    let paire = bus.read_u32(fc + 0x18, &mut periph, &nvic);
+
+    // Le firmware en fait `(paire & 0xFFFF) << 8` puis compare les bits 23:16 au
+    // fabricant. Tout ce qui n'est ni 0xC2 ni 0xC8 le fige sans sortie.
+    let identifiant = (paire & 0xFFFF) << 8;
+    assert_eq!(
+        (identifiant >> 16) & 0xFF,
+        0xC2,
+        "le fabricant doit etre Macronix, sinon le firmware boucle sur son message d'erreur"
+    );
+}
+
+#[test]
+fn le_firmware_reel_accepte_la_flash_et_quitte_son_identification() {
+    let path = std::path::Path::new(REAL_DUMP_WATER);
+    if !path.exists() {
+        return;
+    }
+    let mut machine = Machine::new();
+    machine.device_key = Some(REAL_DEVICE_KEY);
+    machine.load_firmware_file(path).unwrap();
+
+    // 0x1006A018 est la boucle d'impression sans sortie du rejet de fabricant.
+    // 0x000093C8 suit l'identification dans la fonction d'initialisation :
+    // l'atteindre prouve que l'appel a rendu la main.
+    const BOUCLE_REJET: u32 = 0x1006_A018;
+    const APRES_IDENTIFICATION: u32 = 0x0000_93C8;
+    // L'identification aboutit vers 41,4 millions de pas : l'essentiel du delai
+    // vient des temporisations d'initialisation qui la suivent.
+    let mut passe = false;
+    for _ in 0..60_000_000u64 {
+        let pc = machine.cpu.regs.pc;
+        assert_ne!(pc, BOUCLE_REJET, "le firmware a rejete le fabricant de la flash");
+        if pc == APRES_IDENTIFICATION {
+            passe = true;
+            break;
+        }
+        if !matches!(machine.step(), StepResult::Ok(_)) {
+            break;
+        }
+    }
+    assert!(passe, "l'identification de la flash doit rendre la main a l'initialisation");
 }
 
 #[test]

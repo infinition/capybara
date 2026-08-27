@@ -42,6 +42,18 @@ fn main() {
     let mut seen = 0u64;
     let mut steps = 0u64;
     let mut reached = false;
+    // Pile d'appels reconstituee au vol. La lecture heuristique de la pile
+    // materielle se trompe des qu'un cadre contient d'anciennes valeurs ; ici
+    // on empile sur chaque appel reel et on depile sur le retour correspondant.
+    let mut pile: Vec<(u32, u32)> = Vec::new();
+    // TRACE_PAS=N garde les N dernieres adresses executees. C'est la seule
+    // lecture fiable des frontieres d'instructions dans une zone melant code et
+    // donnees, la ou un desassemblage a froid se decale.
+    let trace_len: usize = std::env::var("TRACE_PAS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let mut trace: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
     while steps < budget {
         let condition_ok = cond.map_or(true, |(r, v)| m.cpu.regs.get_reg(r) == v);
         if m.cpu.regs.pc == watch && condition_ok {
@@ -51,8 +63,31 @@ fn main() {
                 break;
             }
         }
+        let pc_avant = m.cpu.regs.pc;
+        let lr_avant = m.cpu.regs.lr;
+        if trace_len > 0 {
+            if trace.len() == trace_len {
+                trace.pop_front();
+            }
+            trace.push_back(pc_avant);
+        }
         match m.step() {
-            StepResult::Ok(_) => steps += 1,
+            StepResult::Ok(_) => {
+                steps += 1;
+                let retour = m.cpu.regs.lr & !1;
+                let pc = m.cpu.regs.pc;
+                if m.cpu.regs.lr != lr_avant
+                    && retour > pc_avant
+                    && retour <= pc_avant + 4
+                    && pc != retour
+                {
+                    if pile.len() < 256 {
+                        pile.push((pc_avant, retour));
+                    }
+                } else if pile.last().is_some_and(|&(_, r)| pc == r) {
+                    pile.pop();
+                }
+            }
             StepResult::Undefined(op) => {
                 println!("arret : encodage inconnu {:#06x} a PC={:#010x}", op, m.cpu.regs.pc);
                 break;
@@ -82,6 +117,27 @@ fn main() {
         m.cpu.regs.lr,
         m.cpu.regs.pc
     );
+
+    if trace_len > 0 {
+        println!("
+== {} derniers pas executes", trace.len());
+        for pc in &trace {
+            let d = m.get_disassembly_at(*pc, 1);
+            match d.first() {
+                Some(i) => println!("  {:#010x}  {:<8} {}", pc, i.mnemonic, i.operands),
+                None => println!("  {:#010x}", pc),
+            }
+        }
+    }
+
+    println!("
+== pile d'appels reelle, du plus recent au plus ancien");
+    if pile.is_empty() {
+        println!("  vide");
+    }
+    for (site, retour) in pile.iter().rev().take(24) {
+        println!("  appel depuis {:#010x}  retour {:#010x}", site, retour);
+    }
 
     // MEM_CMP="a:b:longueur" compare deux zones et signale le premier ecart,
     // ce qui permet de verifier une recopie sans la relire a la main.
