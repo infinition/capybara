@@ -1017,6 +1017,65 @@ fn le_canal_de_transfert_recopie_puis_signale_sa_fin() {
 }
 
 #[test]
+fn l_immediat_modifie_replique_son_octet_au_lieu_de_le_decaler() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // Les quatre motifs de l'architecture, quand imm12[11:10] vaut 00.
+    // MOV.W r0, #imm = 0xF04F 0x0<imm3><Rd><imm8>, ici Rd = 0.
+    let cas: [(u16, u16, u32); 4] = [
+        (0xF04F, 0x00FF, 0x0000_00FF), // imm12[9:8] = 00
+        (0xF04F, 0x10FF, 0x00FF_00FF), // 01
+        (0xF04F, 0x20FF, 0xFF00_FF00), // 10
+        (0xF04F, 0x30FF, 0xFFFF_FFFF), // 11
+    ];
+    for (w1, w2, attendu) in cas {
+        Thumb32::execute(w1, w2, &mut regs, &mut bus, &mut periph, &mut nvic);
+        assert_eq!(
+            regs.get_reg(0),
+            attendu,
+            "l'immediat modifie {:#06x} doit valoir {:#010x}",
+            w2,
+            attendu
+        );
+    }
+
+    // Consequence directe : CMP.W rX, #-1 doit voir un negatif comme negatif.
+    // Le decodeur de sprites s'en sert pour distinguer une repetition d'une
+    // suite litterale, et ne voyait que des repetitions.
+    regs.set_reg(0, 0xFFFF_FFD1);
+    Thumb32::execute(0xF1B0, 0x3FFF, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert!(regs.flag_n(), "0xFFFFFFD1 compare a -1 doit rester negatif");
+    assert!(!regs.flag_z());
+
+    regs.set_reg(0, 0x0000_0017);
+    Thumb32::execute(0xF1B0, 0x3FFF, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert!(!regs.flag_n(), "0x17 compare a -1 doit rester positif");
+}
+
+#[test]
+fn le_registre_de_configuration_de_la_flash_se_relit() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+    let fc = periph::FLASH_CTL;
+
+    // Au repos, le firmware attend 0x40 en 0x0000918C : Quad Enable pose et
+    // aucune ecriture en cours. Son bit 0 est le temoin d'ecriture, scrute
+    // apres chaque programmation.
+    bus.write_u32(fc + 0x04, 1 << 14, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(fc + 0x14, &mut periph, &nvic), 0x40);
+
+    // Sequence d'ecriture de 0x00005808 : la donnee en 0x10, puis l'ordre.
+    bus.write_u32(fc + 0x10, 0x42, &mut periph, &mut nvic);
+    bus.write_u32(fc + 0x04, 1 << 11, &mut periph, &mut nvic);
+    bus.write_u32(fc + 0x04, 1 << 14, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(fc + 0x14, &mut periph, &nvic), 0x42);
+}
+
+#[test]
 fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();

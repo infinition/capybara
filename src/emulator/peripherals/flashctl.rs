@@ -2,12 +2,16 @@
 ///
 /// Deduit du journal des acces du firmware. Deux fonctions distinctes :
 ///
-/// Interrogation de la puce, registres 0x04, 0x10 et 0x14 :
+/// Acces aux registres de la puce, registres 0x04, 0x10 et 0x14, releve en
+/// 0x00005808 :
 /// ```text
-///   STR  index, [base, #0x10]
-///   STR  0x800, [base, #0x04]     ; puis 0x4000
-///   LDR  id,    [base, #0x14]     ; resultat
+///   STR  valeur, [base, #0x10]    ; donnee a ecrire
+///   ctrl |= 1 << 11               ; ordre d'ecriture, sur 0x04
+///   ctrl |= 1 << 14               ; ordre de lecture
+///   LDR  valeur, [base, #0x14]    ; donnee lue
 /// ```
+/// Le firmware appelle cette sequence avec -1 pour lire sans ecrire : la
+/// comparaison `ADDS r0, r1, #1` en 0x00005816 saute alors l'ecriture.
 /// Identification d'un bloc, registres 0x04 et 0x18 :
 /// ```text
 ///   ctrl |= 1 << 15    ; sur 0x04, lance la lecture d'identification
@@ -37,13 +41,18 @@ pub struct FlashController {
     pub ctrl: u32,
     pub command: u32,
     pub index: u32,
-    /// Reponse d'identification sur deux octets : fabricant puis composant.
-    ///
-    /// La fonction de lecture du firmware ne garde que l'octet de poids faible
-    /// de 0x14 (LDRB.W apres le LDR), l'identifiant se lit donc octet par
-    /// octet, comme sur la FIFO de reception d'un controleur SPI.
+    /// Paire d'identification rendue par le registre 0x18.
     pub reponse: u32,
-    pub id_index: usize,
+    /// Registre de configuration de la puce, lu en 0x14 et ecrit par 0x10.
+    ///
+    /// Le firmware le lit d'abord sans rien ecrire et attend 0x40, en
+    /// 0x0000918C ; s'il ne l'obtient pas il ecrit 64 et relit. C'est le bit
+    /// Quad Enable du MX25L, deja pose sur une console qui demarre en quad. Son
+    /// bit 0 est aussi le temoin d'ecriture en cours, que le firmware scrute
+    /// apres chaque programmation : le laisser pose le fige.
+    pub registre: u32,
+    /// Derniere valeur deposee en 0x10, en attente de l'ordre d'ecriture.
+    pub valeur_a_ecrire: u32,
     pub dma_mem_addr: u32,
     pub dma_len: u32,
     pub dma_flash_addr: u32,
@@ -90,8 +99,13 @@ pub const DMA_START: u32 = 0x1;
 /// alloue, rempli du motif de poison 0xAB.
 pub const DMA_VERS_MEMOIRE: u32 = 0x2;
 
-/// Reponse REMS du meme composant : fabricant 0xC2, identifiant 0x17.
+/// Reponse d'identification du composant : fabricant 0xC2, identifiant 0x17.
 pub const MX25L12835F_REMS: u32 = 0x0000_C217;
+/// Bit d'ordre d'ecriture d'un registre de la puce, dans COMMAND.
+pub const CMD_ECRIRE_REGISTRE: u32 = 1 << 11;
+/// Valeur du registre de configuration au repos : Quad Enable pose, aucune
+/// ecriture en cours.
+pub const REGISTRE_AU_REPOS: u32 = 0x40;
 
 impl Default for FlashController {
     fn default() -> Self {
@@ -104,7 +118,8 @@ impl Default for FlashController {
                 .ok()
                 .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
                 .unwrap_or(MX25L12835F_REMS),
-            id_index: 0,
+            registre: REGISTRE_AU_REPOS,
+            valeur_a_ecrire: 0,
             dma_mem_addr: 0,
             dma_len: 0,
             dma_flash_addr: 0,
@@ -116,18 +131,6 @@ impl Default for FlashController {
 }
 
 impl FlashController {
-    /// Octet courant de la reponse d'identification.
-    ///
-    /// Le firmware fait deux lectures par tentative, pas trois : c'est la
-    /// signature de REMS (0x90), qui rend le fabricant puis l'identifiant de
-    /// composant, et non RDID (0x9F) qui en rend trois. Le rang est choisi par
-    /// le registre d'index plutot que par un compteur, pour que deux tentatives
-    /// successives ne se dephasent pas.
-    fn octet_identifiant(&self) -> u32 {
-        let rang = if self.index == 0 { 0 } else { 1 };
-        (self.reponse >> (8 * (1 - rang))) & 0xFF
-    }
-
     pub fn read_reg(&mut self, offset: u32) -> u32 {
         match offset {
             CTRL => self.ctrl,
@@ -135,11 +138,7 @@ impl FlashController {
             // Sans latence modelisee, elle est toujours terminee.
             COMMAND => 0,
             INDEX => self.index,
-            DATA => {
-                let v = self.octet_identifiant();
-                self.id_index += 1;
-                v
-            }
+            DATA => self.registre,
             ID_JEDEC => self.reponse,
             ID_ETENDU => 0,
             DMA_MEM => self.dma_mem_addr,
@@ -161,12 +160,18 @@ impl FlashController {
     pub fn write_reg(&mut self, offset: u32, val: u32) -> Option<Transfer> {
         match offset {
             CTRL => self.ctrl = val,
-            COMMAND => self.command = val,
-            // Le rang n'est pas remis a zero ici : le firmware ecrit 0x00 puis
-            // 0x40 dans ce registre entre deux lectures successives, et attend
-            // l'octet suivant, pas le meme. Remettre a zero lui rendait deux
-            // fois l'octet de fabricant.
-            INDEX => self.index = val,
+            COMMAND => {
+                self.command = val;
+                if val & CMD_ECRIRE_REGISTRE != 0 {
+                    self.registre = self.valeur_a_ecrire;
+                }
+            }
+            // Ce registre porte la donnee a ecrire ; elle n'est prise en compte
+            // qu'a l'ordre d'ecriture, sur COMMAND.
+            INDEX => {
+                self.index = val;
+                self.valeur_a_ecrire = val;
+            }
             DMA_MEM => self.dma_mem_addr = val,
             DMA_LEN => self.dma_len = val,
             DMA_FLASH => self.dma_flash_addr = val,

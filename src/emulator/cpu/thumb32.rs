@@ -655,10 +655,22 @@ pub(crate) fn add_with_carry(a: u32, b: u32, carry_in: bool) -> (u32, bool, bool
 /// et rend la retenue associee.
 fn thumb_expand_imm_c(imm12: u32, carry_in: bool) -> (u32, bool) {
     if imm12 & 0xC00 == 0 {
-        // imm12[11:10] == 00 : imm8 decale de (imm3 * 8), retenue inchangee.
+        // imm12[11:10] == 00 : l'octet est replique, il n'est pas decale. Les
+        // quatre motifs sont ceux de l'architecture, et la retenue ne bouge pas.
+        //
+        // Les prendre pour un decalage rendait 0xFF000000 la ou l'architecture
+        // demande 0xFFFFFFFF, ce qui faussait tout `CMP.W rX, #-1`. Le decodeur
+        // de sprites du firmware s'en sert pour distinguer une repetition d'une
+        // suite litterale : il ne voyait plus que des repetitions et deroulait
+        // dix-sept mille octets la ou il en fallait quatre mille.
         let imm8 = imm12 & 0xFF;
-        let shift = ((imm12 >> 8) & 0x3) * 8;
-        (imm8 << shift, carry_in)
+        let v = match (imm12 >> 8) & 0x3 {
+            0 => imm8,
+            1 => (imm8 << 16) | imm8,
+            2 => (imm8 << 24) | (imm8 << 8),
+            _ => imm8 * 0x0101_0101,
+        };
+        (v, carry_in)
     } else {
         // Rotation d'un octet 0b1:imm12[6:0] de imm12[11:7] bits.
         let unrotated = 0x80 | (imm12 & 0x7F);
