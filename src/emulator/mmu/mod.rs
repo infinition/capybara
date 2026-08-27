@@ -42,6 +42,16 @@ impl MemoryBus {
                 let offset = (addr - 0x1000_0000) as usize;
                 self.flash.read_u8(offset)
             }
+            // Flash SPI XIP Sonix mapped (0x60000000, 16 MB)
+            0x6000_0000..=0x60FF_FFFF => {
+                let offset = (addr - 0x6000_0000) as usize;
+                self.flash.read_u8(offset)
+            }
+            // Flash SPI Alias mapped (0x18000000, 16 MB)
+            0x1800_0000..=0x18FF_FFFF => {
+                let offset = (addr - 0x1800_0000) as usize;
+                self.flash.read_u8(offset)
+            }
             // SRAM / PRAM (128 KB)
             0x2000_0000..=0x2001_FFFF => {
                 let offset = (addr - 0x2000_0000) as usize;

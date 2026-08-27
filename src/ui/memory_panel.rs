@@ -15,6 +15,9 @@ impl MemoryPanel {
     ) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Memory Hex Viewer:").strong());
+            if ui.button("XIP (0x60000000)").clicked() {
+                *base_address = 0x6000_0000;
+            }
             if ui.button("Flash (0x10000000)").clicked() {
                 *base_address = 0x1000_0000;
             }

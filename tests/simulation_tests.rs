@@ -88,9 +88,10 @@ fn test_minigames_logic() {
 #[test]
 fn test_flash_inspector_layout() {
     let inspector = FlashInspector::new();
-    assert_eq!(inspector.sections.len(), 5);
+    assert_eq!(inspector.sections.len(), 6);
     assert_eq!(inspector.sections[0].name, "Firmware Header");
     assert_eq!(inspector.sections[2].offset_start, 0x011000);
+    assert_eq!(inspector.header_magic, "SONIXDEV");
 }
 
 #[test]

@@ -55,6 +55,12 @@ impl Cpu {
             return StepResult::Halt;
         }
 
+        let pc = self.regs.pc;
+        if pc >= 0xFFFF_FFF0 || pc == 0 {
+            self.is_halted = true;
+            return StepResult::Halt;
+        }
+
         // Check for pending interrupts if not masked
         if self.regs.primask == 0 {
             if let Some(irq) = self.nvic.get_highest_pending_irq() {
@@ -62,15 +68,14 @@ impl Cpu {
             }
         }
 
-        let pc = self.regs.pc;
         let w1 = bus.read_u16(pc, periph, &self.nvic);
-        self.regs.pc += 2;
+        self.regs.pc = self.regs.pc.wrapping_add(2);
 
         let is_32 = (w1 & 0xF800) == 0xE800 || (w1 & 0xF800) == 0xF000 || (w1 & 0xF800) == 0xF800;
 
         let result = if is_32 {
             let w2 = bus.read_u16(self.regs.pc, periph, &self.nvic);
-            self.regs.pc += 2;
+            self.regs.pc = self.regs.pc.wrapping_add(2);
             Thumb32::execute(w1, w2, &mut self.regs, bus, periph, &mut self.nvic)
         } else {
             Thumb16::execute(w1, &mut self.regs, bus, periph, &mut self.nvic)

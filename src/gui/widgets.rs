@@ -354,36 +354,53 @@ impl GuiWidgets {
         Window::new(i18n.t("hw_title"))
             .open(&mut open)
             .collapsible(false)
-            .default_width(450.0)
+            .default_width(480.0)
             .show(ctx, |ui| {
                 ui.label(RichText::new(i18n.t("hw_desc")).italics());
                 ui.separator();
 
-                ui.label(
-                    RichText::new(format!(
-                        "Flash Size: {} MB (128 Mbit)",
-                        inspector.file_size / (1024 * 1024)
-                    ))
-                    .strong(),
-                );
-                ui.label(format!("Magic / Vector: {}", inspector.header_magic));
+                ui.horizontal(|ui| {
+                    ui.label("Édition détectée:");
+                    ui.label(RichText::new(&inspector.detected_edition).color(Color32::from_rgb(100, 220, 255)).strong());
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Flash Size:");
+                    ui.label(
+                        RichText::new(format!(
+                            "{} MB (128 Mbit)",
+                            inspector.file_size / (1024 * 1024)
+                        ))
+                        .strong(),
+                    );
+                });
+
+                ui.label(format!("Magic / Header: {}", inspector.header_magic));
+                ui.label(format!(
+                    "ARC2 Container: {} tables ({} KB / {} octets)",
+                    inspector.arc2_assets_count,
+                    inspector.arc2_total_bytes / 1024,
+                    inspector.arc2_total_bytes
+                ));
                 ui.label(i18n.t("hw_uart_status"));
 
                 ui.add_space(8.0);
-                ui.label(RichText::new("Memory Sections:").strong());
+                ui.label(RichText::new("Memory Layout & Partitions:").strong());
 
-                ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     for section in &inspector.sections {
                         ui.group(|ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(section.name).strong());
+                                ui.label(RichText::new(&section.name).strong());
                                 ui.label(format!(
-                                    "0x{:06X} - 0x{:06X}",
-                                    section.offset_start, section.offset_end
+                                    "0x{:06X} - 0x{:06X} ({} KB)",
+                                    section.offset_start,
+                                    section.offset_end,
+                                    section.size_bytes / 1024
                                 ));
-                                ui.colored_label(Color32::GREEN, section.status);
+                                ui.colored_label(Color32::GREEN, &section.status);
                             });
-                            ui.label(RichText::new(section.description).small());
+                            ui.label(RichText::new(&section.description).small());
                         });
                     }
                 });

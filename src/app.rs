@@ -3,7 +3,8 @@ use egui::{CentralPanel, Context, Key, SidePanel, TopBottomPanel};
 
 use crate::audio::{AudioEngine, SoundEffect};
 use crate::emulator::Machine;
-use crate::gui::ShellColor;
+use crate::gui::{ActiveModal, GuiWidgets, ShellColor};
+use crate::hw_bridge::FlashInspector;
 use crate::i18n::{I18n, Language};
 use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
@@ -17,6 +18,8 @@ pub struct TamagotchiApp {
     pub last_frame_time: std::time::Instant,
     pub load_path_input: String,
     pub status_msg: Option<String>,
+    pub flash_inspector: FlashInspector,
+    pub active_modal: ActiveModal,
 }
 
 impl TamagotchiApp {
@@ -31,10 +34,12 @@ impl TamagotchiApp {
             i18n,
             shell_color: ShellColor::OceanBlue,
             show_debugger: true,
-            hex_base_addr: 0x0800_0000,
+            hex_base_addr: 0x6001_1000,
             last_frame_time: std::time::Instant::now(),
             load_path_input: String::new(),
             status_msg: Some("Tamagotchi Paradise Hardware Emulation Ready.".to_string()),
+            flash_inspector: FlashInspector::new(),
+            active_modal: ActiveModal::None,
         }
     }
 }
@@ -71,7 +76,12 @@ impl eframe::App for TamagotchiApp {
                     self.load_path_input = path.to_string_lossy().to_string();
                     match self.machine.load_firmware_file(path) {
                         Ok(bytes) => {
-                            self.status_msg = Some(format!("Loaded {} bytes from dropped file.", bytes));
+                            let _ = self.flash_inspector.inspect_file(path);
+                            self.hex_base_addr = 0x6001_1000;
+                            self.status_msg = Some(format!(
+                                "Loaded {} ({} bytes). XIP entry: 0x60011000",
+                                self.flash_inspector.detected_edition, bytes
+                            ));
                         }
                         Err(e) => {
                             self.status_msg = Some(format!("Load error: {}", e));
@@ -90,6 +100,10 @@ impl eframe::App for TamagotchiApp {
 
                 if ui.button(if self.show_debugger { "Hide Debugger" } else { "Show Debugger" }).clicked() {
                     self.show_debugger = !self.show_debugger;
+                }
+
+                if ui.button("💾 Inspecteur Flash").clicked() {
+                    self.active_modal = ActiveModal::FlashInspector;
                 }
 
                 ui.separator();
@@ -141,7 +155,12 @@ impl eframe::App for TamagotchiApp {
                                     self.load_path_input = path.to_string_lossy().to_string();
                                     match self.machine.load_firmware_file(&path) {
                                         Ok(bytes) => {
-                                            self.status_msg = Some(format!("Loaded {} bytes into Flash.", bytes));
+                                            let _ = self.flash_inspector.inspect_file(&path);
+                                            self.hex_base_addr = 0x6001_1000;
+                                            self.status_msg = Some(format!(
+                                                "Loaded {} ({} bytes). XIP entry: 0x60011000",
+                                                self.flash_inspector.detected_edition, bytes
+                                            ));
                                         }
                                         Err(e) => {
                                             self.status_msg = Some(format!("Load error: {}", e));
@@ -154,7 +173,12 @@ impl eframe::App for TamagotchiApp {
                             if ui.button("Load").clicked() && !self.load_path_input.is_empty() {
                                 match self.machine.load_firmware_file(&self.load_path_input) {
                                     Ok(bytes) => {
-                                        self.status_msg = Some(format!("Loaded {} bytes into Flash.", bytes));
+                                        let _ = self.flash_inspector.inspect_file(&self.load_path_input);
+                                        self.hex_base_addr = 0x6001_1000;
+                                        self.status_msg = Some(format!(
+                                            "Loaded {} ({} bytes). XIP entry: 0x60011000",
+                                            self.flash_inspector.detected_edition, bytes
+                                        ));
                                     }
                                     Err(e) => {
                                         self.status_msg = Some(format!("Load error: {}", e));
@@ -269,5 +293,13 @@ impl eframe::App for TamagotchiApp {
                 self.audio.play(SoundEffect::DialTick);
             }
         });
+
+        // 6. Modals
+        GuiWidgets::render_flash_inspector_modal(
+            ctx,
+            &self.i18n,
+            &mut self.active_modal,
+            &self.flash_inspector,
+        );
     }
 }

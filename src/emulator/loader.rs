@@ -15,8 +15,23 @@ impl FirmwareLoader {
         let len = buffer.len();
         bus.flash.load_binary(0, &buffer);
 
-        // If it starts with a valid vector table, also mirror to boot_rom / initial vectors
-        if len >= 8 {
+        // Detect Sonix SNC73410 SPI Flash Dump (Starts with 'SONIXDEV' magic)
+        if buffer.starts_with(b"SONIXDEV") || (len == 16 * 1024 * 1024 && &buffer[0..8] == b"SONIXDEV") {
+            let mut vector_table = vec![0u8; 256];
+            let sp: u32 = 0x2001_BF00; // Top of SRAM for SNC73410
+            let pc: u32 = 0x6001_1001; // XIP Entry Point in Thumb mode (offset 0x11000)
+            let default_handler: u32 = 0x6001_1011;
+
+            vector_table[0..4].copy_from_slice(&sp.to_le_bytes());
+            vector_table[4..8].copy_from_slice(&pc.to_le_bytes());
+
+            for i in 2..64 {
+                let off = i * 4;
+                vector_table[off..off + 4].copy_from_slice(&default_handler.to_le_bytes());
+            }
+
+            bus.boot_rom.load_binary(&vector_table);
+        } else if len >= 8 {
             let initial_sp = bus.flash.read_u32(0);
             let _initial_pc = bus.flash.read_u32(4);
             if (0x2000_0000..=0x2002_0000).contains(&initial_sp) {

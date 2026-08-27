@@ -423,6 +423,61 @@ impl Thumb16 {
             return StepResult::Ok(1);
         }
 
+        // CBZ / CBNZ: 1011 op 0 i 1 imm5 rn
+        if (w & 0xF500) == 0xB100 {
+            let is_cbnz = (w & 0x0800) != 0;
+            let i = ((w >> 9) & 1) as u32;
+            let imm5 = ((w >> 3) & 0x1F) as u32;
+            let rn = (w & 0x7) as u8;
+            let imm = (i << 6) | (imm5 << 1);
+            let val = regs.get_reg(rn);
+            if (is_cbnz && val != 0) || (!is_cbnz && val == 0) {
+                regs.pc = regs.pc.wrapping_add(imm);
+                return StepResult::Ok(2);
+            }
+            return StepResult::Ok(1);
+        }
+
+        // SXTH / SXTB / UXTH / UXTB: 1011 0010 op rm rd
+        if (w & 0xFF00) == 0xB200 {
+            let op = (w >> 6) & 3;
+            let rm = ((w >> 3) & 7) as u8;
+            let rd = (w & 7) as u8;
+            let rm_val = regs.get_reg(rm);
+            let res = match op {
+                0 => (rm_val as i16 as i32) as u32, // SXTH
+                1 => (rm_val as i8 as i32) as u32,  // SXTB
+                2 => rm_val & 0xFFFF,               // UXTH
+                3 => rm_val & 0xFF,                 // UXTB
+                _ => rm_val,
+            };
+            regs.set_reg(rd, res);
+            return StepResult::Ok(1);
+        }
+
+        // REV / REV16 / REVSH: 1011 1010 op rm rd
+        if (w & 0xFF00) == 0xBA00 {
+            let op = (w >> 6) & 3;
+            let rm = ((w >> 3) & 7) as u8;
+            let rd = (w & 7) as u8;
+            let rm_val = regs.get_reg(rm);
+            let res = match op {
+                0 => rm_val.swap_bytes(), // REV
+                1 => ((rm_val & 0x00FF00FF) << 8) | ((rm_val & 0xFF00FF00) >> 8), // REV16
+                3 => (rm_val as i16).swap_bytes() as i32 as u32, // REVSH
+                _ => rm_val,
+            };
+            regs.set_reg(rd, res);
+            return StepResult::Ok(1);
+        }
+
+        // CPSID / CPSIE: 1011 0110 011 x
+        if (w & 0xFFE0) == 0xB660 {
+            let is_disable = (w & 0x0010) != 0;
+            regs.primask = if is_disable { 1 } else { 0 };
+            return StepResult::Ok(1);
+        }
+
         // PUSH: 1011 010 m reg_list
         if (w & 0xFE00) == 0xB400 {
             let has_lr = (w & 0x0100) != 0;
