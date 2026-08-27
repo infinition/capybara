@@ -39,15 +39,31 @@ pub struct GpioPort {
     /// en cycles. C'est ainsi qu'arrive le TE de l'ecran, que le firmware attend
     /// pour se synchroniser sur les trames.
     pub periodique: Option<(u32, u64)>,
+    /// Masque d'autorisation d'interruption, une broche par bit.
+    pub irq_enable: u32,
+    /// Drapeaux d'interruption en attente. Le firmware les lit en 0x1C et les
+    /// efface en ecrivant un a la meme position en 0x20.
+    pub irq_status: u32,
     cycles: u64,
 }
 
 pub const DATA: u32 = 0x00;
 pub const DIRECTION: u32 = 0x04;
 pub const MODE: u32 = 0x08;
+/// Autorisation d'interruption, posee broche par broche par la fenetre
+/// bit-band depuis 0x000028C8.
+pub const IRQ_ENABLE: u32 = 0x18;
+/// Drapeaux d'interruption, lus en 0x0000C132 par le gestionnaire.
+pub const IRQ_STATUS: u32 = 0x1C;
+/// Effacement des drapeaux, ecrit en 0x0000C160. Un bit a un efface le sien.
+pub const IRQ_CLEAR: u32 = 0x20;
 
 /// Broche du signal TE sur le port 1.
 pub const TE_PIN: u32 = 10;
+/// Interruption du port 1 dans le controleur d'interruptions. Le vecteur 27,
+/// en 0x000000AC, pointe sur 0x0000C120, qui lit les drapeaux du port 1, les
+/// efface et incremente le compteur de trames en 0x1801C2C0.
+pub const PORT1_IRQ: u32 = 27;
 /// Demi-periode du TE, en cycles du coeur.
 ///
 /// Le SysTick est arme a 95999, soit une milliseconde a 96 MHz. Une trame a
@@ -62,6 +78,8 @@ impl Default for GpioPort {
             direction: 0,
             mode: 0,
             periodique: None,
+            irq_enable: 0,
+            irq_status: 0,
             cycles: 0,
         }
     }
@@ -74,7 +92,7 @@ impl GpioPort {
     }
 
     pub fn handles(offset: u32) -> bool {
-        matches!(offset, DATA | DIRECTION | MODE)
+        matches!(offset, DATA | DIRECTION | MODE | IRQ_ENABLE | IRQ_STATUS | IRQ_CLEAR)
     }
 
     pub fn read_reg(&self, offset: u32) -> u32 {
@@ -82,6 +100,8 @@ impl GpioPort {
             DATA => (self.sorties & self.direction) | (self.entrees & !self.direction),
             DIRECTION => self.direction,
             MODE => self.mode,
+            IRQ_ENABLE => self.irq_enable,
+            IRQ_STATUS => self.irq_status,
             _ => 0,
         }
     }
@@ -91,22 +111,36 @@ impl GpioPort {
             DATA => self.sorties = val,
             DIRECTION => self.direction = val,
             MODE => self.mode = val,
+            IRQ_ENABLE => self.irq_enable = val,
+            IRQ_CLEAR => self.irq_status &= !val,
             _ => {}
         }
     }
 
     /// Fait avancer le signal periodique du port. Sans lui, le firmware attend
     /// indefiniment un front sur le TE et n'affiche jamais rien.
-    pub fn tick(&mut self, cycles: u32) {
+    ///
+    /// Rend vrai quand un front montant autorise vient de poser un drapeau
+    /// d'interruption : c'est a l'appelant de la signaler au controleur.
+    pub fn tick(&mut self, cycles: u32) -> bool {
         let Some((pin, demi)) = self.periodique else {
-            return;
+            return false;
         };
         self.cycles = self.cycles.wrapping_add(cycles as u64);
-        if (self.cycles / demi) % 2 == 0 {
+        let haut = (self.cycles / demi) % 2 == 0;
+        let etait_haut = self.entrees & (1 << pin) != 0;
+        if haut {
             self.entrees |= 1 << pin;
         } else {
             self.entrees &= !(1 << pin);
         }
+        // Le front montant du TE marque le debut d'une trame. C'est lui que le
+        // gestionnaire compte, et lui que la boucle de demarrage attend.
+        if haut && !etait_haut && self.irq_enable & (1 << pin) != 0 {
+            self.irq_status |= 1 << pin;
+            return true;
+        }
+        false
     }
 
     /// Tire une broche vers le bas, ce que fait un appui sur un bouton.

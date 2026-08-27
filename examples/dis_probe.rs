@@ -18,6 +18,17 @@ fn main() {
     m.device_key = Some(key);
     m.load_firmware_file(&path).unwrap();
 
+    // Sans cela la fenetre XIP reste sur son offset par defaut et tout le code
+    // au dela de 0x10000000 se lit decale de 0x11000, ce qui donne un
+    // desassemblage plausible mais faux. Le firmware y installe la base issue
+    // du bloc boot-info ; XIP_BASE permet de la changer si une edition differe.
+    let base = std::env::var("XIP_BASE")
+        .ok()
+        .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+        .unwrap_or(0x6001_1000);
+    m.periph.xip.base = base;
+    m.periph.xip.ctrl = 3;
+
     println!("== desassemblage a {:#010x} ({} instructions)", debut, nombre);
     for inst in m.get_disassembly_at(debut, nombre) {
         println!("  {:#010x}  {:<8} {}", inst.address, inst.mnemonic, inst.operands);

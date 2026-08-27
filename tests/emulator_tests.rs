@@ -948,10 +948,35 @@ fn le_te_de_l_ecran_bat_sur_la_broche_dix_du_port_un() {
 
     let etat = |p: &Peripherals| (p.port1.read_reg(0) >> 10) & 1;
     let depart = etat(&periph);
-    periph.port1.tick(demi as u32 + 1);
+    let _ = periph.port1.tick(demi as u32 + 1);
     assert_ne!(etat(&periph), depart, "le TE doit changer d'etat a la demi-periode");
-    periph.port1.tick(demi as u32);
+    let _ = periph.port1.tick(demi as u32);
     assert_eq!(etat(&periph), depart, "puis revenir, sinon aucun front ne se produit");
+}
+
+#[test]
+fn le_front_du_te_leve_une_interruption_quand_elle_est_autorisee() {
+    use tamagotchi_paradise_rs::emulator::peripherals::gpio_port::{TE_DEMI_PERIODE, TE_PIN};
+    let mut periph = Peripherals::default();
+    let demi = TE_DEMI_PERIODE as u32;
+
+    // Sans autorisation, le front ne doit rien lever.
+    let _ = periph.port1.tick(demi + 1);
+    assert!(!periph.port1.tick(demi), "aucune interruption tant qu'elle n'est pas autorisee");
+
+    periph.port1.irq_enable = 1 << TE_PIN;
+    let _ = periph.port1.tick(demi);
+    // Le front montant suivant pose le drapeau et signale l'interruption.
+    let mut leve = false;
+    for _ in 0..4 {
+        leve |= periph.port1.tick(demi);
+    }
+    assert!(leve, "le front montant du TE doit lever l'interruption du port 1");
+    assert_ne!(periph.port1.irq_status & (1 << TE_PIN), 0, "le drapeau doit rester lisible");
+
+    // Le gestionnaire l'efface en ecrivant un a la meme position en 0x20.
+    periph.port1.write_reg(0x20, 1 << TE_PIN);
+    assert_eq!(periph.port1.irq_status & (1 << TE_PIN), 0);
 }
 
 #[test]

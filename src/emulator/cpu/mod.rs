@@ -129,7 +129,11 @@ impl Cpu {
                 self.nvic.tick_systick(c);
                 // Le TE de l'ecran est entretenu ici : c'est un signal
                 // exterieur, sans quoi le firmware l'attend sans fin.
-                periph.port1.tick(c);
+                if periph.port1.tick(c) {
+                    self.nvic.request_irq(
+                        crate::emulator::peripherals::gpio_port::PORT1_IRQ,
+                    );
+                }
                 // Tick Peripherals
                 if periph.timers.tick(c) {
                     self.nvic.request_irq(16); // Timer IRQ
