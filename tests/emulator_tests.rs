@@ -377,11 +377,20 @@ fn dump_reel_chiffre_sans_cle_reste_inspectable() {
     if !path.exists() {
         return;
     }
+    // Le dump est recopie dans un dossier temporaire : un fichier <dump>.key
+    // pose a cote de l'original suffirait sinon a fournir la cle et le test
+    // ne testerait plus rien.
+    let nu = std::env::temp_dir().join("sonix_sans_cle.bin");
+    std::fs::copy(path, &nu).unwrap();
+    let _ = std::fs::remove_file(nu.with_extension("bin.key"));
+
     let mut machine = Machine::new();
     machine.device_key = None;
     std::env::remove_var("SONIX_DEVICE_KEY");
 
-    let report = machine.load_firmware_file(path).unwrap();
+    let report = machine.load_firmware_file(&nu).unwrap();
+    let _ = std::fs::remove_file(&nu);
+
     assert!(report.encrypted, "le code de boot du dump reel est chiffre");
     assert!(!report.bootable, "sans cle, on ne pretend pas pouvoir demarrer");
     assert!(!machine.is_running);
