@@ -139,51 +139,42 @@ le firmware scrute un statut par l'alias `0x42340000`, qui vise `0x4001A000` bit
 
 ## État de l'émulation
 
-Les cinq éditions démarrent, exécutent des centaines de millions d'instructions
-sans encodage inconnu, passent en code applicatif XIP et pilotent le watchdog,
-SN_SYS0, le contrôleur XIP, les convertisseurs et le contrôleur de flash.
+Les quatre éditions distinctes exécutent **97 % de leur temps en code applicatif
+XIP**, console de debug vide, aucun message d'erreur. Elles valident leur
+sauvegarde, la réécrivent, et tournent.
 
-Le firmware termine désormais son démarrage. Les cinq éditions valident leur
-sauvegarde et n'émettent plus aucun message d'erreur.
+### Le contrôleur de flash, sémantique établie
 
-Deux comportements distincts au terme du boot :
+Le registre `0x40022108` porte deux bits distincts : le **bit 0 est le départ**,
+le **bit 1 la direction**. Zéro pour aller de la flash vers la mémoire, posé pour
+remonter vers la flash. Le sens se déduit de l'ordre des transferts, le tout
+premier étant la lecture d'une page de sauvegarde pour la valider.
 
-**Earth et Land** (fichiers identiques, même empreinte) entrent en veille : bits
-de veille posés dans `0x45000300`, instruction `WFI`, effacement des interruptions
-en attente, boucle. SysTick désactivé, `PRIMASK` à 1, seule l'IRQ externe 3 armée,
-le RTC ayant été configuré juste avant. La source de réveil reste à modéliser.
+Le firmware procède par lecture-modification-écriture sur ce registre : il doit
+donc s'y relire tel qu'il a écrit, sinon le bit de direction se perd entre les
+deux étapes et toute écriture passe pour une lecture.
 
-### Adressage des broches
+### La sauvegarde
 
-Le firmware lit ses entrées par la fenêtre bit-band. Un identifiant de broche
-encode `port = id >> 4` et `pin = id & 15`, cinq ports étant dispatchés par une
-table `TBB`, chacun résolu à travers un tableau de descripteurs en SRAM.
+`0x0B814` écrit une sauvegarde : elle alloue 4 Ko, recopie l'état vivant depuis
+`0x18000BA0`, pose la somme et son complément en tête, efface le secteur,
+l'écrit, puis vérifie. Pour le slot 2 cette vérification ne relit pas la flash,
+elle recalcule la somme sur l'état vivant en SRAM.
 
-Le registre de données du **port 2 est en `0x4001A000`**. Water y lit les broches
-`0x20` et `0x21`, les combine en `pin20 | (pin21 << 1)` et attend la valeur **3**,
-donc les deux broches hautes, l'état de repos d'entrées à résistance de tirage.
+### Verrou actuel
 
-**Water, Sky et Jade Forest** vont plus loin : SysTick actif (`CSR = 0x00010007`,
-donc horloge cœur, interruption armée, compteur en marche) et deux IRQ armées.
-Elles butent sur un bit de `0x4001A000`, lu par la fenêtre bit-band et attendu
-à 1. C'est le prochain verrou.
+Les trois éditions Earth, Water et Sky s'arrêtent sur une assertion en
+`0x1005B4AC`, appelée depuis `0x0B8FA`, où la somme recalculée sur l'état vivant
+diffère de celle que l'appelant avait fournie. Jade Forest s'arrête ailleurs,
+en `0x1005E91E`.
 
-L'ADC a été instrumenté pour rendre une valeur de pile pleine, sans effet observé :
-le registre de résultat n'a pas été localisé, le firmware ne lisant jamais d'autre
-offset de cette page. L'hypothèse d'une coupure sur pile faible n'est donc **pas**
-vérifiée.
+Comme la vérification porte sur la SRAM et non sur la flash, l'écart signifie que
+l'état a changé entre les deux calculs. Le firmware réactive les interruptions
+juste avant, par un `CPSIE` en `0x0B8CC` : la piste la plus probable est un
+gestionnaire qui s'intercale et modifie l'état, faute d'une fidélité temporelle
+suffisante entre nos transferts instantanés et le cadencement du SysTick.
 
-Registres encore non modélisés, relevés par la trace MMIO :
-
-| Adresse | Observation |
-|---|---|
-| `0x40022000` | 5 lectures, 5 écritures, dernière `0x8000` |
-| `0x40008000`, `0x40009000` | écritures à motif `0x5AFA____`, clés de déverrouillage |
-| `0x45000108` .. `0x45000110` | zone système, rôle non établi |
-
-Aucun contrôleur LCD n'apparaît dans la figure 4-1. L'écran est donc piloté
-autrement, vraisemblablement via SPI1 et l'IDMA. C'est la piste à suivre pour
-obtenir une image.
+C'est donc un problème de justesse d'émulation, pas un périphérique manquant.
 
 ## Utilisation
 
