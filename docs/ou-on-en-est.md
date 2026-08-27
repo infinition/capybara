@@ -6,13 +6,16 @@ j'aurais fait ensuite. Le detail materiel est dans `materiel-snc7340.md`.
 ## Resume
 
 Les cinq firmwares demarrent, valident leur sauvegarde, passent l'identification
-de la flash, initialisent leur ecran et entrent dans leur code de rendu. La cle
-de dechiffrement est `<CLE>`, commune aux cinq editions.
+de la flash, initialisent leur ecran, decodent leurs ressources et **affichent
+une image**. L'ecran de demarrage de Water a ete rendu en entier : 128 x 128 en
+RGB565, texte japonais et deux personnages dessines.
 
-L'ecran est etabli : **128 x 128 pixels en RGB565**, tampon en `0x180142A6`,
-pousse par un canal de transfert vers le registre `0x4000E01C`. Le firmware y
-ecrit deja quelques pixels. Il n'y a pas encore d'image complete : la routine de
-remplissage `0x00007040` s'emballe et sort de la memoire vive.
+La cle de dechiffrement est `<CLE>`, commune aux cinq editions.
+
+Le firmware franchit maintenant sa mesure de pile et entre dans sa **boucle de
+jeu**, ou il synchronise plusieurs centaines de trames. Il n'y dessine pas
+encore : sa machine a etats reste sur l'etat 101 avec une transition vers 102
+(`PSID_STARTUP`) qui n'est jamais appliquee.
 
 ## Outils
 
@@ -25,12 +28,12 @@ Six sondes dans `examples/`. Toutes prennent `<dump.bin> <cle hex>`.
 - **`dis_probe`** : desassemble a froid un intervalle. Programme la fenetre XIP
   avant de lire, sans quoi tout le code au dela de `0x10000000` se lit decale de
   `0x11000`, ce qui donne un desassemblage plausible mais faux.
-- **`spin_probe`** : isole une boucle morte et affiche ses 60 derniers pas.
 - **`watch_probe`** : s'arrete a la Nieme visite d'une adresse ou a la Nieme
   modification d'un mot, et rend registres, pile d'appels reelle, trace des pas
-  executes avant et apres l'arret.
+  executes avant et apres l'arret. C'est la sonde la plus rentable.
 - **`ecran_probe`** : rend le tampon d'image en PPM, en lisant source et
   longueur dans le canal plutot qu'en les supposant.
+- **`spin_probe`** : isole une boucle morte et affiche ses 60 derniers pas.
 - **`race_probe`** : verifie si l'etat vivant change entre deux points.
 
 Variables d'environnement :
@@ -49,31 +52,49 @@ Variables d'environnement :
 | `XIP_BASE=0x...` | base de la fenetre XIP pour `dis_probe` |
 | `ECRAN_DEPART=n` | arrete `ecran_probe` au nieme transfert vers l'afficheur |
 | `SONIX_FLASH_ID=0x...` | impose la paire d'identification de la flash |
+| `SONIX_PILE=0x...` | impose l'echantillon de mesure de pile |
+| `PILE_USEE=1` | laisse le drapeau de pile faible du dump en place |
 
-## Trois lecons payees cher
+## Quatre lecons payees cher
 
 **Ne jamais croire une etiquette sur parole.** Le datasheet place GPIO2 en
-`0x4002F000` : c'est le controleur XIP. Il place UART0 en `0x40038000` : c'est un
-accelerateur de somme de controle. Il place I2S0 en `0x40019000` : c'est le port
-d'entrees-sorties numero 1.
+`0x4002F000` : c'est le controleur XIP. UART0 en `0x40038000` : c'est un
+accelerateur de somme de controle. I2S0 en `0x40019000` : c'est le port
+d'entrees-sorties numero 1. Le chien de garde en `0x4003A000` : c'est le
+convertisseur de la mesure de pile.
 
 **Ne jamais croire une conclusion heritee sans la refaire.** La note precedente
 affirmait que `unsupport chip, please check your flash vender` etait du texte de
-repli imprime sans consequence. C'etait faux : c'est une boucle sans sortie en
-`0x1006A018`, et c'etait le vrai verrou du demarrage.
+repli imprime sans consequence. C'etait une boucle sans sortie en `0x1006A018`,
+et c'etait le vrai verrou du demarrage.
 
 **Ne jamais desassembler a froid sans programmer la fenetre XIP.** Un decalage
 de `0x11000` produit du code qui se lit sans erreur et ne veut rien dire.
 
+**Se mefier d'un modele qui compense un bug du coeur.** Le registre `0x40022014`
+avait ete pris pour un identifiant rendu octet par octet, parce qu'un `CMP.W`
+faux faisait echouer la comparaison qui distingue lecture et ecriture. Corriger
+le coeur a fait tomber le modele, et revele que c'est un registre de
+configuration de la puce.
+
 ## Ce qui est etabli et modelise
 
-**Identification de la flash.** Le firmware pose le bit 15 de `0x40022004`,
-attend qu'il retombe ainsi que le bit 1, puis lit `0x40022018` d'un bloc en
-`0x000039E8`. Il en fait `(valeur & 0xFFFF) << 8` et compare les bits 23:16 a
-`0xC2` (Macronix) puis `0xC8` (GigaDevice). Le registre porte donc la paire
-fabricant et composant, `0xC217` pour la puce montee sur la console. La
-transformation a ete etablie en imposant `0x01020304`, qui rend `0x00030400`.
-La console affiche alors `[example]flash id:c21700`.
+**Immediats modifies du jeu d'instructions.** `ThumbExpandImm` replique son
+octet selon quatre motifs quand `imm12[11:10]` vaut 00, il ne le decale pas.
+`0xFFFFFFFF` valait `0xFF000000`, et tout `CMP.W rX, #-1` rendait un verdict
+faux. Le decodeur de sprites en `0x1006A20C` s'en sert pour distinguer une
+repetition d'une suite litterale : il ne voyait que des repetitions.
+
+**Identification de la flash.** Bit 15 de `0x40022004`, attente qu'il retombe
+ainsi que le bit 1, puis lecture de `0x40022018` d'un bloc en `0x000039E8`. Le
+firmware en fait `(valeur & 0xFFFF) << 8` et compare les bits 23:16 a `0xC2`
+(Macronix) puis `0xC8` (GigaDevice). Le registre porte la paire fabricant et
+composant, `0xC217`. La console affiche `[example]flash id:c21700`.
+
+**Registre de configuration de la flash**, en `0x40022014`. Le firmware le lit
+en appelant sa routine d'acces avec -1, attend `0x40`, et l'ecrit sinon en
+deposant la valeur en `0x40022010` puis en posant le bit 11 de la commande. Son
+bit 0 est le temoin d'ecriture en cours, scrute apres chaque programmation.
 
 **Ports d'entrees-sorties**, en `0x40018000`, `0x40019000` et `0x4001A000`.
 Donnees en `0x00`, direction en `0x04`, mode en `0x08`, autorisation
@@ -82,10 +103,10 @@ relit son verrou, une entree rend le niveau exterieur. Cette distinction est
 indispensable : le firmware pilote ses broches par bit-band, et le bus traduit
 cela en lecture puis ecriture du mot entier.
 
-**TE de l'ecran**, sur P1.10. Demi-periode de 800000 cycles, soit 60 Hz pour un
-coeur a 96 MHz, cadence deduite du SysTick arme a 95999. Son front montant leve
-l'IRQ 27, dont le gestionnaire `0x0000C120` efface le drapeau et incremente le
-compteur de trames `0x1801C2C0`.
+**TE de l'ecran**, sur P1.10, demi-periode de 800000 cycles, soit 60 Hz pour un
+coeur a 96 MHz. Son front montant leve l'IRQ 27, dont le gestionnaire
+`0x0000C120` efface le drapeau et incremente le compteur de trames
+`0x1801C2C0`.
 
 **Controleur de transferts**, page `0x4000F000`, canaux en `0x100` et `0x120`.
 Par canal : controle en `0x00` avec le bit 0 pour partir, configuration en
@@ -94,50 +115,71 @@ Par canal : controle en `0x00` avec le bit 0 pour partir, configuration en
 La fin leve l'IRQ 58, dont le gestionnaire `0x10014050` charge le descripteur
 `0x1801C9C0` et le repasse a l'etat 1.
 
-## Le blocage actuel
+**Convertisseur de la mesure de pile**, page `0x4003A000`. Controle en `0x00`,
+commande en `0x04` avec le bit 0 pour partir, resultat en `0x08` sur dix bits
+cales au rang 6. Le firmware ne relance jamais la conversion : elle s'enchaine
+et leve l'IRQ 9 a chaque echantillon.
 
-La routine de remplissage en `0x00007040` ecrit un mot, avance de quatre octets
-et decremente un compteur. Son pointeur part de `0x180142A8`, soit le debut du
-tampon d'image, et devrait s'arreter au bout. Il atteint `0x18B83F0C`, tres
-au-dela de la memoire vive, et ne s'arrete jamais. Seuls 64 pixels sont ecrits.
+## La chaine de la mesure de pile
 
-La cause est en amont. Le decodeur est un lecteur de flux binaire : il lit ses
-symboles dans une table dont l'adresse est calculee en `0x00006E86`, a partir de
-l'en-tete de ressource pose en `0x1800FFB4`. Cette table tombe sur `0x1800ECF4`,
-qui est **entierement a zero**. Un symbole toujours nul donne une longueur de
-repetition absurde, et le remplissage part.
-
-La chronologie explique pourquoi, et elle est verifiable au `WATCH_MEM` :
+Etablie pas a pas, elle sert de modele pour les prochaines enquetes :
 
 ```text
-  50 323 960  0x1800FFB4 recoit l'en-tete 0xF8008C71, depuis flash 0x25F33C
-  50 325 111  0x1800FFB4 est ecrase par 0x17171717, depuis 0x00000A7A
-  50 337 197  le decodeur lit l'en-tete, deja detruit, et s'emballe
-  50 419 737  0x1800FFB4 recoit de nouveau l'en-tete
-  50 420 888  0x1800FFB4 est ecrase par 0x42424242
+  0x10003754  compare la tension au seuil 0x23332
+  0x10003830  la lit dans le mot 0x18005C68
+  0x1000397E  l'y ecrit, a partir des echantillons accumules
+  0x10003924  n'accumule que si le gestionnaire a pose son drapeau
+  0x10078774  gestionnaire de l'IRQ 9, extrait par UBFX #6, #10
 ```
 
-Le tampon d'en-tete est donc recycle entre son chargement et sa lecture. Soit le
-firmware attend que la copie soit ailleurs, soit c'est nous qui laissons passer
-une ecriture qui ne devrait pas atteindre cette adresse.
+Sans tension, le firmware pose le drapeau de pile faible dans l'etat sauvegarde
+en `0x10010E54`, imprime `** LOW BATTERY FLAG DETECTED **` en `0x10030E5E`,
+passe a l'etat 111 et s'eteint apres avoir affiche son message. Le drapeau est
+le bit 3 du premier octet de l'etat. Les dumps Earth et Land le portent deja,
+Water, Sky et Jade Forest non ; `Machine::remplacer_la_pile` l'efface et refait
+la somme de controle des deux pages.
 
-`0x00000A7A` est un remplissage generique, appele de partout : le tracer sans
-condition ne mene nulle part. Il faut `WATCH_COND` sur le registre de
-destination, ou mieux, une surveillance d'ecriture sur `0x1800FFB4` couplee a la
-pile d'appels reelle, pour savoir quelle fonction recycle ce tampon.
+## Le blocage actuel
 
-**Deux hypotheses a departager**, dans cet ordre :
+La boucle de jeu tourne : 369 trames synchronisees en 400 millions de pas. Mais
+la machine a etats reste sur l'etat 101 avec une transition vers 102
+(`PSID_STARTUP`) en attente, jamais appliquee. Le mot d'etat est en
+`0x18001BF4` : demi-mot bas l'etat courant, demi-mot haut la transition
+demandee, `0xFFFF` quand il n'y en a pas.
 
-1. Le tampon est legitimement partage, et c'est l'ordonnancement qui est faux
-   chez nous : le rendu devrait suivre immediatement le chargement de l'en-tete.
-   Verifier si un evenement manquant, encore non modelise, devrait declencher le
-   rendu plus tot.
-2. Le rendu vise le bon tampon mais nous laissons passer une ecriture qui
-   deborde d'un objet voisin, auquel cas sa longueur vient d'un registre non
-   modelise.
+```text
+  34 293 266  etat 101 pose par 0x0000954C
+  34 301 826  transition effacee par 0x00009702
+  34 307 577  transition 28 demandee par 0x00001F8C
+  37 155 743  transition 102 demandee par 0x00001F8C
+              plus rien : l'etat courant ne change jamais
+```
 
-La geometrie, elle, est bonne : les globaux `0x18014290` et `0x18014294` valent
-tous deux 64, soit une vignette de 64 x 64 dans un ecran de 128 x 128.
+Consequence : le rendu `0x00006CEC` n'est plus appele du tout, et l'afficheur ne
+recoit qu'un seul transfert.
+
+**Piste concrete** : trouver ou la transition est appliquee. Le demi-mot bas
+n'est ecrit qu'en `0x00009540` par la sequence `MOVW r1,#0x1BF4 / MOVT / MOVS
+r0,#101 / STRH`, donc l'application passe par une autre base de registre. La
+boucle principale est appelee en `0x1006D1CA` ; son corps est autour de
+`0x000096C8` a `0x0000985A`. Un troisieme demi-mot, en `0x18001BF8`, est compare
+a 101 en `0x0000970C` : il joue probablement le role d'etat precedent ou
+d'etat en cours de sortie, et c'est lui qu'il faut suivre.
+
+Deux hypotheses a departager :
+
+1. La sortie de l'etat 101 attend un evenement encore non modelise, par exemple
+   une fin d'animation ou une entree utilisateur.
+2. L'application de la transition se fait dans une branche que nous ne prenons
+   pas, faute d'un registre ou d'une interruption.
+
+## Les entrees, pretes a cabler
+
+Rien ne presse tant que le rendu ne repart pas, mais tout est en place :
+`GpioPort::appuyer` et `relacher` sur les ports modelises, et le brochage des
+boutons est connu (`materiel-snc7340.md`). Bouton A sur P0.9, B sur P0.11, C sur
+P0.10, molette sur P0.8, encodeur sur P2.0 et P2.1. Une entree au repos se lit
+haute, un appui la tire bas.
 
 ## Ce qu'il ne faut pas refaire
 
@@ -148,3 +190,5 @@ tous deux 64, soit une vignette de 64 x 64 dans un ecran de 128 x 128.
   firmware n'en lit que deux, et n'en garde que le fabricant.
 - Ne pas supposer que le SysTick cadence la veille : le firmware le desactive
   explicitement avant de dormir.
+- Ne pas conclure d'un desassemblage a froid sans le recouper avec la trace
+  d'execution de `watch_probe` : les zones melant code et donnees se decalent.

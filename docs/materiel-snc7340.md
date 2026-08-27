@@ -257,3 +257,69 @@ l'affichage obtenu.
 | IRQ 9 | `0x00000064` | `0x10078774` | chien de garde |
 | IRQ 27 | `0x000000AC` | `0x0000C120` | port 1, front du TE |
 | IRQ 58 | `0x00000128` | `0x10014050` | fin de transfert vers l'ecran |
+
+## Peripheriques etablis par la trace, contre le datasheet
+
+La figure 4-1 se trompe sur plusieurs pages. Voici ce que le firmware y fait
+reellement.
+
+| Adresse | Datasheet | Role reel etabli |
+|---|---|---|
+| `0x40018000` | non nomme | port d'entrees-sorties 0 |
+| `0x40019000` | I2S0 | port d'entrees-sorties 1, porte le TE en P1.10 |
+| `0x4001A000` | GPIO2 | port d'entrees-sorties 2, encodeur |
+| `0x40022000` | non nomme | controleur de flash, identification et DMA |
+| `0x4002F000` | GPIO2 | controleur de la fenetre XIP |
+| `0x40038000` | UART0 | accelerateur de somme de controle |
+| `0x4003A000` | chien de garde | convertisseur de la mesure de pile |
+| `0x4000F000` | non nomme | controleur de transferts, deux canaux |
+| `0x4000A000` et `0x4000B000` | SAR_ADC0 et 1 | sorties console du firmware |
+
+Registres de port, un par page de 4 Ko :
+
+```text
+  0x00  donnees        0x18  autorisation d'interruption
+  0x04  direction      0x1C  drapeaux d'interruption
+  0x08  mode           0x20  effacement des drapeaux
+```
+
+Registres du convertisseur de pile :
+
+```text
+  0x00  controle
+  0x04  commande, bit 0 pour partir
+  0x08  resultat, dix bits cales au rang 6
+```
+
+Registres d'un canal de transfert, en `0x4000F100` et `0x4000F120` :
+
+```text
+  0x00  controle, bit 0 pour partir
+  0x04  configuration
+  0x08  source
+  0x0C  destination
+  0x14  nombre d'unites, champ de 22 bits
+```
+
+Registres communs de la page de transfert :
+
+```text
+  0x00  drapeaux, un bit par canal
+  0x08  acquittement
+  0x10  commande
+```
+
+## Compression des ressources graphiques
+
+Les vignettes sont compressees par plages, decodees en `0x1006A20C`. Le flux est
+d'abord recopie de la flash vers un tampon en `0x18001C58`, puis lu octet par
+octet :
+
+```text
+  octet nul          fin du flux
+  0x01 a 0x7F        repetition : l'octet suivant, repete n fois
+  0x80 a 0xFF        suite litterale de (n & 0x7F) octets
+```
+
+Le firmware distingue les deux cas par `SXTB` puis `CMP.W rX, #-1`. Un immediat
+modifie mal etendu suffit donc a rendre tout le decodage faux.
