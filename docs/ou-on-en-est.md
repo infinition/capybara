@@ -1,109 +1,124 @@
-# Passation : état exact, et où ça bloque
+# Passation : etat exact, et ou ca bloque
 
-Document de reprise. Il dit ce qui est établi, ce qui est incertain, et ce que
-j'aurais fait ensuite. Le détail matériel est dans `materiel-snc7340.md`.
+Document de reprise. Il dit ce qui est etabli, ce qui est incertain, et ce que
+j'aurais fait ensuite. Le detail materiel est dans `materiel-snc7340.md`.
 
-## Résumé en cinq lignes
+## Resume
 
-Les cinq firmwares démarrent, valident leur sauvegarde, la réécrivent et
-exécutent leur code applicatif. La clé de déchiffrement est trouvée
-(`<CLE>`, commune aux cinq éditions). Le CPU exécute des centaines de
-millions d'instructions sans encodage inconnu. Il n'y a **pas encore d'image à
-l'écran**, et le chemin d'affichage n'est pas commencé.
+Les cinq firmwares demarrent, valident leur sauvegarde, passent l'identification
+de la flash, initialisent leur ecran et entrent dans leur code de rendu. La cle
+de dechiffrement est `<CLE>`, commune aux cinq editions.
 
-## Outils, à connaître avant de plonger
+L'ecran est etabli : **128 x 128 pixels en RGB565**, tampon en `0x180142A6`,
+pousse par un canal de transfert vers le registre `0x4000E01C`. Le firmware y
+ecrit deja quelques pixels. Il n'y a pas encore d'image complete : la routine de
+remplissage `0x00007040` s'emballe et sort de la memoire vive.
 
-Quatre sondes dans `examples/`. Toutes prennent `<dump.bin> <clé hex>`.
+## Outils
 
-- **`boot_probe`** : le couteau suisse. Chargement, zones parcourues, adresses les
-  plus exécutées, désassemblage de la boucle chaude, tous les registres touchés
-  avec le PC qui les touche, transferts du contrôleur de flash, état des
-  interruptions, et **la console de debug du firmware**.
+Six sondes dans `examples/`. Toutes prennent `<dump.bin> <cle hex>`.
+
+- **`boot_probe`** : le couteau suisse. Zones parcourues, adresses les plus
+  executees, desassemblage de la boucle chaude, tous les registres touches avec
+  le PC qui les touche, transferts de flash, etat des interruptions, et la
+  console de debug du firmware.
+- **`dis_probe`** : desassemble a froid un intervalle. Programme la fenetre XIP
+  avant de lire, sans quoi tout le code au dela de `0x10000000` se lit decale de
+  `0x11000`, ce qui donne un desassemblage plausible mais faux.
 - **`spin_probe`** : isole une boucle morte et affiche ses 60 derniers pas.
-- **`watch_probe`** : s'arrête à la Nième visite d'une adresse, affiche les
-  registres et reconstitue la chaîne d'appels depuis la pile.
-- **`race_probe`** : vérifie si l'état vivant du jeu change entre deux points, et
-  compte les exceptions qui s'intercalent.
+- **`watch_probe`** : s'arrete a la Nieme visite d'une adresse ou a la Nieme
+  modification d'un mot, et rend registres, pile d'appels reelle, trace des pas
+  executes avant et apres l'arret.
+- **`ecran_probe`** : rend le tampon d'image en PPM, en lisant source et
+  longueur dans le canal plutot qu'en les supposant.
+- **`race_probe`** : verifie si l'etat vivant change entre deux points.
 
-Variables d'environnement utiles :
+Variables d'environnement :
 
 | Variable | Effet |
 |---|---|
-| `MMIO_PAGE=0x...` | journalise dans l'ordre tous les accès à une page de 4 Ko |
-| `MMIO_FORCE=adr:val,...` | impose une valeur de lecture sur un registre non modélisé |
-| `WATCH_COND=r6:0x...` | ne déclenche `watch_probe` que si un registre vaut une valeur |
-| `MEM_DUMP=0x...` | vidange 64 octets à une adresse |
-| `MEM_CMP=a:b:long` | compare deux zones et signale le premier écart |
-| `PRINTF_PC=0x...` | adresse d'interception de la console, `0x1070` par défaut |
+| `MMIO_PAGE=0x...` | journalise dans l'ordre les acces a une page de 4 Ko |
+| `MMIO_ECR=1` | n'y journalise que les ecritures |
+| `MMIO_FORCE=adr:val,...` | impose une valeur de lecture sur un registre non modelise |
+| `WATCH_COND=r6:0x...` | ne declenche `watch_probe` que si un registre vaut une valeur |
+| `WATCH_MEM=0x...` | arrete `watch_probe` a la modification d'un mot de SRAM |
+| `TRACE_PAS=N` | rend les N derniers pas executes avant l'arret |
+| `TRACE_APRES=N` | rend les N pas suivant l'arret |
+| `MEM_DUMP=0x...` | vidange 64 octets a une adresse |
+| `MEM_CMP=a:b:long` | compare deux zones et signale le premier ecart |
+| `XIP_BASE=0x...` | base de la fenetre XIP pour `dis_probe` |
+| `ECRAN_DEPART=n` | arrete `ecran_probe` au nieme transfert vers l'afficheur |
+| `SONIX_FLASH_ID=0x...` | impose la paire d'identification de la flash |
 
-**La console du firmware est l'outil le plus rentable.** Dans la boucle de
-formatage du `printf`, l'instruction `0x1070` appelle la fonction de sortie avec
-le caractère dans `r0`. `boot_probe` la restitue automatiquement.
+## Trois lecons payees cher
 
-## Deux leçons payées cher
+**Ne jamais croire une etiquette sur parole.** Le datasheet place GPIO2 en
+`0x4002F000` : c'est le controleur XIP. Il place UART0 en `0x40038000` : c'est un
+accelerateur de somme de controle. Il place I2S0 en `0x40019000` : c'est le port
+d'entrees-sorties numero 1.
 
-**Ne jamais croire une étiquette sur parole.** Le datasheet place GPIO2 en
-`0x4002F000` : c'est le contrôleur XIP. Il place UART0 en `0x40038000` : c'est un
-accélérateur de somme de contrôle. Les deux m'ont coûté des heures.
+**Ne jamais croire une conclusion heritee sans la refaire.** La note precedente
+affirmait que `unsupport chip, please check your flash vender` etait du texte de
+repli imprime sans consequence. C'etait faux : c'est une boucle sans sortie en
+`0x1006A018`, et c'etait le vrai verrou du demarrage.
 
-**Ne jamais croire un message d'erreur sur parole.** La chaîne
-`unsupport chip, please check your flash vender` n'a rien à voir avec la flash.
-C'est du texte de repli du SDK Sonix, imprimé **à la fin de la routine de
-formatage de sauvegarde `0x0B76C`**, quoi qu'il arrive. Sa présence n'indique pas
-un échec. J'ai perdu beaucoup de temps à modéliser un identifiant JEDEC pour rien.
+**Ne jamais desassembler a froid sans programmer la fenetre XIP.** Un decalage
+de `0x11000` produit du code qui se lit sans erreur et ne veut rien dire.
 
-## Le blocage actuel, honnêtement
+## Ce qui est etabli et modelise
 
-Water exécute un milliard d'instructions, partagées entre PRAM et XIP, sans
-plantage ni encodage inconnu. Il tourne. Mais il repasse en boucle par la routine
-de formatage de sauvegarde au lieu de progresser vers le jeu.
+**Identification de la flash.** Le firmware pose le bit 15 de `0x40022004`,
+attend qu'il retombe ainsi que le bit 1, puis lit `0x40022018` d'un bloc en
+`0x000039E8`. Il en fait `(valeur & 0xFFFF) << 8` et compare les bits 23:16 a
+`0xC2` (Macronix) puis `0xC8` (GigaDevice). Le registre porte donc la paire
+fabricant et composant, `0xC217` pour la puce montee sur la console. La
+transformation a ete etablie en imposant `0x01020304`, qui rend `0x00030400`.
+La console affiche alors `[example]flash id:c21700`.
 
-Ce que j'ai **vérifié** et qui est donc hors de cause :
+**Ports d'entrees-sorties**, en `0x40018000`, `0x40019000` et `0x4001A000`.
+Donnees en `0x00`, direction en `0x04`, mode en `0x08`, autorisation
+d'interruption en `0x18`, drapeaux en `0x1C`, effacement en `0x20`. Une sortie
+relit son verrou, une entree rend le niveau exterieur. Cette distinction est
+indispensable : le firmware pilote ses broches par bit-band, et le bus traduit
+cela en lecture puis ecriture du mot entier.
 
-- la validation de sauvegarde **réussit** : à `0x0B5EC` les deux valeurs comparées
-  valent `0x80F3`, identiques ;
-- les transferts du contrôleur de flash sont sémantiquement corrects, tracés un
-  par un : trois lectures de validation, puis écriture et relecture de
-  vérification sur chacun des deux emplacements ;
-- l'écriture en flash est **exacte**, octet pour octet, en-tête cohérent ;
-- toutes les sommes de contrôle calculées concordent ;
-- l'état vivant **ne change pas** entre le calcul de la somme et la recopie, et
-  aucune exception ne s'intercale.
+**TE de l'ecran**, sur P1.10. Demi-periode de 800000 cycles, soit 60 Hz pour un
+coeur a 96 MHz, cadence deduite du SysTick arme a 95999. Son front montant leve
+l'IRQ 27, dont le gestionnaire `0x0000C120` efface le drapeau et incremente le
+compteur de trames `0x1801C2C0`.
 
-Ce qui reste à comprendre : pourquoi `0x0B76C` est appelée alors que la
-validation réussit. Le dispatcher est en `0x09032`, il enchaîne
-`0x0B574(0)` puis `0x0B574(1)` et n'appelle le formatage que si les deux
-échouent. Il faut instrumenter ce dispatcher, pas les fonctions en dessous.
+**Controleur de transferts**, page `0x4000F000`, canaux en `0x100` et `0x120`.
+Par canal : controle en `0x00` avec le bit 0 pour partir, configuration en
+`0x04`, source en `0x08`, destination en `0x0C`, nombre d'unites sur 22 bits en
+`0x14`. Drapeaux communs en `0x00`, acquittement en `0x08`, commande en `0x10`.
+La fin leve l'IRQ 58, dont le gestionnaire `0x10014050` charge le descripteur
+`0x1801C9C0` et le repasse a l'etat 1.
 
-**Piste concrète** : poser un `watch_probe` sur `0x09038` et `0x09042` pour lire
-la valeur de retour de chaque validation telle que le dispatcher la voit. Si elle
-diffère de ce que `0x0B5F2` laisse dans `r0`, le problème est dans le chemin de
-retour, pas dans la validation.
+## Le blocage actuel
 
-## Le chemin d'affichage, non commencé
+La routine de remplissage en `0x00007040` ecrit un mot, avance de quatre octets
+et decremente un compteur. Son pointeur part de `0x180142A8`, soit le debut du
+tampon d'image, et devrait s'arreter au bout. Il atteint `0x18B83F0C`, tres
+au-dela de la memoire vive, et ne s'arrete jamais. Seuls 64 pixels sont ecrits.
 
-Aucun contrôleur LCD n'existe dans le datasheet. L'écran passe donc par un autre
-biais, vraisemblablement SPI1 (`0x40020000`) et un canal DMA. Rien de tout cela
-n'apparaît encore dans la trace, ce qui est cohérent : le firmware n'a pas atteint
-son initialisation d'écran.
+La cause est en amont : la source decodee, en `0x1800ECF4`, est **entierement a
+zero**. Aucun transfert ne l'a remplie. Le seul acces aux ressources releve est
+`flash 0x25F33C -> 0x1800FFB4`, sur 32 octets, soit un en-tete. Le corps de la
+ressource n'est jamais charge, et le decodeur tourne sur du vide.
 
-Les entrées, elles, sont prêtes : le port 2 est modélisé en `0x4001A000` avec ses
-résistances de tirage, et `GpioPort::appuyer` / `relacher` attendent d'être
-câblées sur des boutons.
-
-## Ce que je ferais dans cet ordre
-
-1. Instrumenter le dispatcher `0x09032` pour comprendre pourquoi le formatage est
-   appelé. C'est le seul verrou identifié, et il est cerné.
-2. Une fois passé, relever ce que le firmware touche de neuf dans la trace : la
-   séquence d'initialisation de l'écran devrait y apparaître.
-3. Modéliser SPI1 et son DMA, puis recopier le tampon d'image vers le panneau de
-   l'émulateur.
+**Piste concrete** : trouver qui devrait charger ce corps. Poser `WATCH_MEM` sur
+`0x1800ECF4` pour confirmer que rien ne l'ecrit, puis remonter le chemin qui lit
+l'en-tete en `0x1800FFB4` et voir quelle branche, apres cette lecture, aurait du
+declencher la lecture du corps. La zone des ressources va de `0x111000` a
+`0x8286C3`, bien au-dela de la fenetre XIP de 1 Mo : le chargement passe donc
+par le DMA de la flash ou par un rebasage de la fenetre.
 
 ## Ce qu'il ne faut pas refaire
 
-- Ne pas chercher à satisfaire l'identifiant JEDEC de la flash, c'est une fausse
-  piste complète.
-- Ne pas forcer `0x4001A000` à la main, le port est modélisé proprement.
-- Ne pas supposer que le SysTick cadence la veille : le firmware le désactive
+- Ne pas retoucher au sens du bit de direction du DMA de flash : pose, il va de
+  la flash vers la memoire. Le prendre a l'envers ecrase les pages de sauvegarde
+  avec un tampon rempli du motif de poison `0xAB`.
+- Ne pas chercher un identifiant JEDEC de trois octets en `0x40022018` : le
+  firmware n'en lit que deux, et n'en garde que le fabricant.
+- Ne pas supposer que le SysTick cadence la veille : le firmware le desactive
   explicitement avant de dormir.

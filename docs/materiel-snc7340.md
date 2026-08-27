@@ -189,3 +189,71 @@ cargo run --release --example boot_probe -- <dump.bin> <CLE> 200000000
 `boot_probe` rend compte du chargement, des zones parcourues, des adresses les
 plus exécutées et de tous les registres touchés. `spin_probe` sert à isoler une
 boucle morte et à afficher son contexte.
+
+## Brochage de la console
+
+Releve par tama-para-research, `hardware/testpads.txt`, et recoupe par la trace
+du firmware.
+
+| Broche | Role | Broche | Role |
+|---|---|---|---|
+| P0.0 | UART0 TXD | P1.0 a P1.4 | flash SPI : CLK, MISO, MOSI, D2, D3 |
+| P0.1 | UART0 RXD | P1.5 | CS de l'ecran |
+| P0.2 | UART1 TXD | P1.6 | SCLK de l'ecran |
+| P0.3 | UART1 RXD | P1.8 | MOSI de l'ecran |
+| P0.4 | RESET de l'ecran | P1.9 | alimentation de l'ecran |
+| P0.5 | commande ou donnee, ecran | P1.10 | TE de l'ecran |
+| P0.6 | mesure de la batterie | P1.11 | buzzer, voie 0 |
+| P0.7 | retroeclairage | P1.13 | buzzer, voie 1 |
+| P0.8 | bouton molette | P2.0 | encodeur, voie 1 |
+| P0.9 | bouton A | P2.1 | encodeur, voie 2 |
+| P0.10 | bouton C | P0.15 | CS de la flash |
+| P0.11 | bouton B | P0.12 a P0.14 | SWO, SWCLK, SWDIO |
+
+L'ecran fait 128 x 128 pixels en RGB565. Son tampon est en `0x180142A6` et part
+vers `0x4000E01C` par le canal `0x4000F100`, 16384 unites par trame.
+
+## Cartographie de la flash
+
+Puce Macronix de 16 Mo.
+
+```text
+  0x000000 - 0x000fff   en-tete du firmware
+  0x001000 - 0x010fff   firmware PRAM, chiffre
+  0x011000 - 0x10ffff   firmware XIP
+  0x110000 - 0x110fff   firmware DPD
+  0x111000 - 0x8286c3   ressources
+  0x8286c4 - 0xd48fff   inutilise
+  0xd49000 - 0xde9fff   informations de version
+  0xd4a000 - 0xd4dfff   preparation des objets telecharges
+  0xd4e000 - 0xdedfff   objets telecharges
+  0xdee000 - 0xe45fff   donnees de fantome
+  0xe46000 - 0xe65fff   reception de fantome ou de correctif
+  0xe66000 - 0xe85fff   export de fantome
+  0xe86000 - 0xefdfff   captures d'amis
+  0xefe000 - 0xefefff   sauvegarde principale
+  0xeff000 - 0xefffff   copie de sauvegarde
+  0xf00000 - 0xffffff   reserve
+```
+
+Les trois pages lues au demarrage pour validation sont `0xd49000`, `0xefe000` et
+`0xeff000`, ce qui recoupe exactement cette cartographie.
+
+## Table des scenes du jeu
+
+En `0x1007C1F0` et suivants, des enregistrements de sept mots :
+actif, nom, identifiant, puis trois fonctions. Les noms sont lisibles et donnent
+la structure du jeu : `PSID_HOME`, `PSID_HOME_TAMA`, `PSID_OSEWA_GOHAN`,
+`PSID_OSEWA_OTEIRE`, `PSID_VIEWER_CHARA`, `PSID_DEVELOP_TESTQR`, et d'autres.
+C'est le point d'entree naturel pour comprendre la logique de jeu une fois
+l'affichage obtenu.
+
+## Vecteurs d'interruption utiles
+
+| Vecteur | Adresse | Gestionnaire | Role |
+|---|---|---|---|
+| SysTick | `0x0000003C` | `0x0000C0F4` | base de temps |
+| IRQ 2 | `0x00000048` | `0x00003788` | systeme, `0x45000300` |
+| IRQ 9 | `0x00000064` | `0x10078774` | chien de garde |
+| IRQ 27 | `0x000000AC` | `0x0000C120` | port 1, front du TE |
+| IRQ 58 | `0x00000128` | `0x10014050` | fin de transfert vers l'ecran |
