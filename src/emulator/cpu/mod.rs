@@ -134,6 +134,12 @@ impl Cpu {
                         crate::emulator::peripherals::gpio_port::PORT1_IRQ,
                     );
                 }
+                // Le bus realise la copie du controleur de transferts mais ne
+                // voit pas le NVIC : la fin de transfert se signale ici.
+                if periph.dma.irq_a_lever {
+                    periph.dma.irq_a_lever = false;
+                    self.nvic.request_irq(crate::emulator::peripherals::dma::IRQ);
+                }
                 // Tick Peripherals
                 if periph.timers.tick(c) {
                     self.nvic.request_irq(16); // Timer IRQ

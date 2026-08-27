@@ -147,6 +147,25 @@ fn main() {
         m.cpu.regs.pc
     );
 
+    // TRACE_APRES=N poursuit l'execution et rend les N pas suivants. Le contexte
+    // qui precede un arret ne dit pas toujours pourquoi la suite ne vient pas.
+    if let Ok(v) = std::env::var("TRACE_APRES") {
+        let n: usize = v.parse().unwrap_or(60);
+        println!("
+== {} pas suivant l'arret", n);
+        for _ in 0..n {
+            let pc = m.cpu.regs.pc;
+            let d = m.get_disassembly_at(pc, 1);
+            match d.first() {
+                Some(i) => println!("  {:#010x}  {:<8} {}", pc, i.mnemonic, i.operands),
+                None => println!("  {:#010x}", pc),
+            }
+            if !matches!(m.step(), StepResult::Ok(_)) {
+                break;
+            }
+        }
+    }
+
     if trace_len > 0 {
         println!("
 == {} derniers pas executes", trace.len());

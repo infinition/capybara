@@ -980,6 +980,43 @@ fn le_front_du_te_leve_une_interruption_quand_elle_est_autorisee() {
 }
 
 #[test]
+fn le_canal_de_transfert_recopie_puis_signale_sa_fin() {
+    use tamagotchi_paradise_rs::emulator::peripherals::dma;
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+    let canal = periph::DMA + dma::CANAL0;
+    let source = map::SRAM_BASE + 0x400;
+    let destination = map::SRAM_BASE + 0x800;
+
+    for i in 0..8u32 {
+        bus.write_u32(source + 4 * i, 0x1000 + i, &mut periph, &mut nvic);
+    }
+
+    // Sequence du pilote en 0x000044B8 : compte, destination, source, depart.
+    bus.write_u32(canal + dma::COMPTE, 8, &mut periph, &mut nvic);
+    bus.write_u32(canal + dma::DESTINATION, destination, &mut periph, &mut nvic);
+    bus.write_u32(canal + dma::SOURCE, source, &mut periph, &mut nvic);
+    bus.write_u32(canal + dma::CTRL, dma::DEPART, &mut periph, &mut nvic);
+
+    for i in 0..8u32 {
+        assert_eq!(
+            bus.read_u32(destination + 4 * i, &mut periph, &nvic),
+            0x1000 + i,
+            "le canal doit avoir recopie le mot {}",
+            i
+        );
+    }
+    // Le bit de depart retombe, le drapeau reste lisible jusqu'a l'acquittement.
+    assert_eq!(bus.read_u32(canal + dma::CTRL, &mut periph, &nvic) & dma::DEPART, 0);
+    assert_ne!(bus.read_u32(periph::DMA + dma::STATUS, &mut periph, &nvic) & 1, 0);
+    assert!(periph.dma.irq_a_lever, "la fin de transfert doit etre signalee");
+
+    bus.write_u32(periph::DMA + dma::ACQUIT, 1, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(periph::DMA + dma::STATUS, &mut periph, &nvic) & 1, 0);
+}
+
+#[test]
 fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();

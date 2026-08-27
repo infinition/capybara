@@ -74,6 +74,10 @@ pub mod periph {
     pub const SAR_ADC0: u32 = 0x4000_A000;
     pub const SAR_ADC1: u32 = 0x4000_B000;
     pub const I2S4: u32 = 0x4000_E000;
+    /// Controleur de transferts et ses canaux. La figure 4-1 ne nomme pas cette
+    /// page, mais le pilote de l'ecran y programme source, destination et
+    /// nombre d'unites avant de poser son bit de depart.
+    pub const DMA: u32 = 0x4000_F000;
     pub const I2S2: u32 = 0x4001_2000;
     /// Ports d'entrees-sorties 0 a 2, resolus par la table de broches du
     /// firmware : un identifiant de broche encode `port = id >> 4` et
@@ -118,6 +122,7 @@ pub mod periph {
             SAR_ADC0 => "SAR_ADC0",
             SAR_ADC1 => "SAR_ADC1",
             I2S4 => "I2S4",
+            DMA => "DMA",
             I2S2 => "I2S2",
             GPIO_PORT0 => "GPIO_P0",
             GPIO_PORT1 => "GPIO_P1",
@@ -506,6 +511,36 @@ impl MemoryBus {
         }
     }
 
+    /// Realise la copie demandee par un canal du controleur de transferts.
+    ///
+    /// La destination du pilote d'ecran est un registre de peripherique, donc
+    /// fixe ; une destination en memoire, elle, avance comme la source. Meme
+    /// regle pour la source, ce qui couvre les deux sens sans registre de
+    /// direction, dont le role n'est pas encore etabli.
+    fn executer_transfert_dma(
+        &mut self,
+        t: crate::emulator::peripherals::dma::Transfert,
+        p: &mut Peripherals,
+    ) {
+        const MAX: u32 = 1 << 20;
+        let est_peripherique = |a: u32| (0x4000_0000..0x5000_0000).contains(&a);
+        if t.mots == 0 || t.mots > MAX {
+            p.dma.irq_a_lever = true;
+            return;
+        }
+        let mut nvic = Nvic::default();
+        let pas_source = if est_peripherique(t.source) { 0 } else { 4 };
+        let pas_dest = if est_peripherique(t.destination) { 0 } else { 4 };
+        for i in 0..t.mots {
+            let src = t.source.wrapping_add(i * pas_source);
+            let dst = t.destination.wrapping_add(i * pas_dest);
+            let mot = self.read_u32(src, p, &nvic);
+            self.write_u32(dst, mot, p, &mut nvic);
+        }
+        p.dma.canaux[t.canal].ctrl &= !crate::emulator::peripherals::dma::DEPART;
+        p.dma.irq_a_lever = true;
+    }
+
     /// Ecriture d'un octet en memoire vive, sans passer par le decodage MMIO.
     fn ecrire_octet_brut(&mut self, addr: u32, val: u8, _p: &mut Peripherals, _nvic: &Nvic) {
         match addr {
@@ -566,6 +601,9 @@ impl MemoryBus {
             periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
                 p.adc[1].read_reg(off)
             }
+            periph::DMA if crate::emulator::peripherals::DmaController::handles(off) => {
+                p.dma.read_reg(off)
+            }
             periph::GPIO_PORT0 if crate::emulator::peripherals::GpioPort::handles(off) => {
                 p.port0.read_reg(off)
             }
@@ -615,6 +653,11 @@ impl MemoryBus {
             periph::FLASH_CTL => {
                 if let Some(t) = p.flashctl.write_reg(off, val) {
                     self.executer_transfert(t, p);
+                }
+            }
+            periph::DMA if crate::emulator::peripherals::DmaController::handles(off) => {
+                if let Some(t) = p.dma.write_reg(off, val) {
+                    self.executer_transfert_dma(t, p);
                 }
             }
             periph::GPIO_PORT0 if crate::emulator::peripherals::GpioPort::handles(off) => {

@@ -4,6 +4,7 @@ pub mod display;
 pub mod flashctl;
 pub mod fuses;
 pub mod gpio;
+pub mod dma;
 pub mod gpio_port;
 pub mod snsys;
 pub mod sys;
@@ -17,6 +18,7 @@ pub use display::{DisplayController, LCD_HEIGHT, LCD_WIDTH};
 pub use flashctl::{FlashController, Transfer};
 pub use fuses::FuseRegisters;
 pub use gpio::GpioController;
+pub use dma::DmaController;
 pub use gpio_port::GpioPort;
 pub use snsys::SnSysRegisters;
 pub use sys::SysRegisters;
@@ -38,6 +40,7 @@ pub struct Peripherals {
     pub flashctl: FlashController,
     pub crc: ChecksumUnit,
     /// Port 2, celui dont le firmware lit les broches 0 et 1.
+    pub dma: DmaController,
     pub port0: GpioPort,
     pub port1: GpioPort,
     pub port2: GpioPort,
@@ -57,6 +60,7 @@ impl Default for Peripherals {
             adc: Default::default(),
             flashctl: FlashController::default(),
             crc: ChecksumUnit::default(),
+            dma: DmaController::default(),
             port0: GpioPort::default(),
             port1: GpioPort::port1(),
             port2: GpioPort::default(),
