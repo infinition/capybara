@@ -334,9 +334,9 @@ impl MemoryBus {
             periph::UART0 => p.uart.read_reg(off),
             periph::GPIO0 => p.gpio.read_reg(off),
             periph::SYSCTRL0 => p.sys.read_reg(off),
-            // Seuls les FEUSE sont modelises dans la zone systeme, le reste de
-            // la page doit rester visible dans la trace.
+            // FEUSE (0x30..0x3f) puis les registres d'horloge/PLL de SN_SYS0.
             periph::FUSES if (0x30..=0x3f).contains(&off) => p.fuses.read_reg(off),
+            periph::FUSES => p.snsys.read_reg(off),
             p_ if (periph::TIMERS..=periph::TIMERS_LAST).contains(&p_) => p.timers.read_reg(off),
             _ => {
                 self.mmio_trace.record_read(addr);
@@ -358,6 +358,7 @@ impl MemoryBus {
                 }
             }
             periph::FUSES if (0x30..=0x3f).contains(&off) => p.fuses.write_reg(off, val),
+            periph::FUSES => p.snsys.write_reg(off, val),
             p_ if (periph::TIMERS..=periph::TIMERS_LAST).contains(&p_) => {
                 p.timers.write_reg(off, val)
             }

@@ -101,6 +101,11 @@ fn main() {
         println!("  {:#010x}  {:<8} {:<20}", inst.address, inst.mnemonic, inst.operands);
     }
 
+    println!("\n== second poll (autour de 0x8aa0)");
+    for inst in m.get_disassembly_at(0x8aa0, 24) {
+        println!("  {:#010x}  {:<8} {:<20}", inst.address, inst.mnemonic, inst.operands);
+    }
+
     println!("\n== contexte autour des premiers acces");
     let mut seen = std::collections::HashSet::new();
     for (pc, _, _, _, _) in &log {
