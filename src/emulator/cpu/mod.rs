@@ -56,15 +56,35 @@ impl Cpu {
         }
 
         let pc = self.regs.pc;
-        if pc >= 0xFFFF_FFF0 || pc == 0 {
+
+        // Retour d'exception. Le coeur ne branche pas vraiment vers 0xFFFFFFFx :
+        // cette valeur placee dans LR a l'entree du handler demande la
+        // restauration du contexte empile.
+        if pc >= 0xFFFF_FFF0 {
+            if self.regs.mode == Mode::Handler {
+                self.exception_return(bus, periph);
+                return StepResult::Ok(1);
+            }
+            self.is_halted = true;
+            return StepResult::Halt;
+        }
+        if pc == 0 {
             self.is_halted = true;
             return StepResult::Halt;
         }
 
-        // Check for pending interrupts if not masked
-        if self.regs.primask == 0 {
+        // Exceptions en attente. On ne les prend que depuis le mode Thread :
+        // sans modele de priorites, autoriser la preemption d'un handler par un
+        // autre empilerait indefiniment.
+        if self.regs.mode == Mode::Thread && self.regs.primask == 0 {
+            if self.nvic.systick_pending {
+                self.nvic.systick_pending = false;
+                self.enter_exception(Nvic::SYSTICK_EXCEPTION, bus, periph);
+                return StepResult::Ok(1);
+            }
             if let Some(irq) = self.nvic.get_highest_pending_irq() {
                 self.enter_exception(irq + 16, bus, periph);
+                return StepResult::Ok(1);
             }
         }
 
@@ -102,10 +122,9 @@ impl Cpu {
         match result {
             StepResult::Ok(c) => {
                 self.cycles += c as u64;
-                // Tick Systick
-                if self.nvic.tick_systick(c) {
-                    self.nvic.request_irq(15); // SysTick exception
-                }
+                // Le SysTick pose lui-meme son drapeau d'attente : c'est une
+                // exception systeme, pas une IRQ externe a inscrire dans ISPR.
+                self.nvic.tick_systick(c);
                 // Tick Peripherals
                 if periph.timers.tick(c) {
                     self.nvic.request_irq(16); // Timer IRQ
@@ -158,6 +177,41 @@ impl Cpu {
 
         let handler_addr = bus.read_u32(self.nvic.vtor + exception_num * 4, periph, &self.nvic);
         self.regs.pc = handler_addr & !1;
-        self.nvic.acknowledge_irq(exception_num.saturating_sub(16));
+        // Seules les IRQ externes ont un bit dans ISPR. Acquitter une exception
+        // systeme via ce chemin effacerait le bit d'une IRQ sans rapport.
+        if exception_num >= 16 {
+            self.nvic.acknowledge_irq(exception_num - 16);
+        }
+    }
+
+    /// Restaure le contexte empile par `enter_exception` et rend la main au
+    /// code interrompu.
+    fn exception_return(&mut self, bus: &mut MemoryBus, periph: &mut Peripherals) {
+        let mut sp = self.regs.get_sp();
+        let mut pop = |bus: &mut MemoryBus, periph: &mut Peripherals, nvic: &Nvic| {
+            let v = bus.read_u32(sp, periph, nvic);
+            sp += 4;
+            v
+        };
+
+        let r0 = pop(bus, periph, &self.nvic);
+        let r1 = pop(bus, periph, &self.nvic);
+        let r2 = pop(bus, periph, &self.nvic);
+        let r3 = pop(bus, periph, &self.nvic);
+        let r12 = pop(bus, periph, &self.nvic);
+        let lr = pop(bus, periph, &self.nvic);
+        let ret = pop(bus, periph, &self.nvic);
+        let xpsr = pop(bus, periph, &self.nvic);
+
+        self.regs.set_reg(0, r0);
+        self.regs.set_reg(1, r1);
+        self.regs.set_reg(2, r2);
+        self.regs.set_reg(3, r3);
+        self.regs.set_reg(12, r12);
+        self.regs.lr = lr;
+        self.regs.xpsr = xpsr;
+        self.regs.mode = Mode::Thread;
+        self.regs.set_sp(sp);
+        self.regs.pc = ret & !1;
     }
 }

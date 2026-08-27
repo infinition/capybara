@@ -24,6 +24,14 @@ impl SnSysRegisters {
                     0
                 }
             }
+            // Selection de la source d'horloge. Le firmware ecrit la source
+            // demandee dans les bits 2:0, puis verifie que le materiel la
+            // recopie dans les bits 6:4 avant de continuer. Sans cet echo il
+            // appelle panic(4).
+            0x0C => {
+                let v = self.regs.get(&0x0C).copied().unwrap_or(0);
+                (v & !0x70) | ((v & 0x07) << 4)
+            }
             _ => self.regs.get(&offset).copied().unwrap_or(0),
         }
     }

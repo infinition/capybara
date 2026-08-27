@@ -98,6 +98,36 @@ impl Thumb32 {
             return StepResult::Ok(1);
         }
 
+        // 2a. Barrieres memoire et instructions d'indication.
+        //
+        // DSB, DMB, ISB, CLREX d'un cote, NOP.W, YIELD, WFE, WFI et SEV de
+        // l'autre. L'emulateur n'a ni cache ni reordonnancement, elles n'ont
+        // donc aucun effet, mais elles doivent etre consommees plutot que
+        // signalees comme inconnues.
+        if (w1 == 0xF3BF && (w2 & 0xFF00) == 0x8F00)
+            || (w1 == 0xF3AF && (w2 & 0xFF00) == 0x8000)
+        {
+            return StepResult::Ok(1);
+        }
+
+        // 2b. ADDW et SUBW : immediat de 12 bits pris tel quel, sans encodage
+        // modifie et sans mise a jour des drapeaux. Avec Rn = 15 c'est la forme
+        // ADR, qui calcule une adresse relative au PC aligne.
+        if (w1 & 0xFBF0) == 0xF200 || (w1 & 0xFBF0) == 0xF2A0 {
+            let is_sub = (w1 & 0xFBF0) == 0xF2A0;
+            let rn = (w1 & 0xF) as u8;
+            let rd = ((w2 >> 8) & 0xF) as u8;
+            let i = ((w1 >> 10) & 1) as u32;
+            let imm3 = ((w2 >> 12) & 7) as u32;
+            let imm8 = (w2 & 0xFF) as u32;
+            let imm12 = (i << 11) | (imm3 << 8) | imm8;
+
+            let base = if rn == 0xF { regs.pc & !3 } else { regs.get_reg(rn) };
+            let res = if is_sub { base.wrapping_sub(imm12) } else { base.wrapping_add(imm12) };
+            regs.set_reg(rd, res);
+            return StepResult::Ok(1);
+        }
+
         // 3. Multiplications, multiplications longues et divisions : 1111 1011 xxxx
         //
         // Le champ qui distingue ces formes tient sur quatre bits, w2[7:4], et
@@ -177,48 +207,99 @@ impl Thumb32 {
             }
         }
 
-        // 4. Bitfield Extract / Insert: UBFX / SBFX / BFC / BFI: 1111 0011 01xx
-        if (w1 & 0xFBF0) == 0xF3C0 || (w1 & 0xFBF0) == 0xF340 || (w1 & 0xFBF0) == 0xF360 {
-            let is_ubfx = (w1 & 0x0070) == 0x0040;
-            let is_sbfx = (w1 & 0x0070) == 0x0060;
-            let is_bfi = (w1 & 0x0070) == 0x0020;
+        // 4. Champs de bits : SBFX, BFI, BFC et UBFX.
+        //
+        // Ces quatre formes se distinguent par w1[7:4], pas par w1[6:4] : sur
+        // trois bits, SBFX et UBFX se confondent, et BFI comme BFC passent pour
+        // du SBFX. Le handler SysTick aligne sa pile par MOV r4, sp / BFC r4,
+        // #0, #3 / MOV sp, r4 ; execute en SBFX, le BFC mettait r4 a zero, donc
+        // SP a zero, et toute la pile partait avec.
+        //
+        // Le decalage de depart est lui aussi reparti autrement : imm3 en
+        // w2[14:12] et imm2 en w2[7:6], et non dans w1.
+        if (w1 & 0xFBF0) == 0xF340 || (w1 & 0xFBF0) == 0xF360 || (w1 & 0xFBF0) == 0xF3C0 {
             let rn = (w1 & 0xF) as u8;
             let rd = ((w2 >> 8) & 0xF) as u8;
-            let lsb = (((w1 >> 6) & 3) << 3) | ((w2 >> 12) & 7);
-            let width_minus1 = (w2 & 0x1F) as u32;
-            let width = width_minus1 + 1;
+            let lsb = ((((w2 >> 12) & 7) << 2) | ((w2 >> 6) & 3)) as u32;
 
-            if is_ubfx {
-                let val = regs.get_reg(rn);
-                let mask = (1u64 << width) - 1;
-                let res = ((val as u64 >> lsb) & mask) as u32;
-                regs.set_reg(rd, res);
-                return StepResult::Ok(1);
-            } else if is_sbfx {
-                let val = regs.get_reg(rn);
-                let shift = lsb;
-                let mut res = (val >> shift) & ((1 << width) - 1);
-                if (res & (1 << (width - 1))) != 0 {
-                    res |= !((1 << width) - 1);
+            if (w1 & 0x00F0) == 0x0060 {
+                // BFI, ou BFC lorsque Rn vaut 15. Ici w2[4:0] porte le rang du
+                // bit de poids fort, et non la largeur moins un.
+                let msb = (w2 & 0x1F) as u32;
+                if msb < lsb {
+                    return StepResult::Undefined(w1);
                 }
-                regs.set_reg(rd, res);
-                return StepResult::Ok(1);
-            } else if is_bfi {
-                if rn == 0xF {
-                    // BFC (Bit Field Clear)
-                    let current = regs.get_reg(rd);
-                    let mask = ((1 << width) - 1) << lsb;
-                    regs.set_reg(rd, current & !mask);
-                } else {
-                    // BFI (Bit Field Insert)
-                    let current = regs.get_reg(rd);
-                    let val_n = regs.get_reg(rn);
-                    let mask = ((1 << width) - 1) << lsb;
-                    let inserted = (val_n & ((1 << width) - 1)) << lsb;
-                    regs.set_reg(rd, (current & !mask) | inserted);
-                }
+                let width = msb - lsb + 1;
+                let mask = ((((1u64 << width) - 1) << lsb) & 0xFFFF_FFFF) as u32;
+                let current = regs.get_reg(rd);
+                let inserted = if rn == 0xF { 0 } else { regs.get_reg(rn) << lsb };
+                regs.set_reg(rd, (current & !mask) | (inserted & mask));
                 return StepResult::Ok(1);
             }
+
+            let width = ((w2 & 0x1F) as u32) + 1;
+            let mask = (((1u64 << width) - 1) & 0xFFFF_FFFF) as u32;
+            let mut res = (regs.get_reg(rn) >> lsb) & mask;
+            if (w1 & 0x00F0) == 0x0040 {
+                // SBFX : le bit de poids fort du champ extrait est etendu.
+                if width < 32 && (res & (1 << (width - 1))) != 0 {
+                    res |= !mask;
+                }
+            }
+            regs.set_reg(rd, res);
+            return StepResult::Ok(1);
+        }
+
+        // 4b. Decalages par registre : LSL.W, LSR.W, ASR.W et ROR.W.
+        // Le firmware s'en sert pour poser un bit, sous la forme
+        // MOVS r0, #1 / LSL.W r2, r0, r1 / ORRS.
+        if (w1 & 0xFF80) == 0xFA00 && (w2 & 0xF0F0) == 0xF000 {
+            let rn = (w1 & 0xF) as u8;
+            let rm = (w2 & 0xF) as u8;
+            let rd = ((w2 >> 8) & 0xF) as u8;
+            let set_flags = (w1 & 0x0010) != 0;
+            let value = regs.get_reg(rn);
+            // Seuls les huit bits de poids faible du registre de decalage
+            // comptent, et un decalage de 32 ou plus vide le resultat.
+            let amount = regs.get_reg(rm) & 0xFF;
+
+            let (res, carry) = match (w1 >> 5) & 3 {
+                0 => shift_lsl(value, amount, regs.flag_c()),
+                1 => shift_lsr(value, amount, regs.flag_c()),
+                2 => shift_asr(value, amount, regs.flag_c()),
+                _ => shift_ror(value, amount, regs.flag_c()),
+            };
+
+            regs.set_reg(rd, res);
+            if set_flags {
+                regs.set_nz(res);
+                regs.set_flag_c(carry);
+            }
+            return StepResult::Ok(1);
+        }
+
+        // 4c. Extensions de signe et de zero, avec accumulation optionnelle :
+        // SXTH, UXTH, SXTB, UXTB, et leurs variantes SXTAH, UXTAH, SXTAB, UXTAB
+        // lorsque Rn ne vaut pas 15. Le bit 7 du second demi-mot les separe des
+        // decalages ci-dessus, qui ont ce champ a zero.
+        if (w1 & 0xFF80) == 0xFA00 && (w2 & 0xF080) == 0xF080 {
+            let rn = (w1 & 0xF) as u8;
+            let rm = (w2 & 0xF) as u8;
+            let rd = ((w2 >> 8) & 0xF) as u8;
+            let rotation = ((w2 >> 4) & 3) * 8;
+            let rotated = regs.get_reg(rm).rotate_right(rotation as u32);
+
+            let extended = match w1 & 0x00F0 {
+                0x00 => rotated as u16 as i16 as i32 as u32, // SXTH
+                0x10 => rotated as u16 as u32,               // UXTH
+                0x40 => rotated as u8 as i8 as i32 as u32,   // SXTB
+                0x50 => rotated as u8 as u32,                // UXTB
+                _ => return StepResult::Undefined(w1),
+            };
+
+            let res = if rn == 0xF { extended } else { regs.get_reg(rn).wrapping_add(extended) };
+            regs.set_reg(rd, res);
+            return StepResult::Ok(1);
         }
 
         // 5. CLZ (Count Leading Zeros): 1111 1010 1011 rm 1111 rd 1000 rm
@@ -415,6 +496,45 @@ impl Thumb32 {
             return StepResult::Ok(2);
         }
 
+        // 7c. LDRD et STRD, forme immediat : 1110 100 P U 1 W L nnnn.
+        //     Deux registres transferes en un acces, l'immediat est en mots.
+        //     Le cas P = 0 et W = 0 appartient a LDREX et STREX, et TBB comme
+        //     TBH ont deja ete traites au-dessus.
+        if (w1 & 0xFE40) == 0xE840 {
+            let p = (w1 >> 8) & 1;
+            let u = (w1 >> 7) & 1;
+            let wb = (w1 >> 5) & 1;
+            let is_load = (w1 >> 4) & 1 != 0;
+            if p != 0 || wb != 0 {
+                let rn = (w1 & 0xF) as u8;
+                let rt = ((w2 >> 12) & 0xF) as u8;
+                let rt2 = ((w2 >> 8) & 0xF) as u8;
+                let imm = ((w2 & 0xFF) as u32) << 2;
+
+                let base = regs.get_reg(rn);
+                let offset = if u != 0 { base.wrapping_add(imm) } else { base.wrapping_sub(imm) };
+                // Pre-indexe : l'adresse est celle apres application de l'offset.
+                // Post-indexe : l'acces se fait a la base, l'offset suit.
+                let addr = if p != 0 { offset } else { base };
+
+                if is_load {
+                    let a = bus.read_u32(addr, periph, nvic);
+                    let b = bus.read_u32(addr.wrapping_add(4), periph, nvic);
+                    regs.set_reg(rt, a);
+                    regs.set_reg(rt2, b);
+                } else {
+                    let a = regs.get_reg(rt);
+                    let b = regs.get_reg(rt2);
+                    bus.write_u32(addr, a, periph, nvic);
+                    bus.write_u32(addr.wrapping_add(4), b, periph, nvic);
+                }
+                if wb != 0 {
+                    regs.set_reg(rn, offset);
+                }
+                return StepResult::Ok(3);
+            }
+        }
+
         // 8. Acces multiples 32 bits : 1110 100 mm W L nnnn.
         //    mm = 01 -> increment apres (IA), mm = 10 -> decrement avant (DB).
         //    Le bit 6 vaut toujours 0 ici ; 0xE8Dx (TBB/TBH) l'a a 1 et est traite
@@ -586,4 +706,48 @@ fn shift_c(rm: u32, shift: u32, type_: u32, carry_in: bool) -> (u32, bool) {
             }
         }
     }
+}
+
+/// Decalages ARM avec retenue sortante, partages par les formes registre.
+///
+/// Un decalage nul laisse la retenue inchangee, et un decalage superieur a la
+/// largeur du mot vide le resultat, ce que les operateurs Rust ne font pas.
+fn shift_lsl(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
+    match amount {
+        0 => (value, carry_in),
+        1..=31 => (value << amount, (value >> (32 - amount)) & 1 != 0),
+        32 => (0, value & 1 != 0),
+        _ => (0, false),
+    }
+}
+
+fn shift_lsr(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
+    match amount {
+        0 => (value, carry_in),
+        1..=31 => (value >> amount, (value >> (amount - 1)) & 1 != 0),
+        32 => (0, value >> 31 != 0),
+        _ => (0, false),
+    }
+}
+
+fn shift_asr(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
+    let signed = value as i32;
+    match amount {
+        0 => (value, carry_in),
+        1..=31 => ((signed >> amount) as u32, (signed >> (amount - 1)) & 1 != 0),
+        // Au-dela de 31 bits, il ne reste que le signe replique.
+        _ => ((signed >> 31) as u32, signed < 0),
+    }
+}
+
+fn shift_ror(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
+    if amount == 0 {
+        return (value, carry_in);
+    }
+    let n = amount % 32;
+    if n == 0 {
+        return (value, value >> 31 != 0);
+    }
+    let res = value.rotate_right(n);
+    (res, res >> 31 != 0)
 }

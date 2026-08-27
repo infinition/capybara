@@ -8,6 +8,10 @@ pub struct Nvic {
     pub syst_rvr: u32,  // SysTick Reload Value
     pub syst_cvr: u32,  // SysTick Current Value
     pub vtor: u32,      // Vector Table Offset Register
+    /// SysTick est l'exception 15, une exception systeme. Elle ne passe pas par
+    /// les registres ISER du NVIC, qui ne gouvernent que les IRQ externes : son
+    /// seul interrupteur est le bit TICKINT de SYST_CSR.
+    pub systick_pending: bool,
 }
 
 impl Default for Nvic {
@@ -21,6 +25,7 @@ impl Default for Nvic {
             syst_rvr: 0,
             syst_cvr: 0,
             vtor: 0x0000_0000,
+            systick_pending: false,
         }
     }
 }
@@ -70,6 +75,9 @@ impl Nvic {
         }
     }
 
+    /// Numero d'exception du SysTick dans la table de vecteurs.
+    pub const SYSTICK_EXCEPTION: u32 = 15;
+
     pub fn tick_systick(&mut self, cycles: u32) -> bool {
         if (self.syst_csr & 1) == 0 {
             return false;
@@ -82,6 +90,7 @@ impl Nvic {
             if (self.syst_csr & 2) != 0 {
                 // TICKINT
                 trigger_irq = true;
+                self.systick_pending = true;
             }
         } else {
             self.syst_cvr -= cycles;
