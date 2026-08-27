@@ -30,7 +30,9 @@ impl Thumb32 {
             if (imm25 & 0x0100_0000) != 0 {
                 imm25 |= 0xFE00_0000;
             }
-            regs.lr = (regs.pc | 1) + 2;
+            // Pour une instruction 32 bits, step() a deja avance de 4 : regs.pc
+            // est donc l'adresse de retour, il ne reste qu'a marquer le bit Thumb.
+            regs.lr = regs.pc | 1;
             regs.pc = (regs.pc as i32 + (imm25 as i32)) as u32;
             return StepResult::Ok(3);
         }

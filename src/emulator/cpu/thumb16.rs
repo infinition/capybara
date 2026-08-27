@@ -136,7 +136,7 @@ impl Thumb16 {
         if (w & 0xF800) == 0x4800 {
             let rd = ((w >> 8) & 0x7) as u8;
             let imm = ((w & 0xFF) as u32) * 4;
-            let addr = (regs.pc & !3) + imm;
+            let addr = ((regs.pc + 2) & !3) + imm;
             let val = bus.read_u32(addr, periph, nvic);
             regs.set_reg(rd, val);
             return StepResult::Ok(2);
@@ -178,7 +178,7 @@ impl Thumb16 {
             let is_sp = (w & 0x0800) != 0;
             let rd = ((w >> 8) & 0x7) as u8;
             let imm = ((w & 0xFF) as u32) * 4;
-            let base = if is_sp { regs.get_sp() } else { regs.pc & !3 };
+            let base = if is_sp { regs.get_sp() } else { (regs.pc + 2) & !3 };
             regs.set_reg(rd, base + imm);
             return StepResult::Ok(1);
         }
@@ -198,7 +198,9 @@ impl Thumb16 {
             let cond = (w >> 8) & 0xF;
             let imm8 = (w & 0xFF) as i8 as i32;
             if Self::eval_condition(cond, regs) {
-                regs.pc = (regs.pc as i32 + (imm8 * 2)) as u32;
+                // Le PC architectural vaut adresse + 4, or step() n'a avance que
+                // de 2 pour une instruction 16 bits : il manque 2.
+                regs.pc = (regs.pc as i32 + 2 + (imm8 * 2)) as u32;
                 return StepResult::Ok(2);
             }
             return StepResult::Ok(1);
@@ -210,7 +212,7 @@ impl Thumb16 {
             if (imm11 & 0x0400) != 0 {
                 imm11 |= !0x07FF;
             }
-            regs.pc = (regs.pc as i32 + (imm11 * 2)) as u32;
+            regs.pc = (regs.pc as i32 + 2 + (imm11 * 2)) as u32;
             return StepResult::Ok(2);
         }
 

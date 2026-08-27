@@ -2,16 +2,23 @@ use tamagotchi_paradise_rs::emulator::cpu::registers::Registers;
 use tamagotchi_paradise_rs::emulator::cpu::thumb16::{StepResult, Thumb16};
 use tamagotchi_paradise_rs::emulator::cpu::thumb32::Thumb32;
 use tamagotchi_paradise_rs::emulator::cpu::Nvic;
-use tamagotchi_paradise_rs::emulator::mmu::MemoryBus;
+use tamagotchi_paradise_rs::emulator::mmu::{map, periph, MemoryBus};
 use tamagotchi_paradise_rs::emulator::peripherals::Peripherals;
 use tamagotchi_paradise_rs::emulator::Machine;
 
+/// Dump de la console de l'auteur, absent du depot. Les tests qui en dependent
+/// sont neutres quand il n'est pas la.
+const REAL_DUMP: &str = r"%SONIX_DUMPS%\Tamagotchi_Paradise_Earth_MX25L12835F.bin";
+const REAL_DEVICE_KEY: u32 = 0x0000_0000;
+const REAL_ENTRY_SP: u32 = 0x1801_EE38;
+const REAL_ENTRY_PC: u32 = 0x0000_02F5;
+
 #[test]
-fn test_emulator_initialization_and_reset() {
+fn machine_sans_firmware_ne_tourne_pas() {
     let machine = Machine::new();
-    assert!(machine.is_running);
-    assert_eq!(machine.cpu.regs.msp, 0x2001_BF00);
-    assert_eq!(machine.cpu.regs.pc, 0x0800_0040);
+    assert!(!machine.is_running, "rien ne doit s'executer sans dump charge");
+    assert!(!machine.bus.pram.loaded);
+    assert!(machine.last_report.is_none());
 }
 
 #[test]
@@ -21,16 +28,20 @@ fn test_thumb16_mov_and_add() {
     let mut periph = Peripherals::default();
     let mut nvic = Nvic::default();
 
-    // MOVS r0, #42 (0x202A)
-    let res1 = Thumb16::execute(0x202A, &mut regs, &mut bus, &mut periph, &mut nvic);
-    assert!(matches!(res1, StepResult::Ok(_)));
+    // MOVS r0, #42
+    assert!(matches!(
+        Thumb16::execute(0x202A, &mut regs, &mut bus, &mut periph, &mut nvic),
+        StepResult::Ok(_)
+    ));
     assert_eq!(regs.get_reg(0), 42);
     assert!(!regs.flag_z());
     assert!(!regs.flag_n());
 
-    // ADDS r0, #8 (0x3008)
-    let res2 = Thumb16::execute(0x3008, &mut regs, &mut bus, &mut periph, &mut nvic);
-    assert!(matches!(res2, StepResult::Ok(_)));
+    // ADDS r0, #8
+    assert!(matches!(
+        Thumb16::execute(0x3008, &mut regs, &mut bus, &mut periph, &mut nvic),
+        StepResult::Ok(_)
+    ));
     assert_eq!(regs.get_reg(0), 50);
 }
 
@@ -41,36 +52,86 @@ fn test_thumb32_movw_movt() {
     let mut periph = Peripherals::default();
     let mut nvic = Nvic::default();
 
-    // MOVW r1, #0x4100 (w1 = 0xF244, w2 = 0x1100) -> 0x4100
-    // MOVT r1, #0x4500 (w1 = 0xF2C4, w2 = 0x5100) -> 0x45004100
-    let res1 = Thumb32::execute(0xF244, 0x1100, &mut regs, &mut bus, &mut periph, &mut nvic);
-    assert!(matches!(res1, StepResult::Ok(_)));
+    Thumb32::execute(0xF244, 0x1100, &mut regs, &mut bus, &mut periph, &mut nvic);
     assert_eq!(regs.get_reg(1), 0x0000_4100);
-
-    let res2 = Thumb32::execute(0xF2C4, 0x5100, &mut regs, &mut bus, &mut periph, &mut nvic);
-    assert!(matches!(res2, StepResult::Ok(_)));
+    Thumb32::execute(0xF2C4, 0x5100, &mut regs, &mut bus, &mut periph, &mut nvic);
     assert_eq!(regs.get_reg(1), 0x4500_4100);
+}
+
+// -- Carte memoire, datasheet SNC7340 V1.7 section 4 --
+
+#[test]
+fn la_pram_est_mappee_a_zero_et_pas_la_rom() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let nvic = Nvic::default();
+
+    bus.pram.write_u8(0, 0xAB);
+    assert_eq!(bus.read_u8(0, &mut periph, &nvic), 0xAB);
+}
+
+#[test]
+fn sram_et_mailbox_aux_adresses_du_datasheet() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    bus.write_u32(map::SRAM_BASE, 0xDEAD_BEEF, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(map::SRAM_BASE, &mut periph, &nvic), 0xDEAD_BEEF);
+    // Le sommet de pile du vrai firmware doit tomber dans la SRAM.
+    assert!((map::SRAM_BASE..=map::SRAM_END).contains(&REAL_ENTRY_SP));
+
+    bus.write_u32(map::MAILBOX_BASE, 0x1234_5678, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(map::MAILBOX_BASE, &mut periph, &nvic), 0x1234_5678);
+    // La mailbox ne fait que 4 Ko, elle ne deborde pas sur la suite.
+    assert_eq!(map::MAILBOX_END - map::MAILBOX_BASE + 1, map::MAILBOX_SIZE as u32);
+}
+
+#[test]
+fn les_deux_fenetres_flash_voient_le_meme_octet() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let nvic = Nvic::default();
+
+    bus.flash.write_u8(0x11000, 0x5A);
+    assert_eq!(bus.read_u8(map::ICACHE_BASE + 0x11000, &mut periph, &nvic), 0x5A);
+    assert_eq!(bus.read_u8(map::FLASH_BASE + 0x11000, &mut periph, &nvic), 0x5A);
+}
+
+#[test]
+fn les_fusibles_exposent_la_device_key() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let nvic = Nvic::default();
+
+    periph.fuses.device_key = Some(REAL_DEVICE_KEY);
+    // FEUSE3 porte le mot complet, FEUSE2 seulement les 16 bits de poids fort.
+    assert_eq!(bus.read_u32(periph::FUSES + 0x3c, &mut periph, &nvic), REAL_DEVICE_KEY);
+    assert_eq!(
+        bus.read_u32(periph::FUSES + 0x38, &mut periph, &nvic),
+        REAL_DEVICE_KEY & 0xFFFF_0000
+    );
 }
 
 #[test]
 fn test_sonix_sys0_osc_ctrl_hide_bit() {
     let mut machine = Machine::new();
     assert!(!machine.bus.boot_rom.is_hidden);
-
-    // Write OSC_CTRL |= 0x08 (hide ROM)
-    machine.bus.write_u32(0x4500_0000, 0x08, &mut machine.periph, &mut machine.cpu.nvic);
+    machine.bus.write_u32(periph::SYSCTRL0, 0x08, &mut machine.periph, &mut machine.cpu.nvic);
     assert!(machine.bus.boot_rom.is_hidden);
 }
 
 #[test]
 fn test_uart_console_capture() {
     let mut machine = Machine::new();
-
-    // Write characters to UART data register (0x41000000)
-    machine.bus.write_u32(0x4100_0000, b'H' as u32, &mut machine.periph, &mut machine.cpu.nvic);
-    machine.bus.write_u32(0x4100_0000, b'I' as u32, &mut machine.periph, &mut machine.cpu.nvic);
-    machine.bus.write_u32(0x4100_0000, b'!' as u32, &mut machine.periph, &mut machine.cpu.nvic);
-
+    for c in b"HI!" {
+        machine.bus.write_u32(
+            periph::UART0,
+            *c as u32,
+            &mut machine.periph,
+            &mut machine.cpu.nvic,
+        );
+    }
     assert_eq!(machine.periph.uart.console_history, "HI!");
 }
 
@@ -78,80 +139,128 @@ fn test_uart_console_capture() {
 fn test_gpio_buttons_and_dial() {
     let mut machine = Machine::new();
 
-    // Initial state (all pull-up 1)
-    let initial_gpio = machine.bus.read_u32(0x4400_0000, &mut machine.periph, &machine.cpu.nvic);
-    assert_eq!(initial_gpio, 0xFFFF_FFFF);
+    let initial = machine.bus.read_u32(periph::GPIO0, &mut machine.periph, &machine.cpu.nvic);
+    assert_eq!(initial, 0xFFFF_FFFF);
 
-    // Press Button A (bit 0 goes low)
     machine.periph.gpio.set_button_a(true);
-    let pressed_gpio = machine.bus.read_u32(0x4400_0000, &mut machine.periph, &machine.cpu.nvic);
-    assert_eq!(pressed_gpio & 1, 0);
+    let pressed = machine.bus.read_u32(periph::GPIO0, &mut machine.periph, &machine.cpu.nvic);
+    assert_eq!(pressed & 1, 0);
 
-    // Turn dial
     machine.periph.gpio.step_dial(3);
-    let dial_val = machine.bus.read_u32(0x4400_0004, &mut machine.periph, &machine.cpu.nvic);
-    assert_eq!(dial_val, 3);
+    let dial = machine.bus.read_u32(periph::GPIO0 + 4, &mut machine.periph, &machine.cpu.nvic);
+    assert_eq!(dial, 3);
 }
 
 #[test]
-fn test_firmware_execution_step() {
+fn un_registre_non_mappe_est_trace_et_pas_avale() {
     let mut machine = Machine::new();
-    machine.reset();
+    machine.bus.mmio_trace.enabled = true;
 
-    let initial_pc = machine.cpu.regs.pc;
-    let step_res = machine.step();
-    assert!(matches!(step_res, StepResult::Ok(_)));
-    assert_ne!(machine.cpu.regs.pc, initial_pc);
+    // SPI1 n'est pas encore modelise : l'acces doit laisser une trace.
+    machine.bus.write_u32(periph::SPI1 + 8, 0x42, &mut machine.periph, &mut machine.cpu.nvic);
+    machine.bus.read_u32(periph::SPI1 + 8, &mut machine.periph, &machine.cpu.nvic);
+
+    let stat = machine.bus.mmio_trace.unknown.get(&(periph::SPI1 + 8)).copied();
+    let stat = stat.expect("l'acces aurait du etre enregistre");
+    assert_eq!(stat.writes, 1);
+    assert_eq!(stat.reads, 1);
+    assert_eq!(stat.last_write, 0x42);
+
+    let hot = machine.bus.mmio_trace.hottest(1);
+    assert_eq!(hot[0].1, "SPI1", "le registre doit etre attribue a son peripherique");
+}
+
+// -- Chargement --
+
+/// Construit un dump minimal mais valide : load table V3 en clair, image
+/// utilisateur portant une table de vecteurs.
+fn dump_synthetique(entry_pc: u32, entry_sp: u32) -> Vec<u8> {
+    let mut d = vec![0u8; 2 * 1024 * 1024];
+    d[0..8].copy_from_slice(b"SONIXDEV");
+    d[0x08..0x0c].copy_from_slice(&0u32.to_le_bytes()); // non chiffre
+    d[0x10..0x14].copy_from_slice(&0x6000_1000u32.to_le_bytes());
+    d[0x14..0x18].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+    d[0x1f8..0x1fc].copy_from_slice(&0x5a5a_0033u32.to_le_bytes());
+
+    d[0x1000..0x1004].copy_from_slice(&entry_sp.to_le_bytes());
+    d[0x1004..0x1008].copy_from_slice(&entry_pc.to_le_bytes());
+    // NOP a l'adresse de reset, pour que le premier pas soit deterministe.
+    let off = 0x1000 + (entry_pc & !1) as usize;
+    d[off..off + 2].copy_from_slice(&0x46C0u16.to_le_bytes());
+    d
 }
 
 #[test]
-fn test_sonix_firmware_dump_loading_and_xip() {
+fn charge_une_load_table_en_clair_et_demarre() {
     let mut machine = Machine::new();
-    let mut mock_dump = vec![0u8; 16 * 1024 * 1024];
+    let path = std::env::temp_dir().join("sonix_clear.bin");
+    std::fs::write(&path, dump_synthetique(0x0000_0201, REAL_ENTRY_SP)).unwrap();
 
-    // Header "SONIXDEV"
-    mock_dump[0..8].copy_from_slice(b"SONIXDEV");
-    mock_dump[0x10..0x14].copy_from_slice(&0x60001000u32.to_le_bytes());
-    mock_dump[0x14..0x18].copy_from_slice(&0x00010000u32.to_le_bytes());
+    let report = machine.load_firmware_file(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
 
-    let temp_path = std::env::temp_dir().join("test_sonix_dump.bin");
-    std::fs::write(&temp_path, &mock_dump).unwrap();
-
-    let res = machine.load_firmware_file(&temp_path);
-    let _ = std::fs::remove_file(&temp_path);
-
-    assert!(res.is_ok());
-    assert_eq!(machine.cpu.regs.msp, 0x2001_BF00);
-    assert_eq!(machine.cpu.regs.pc, 0x0800_0040);
-
-    // Step instructions
-    let s1 = machine.step();
-    assert!(matches!(s1, StepResult::Ok(_)));
-
-    // Run frame
-    let frame_res = machine.run_frame();
-    assert!(matches!(frame_res, StepResult::Ok(_)));
+    assert!(report.bootable);
+    assert!(!report.encrypted);
+    assert_eq!(report.entry_sp, REAL_ENTRY_SP);
+    assert_eq!(report.entry_pc, 0x0000_0201);
+    assert_eq!(machine.cpu.regs.msp, REAL_ENTRY_SP);
+    assert_eq!(machine.cpu.regs.pc, 0x0000_0200);
     assert!(machine.is_running);
+
+    let pc_avant = machine.cpu.regs.pc;
+    assert!(matches!(machine.step(), StepResult::Ok(_)));
+    assert_eq!(machine.cpu.regs.pc, pc_avant + 2);
 }
 
 #[test]
-fn test_real_user_dump_if_present() {
-    let path = std::path::Path::new(r"%SONIX_DUMPS%\Tamagotchi_Paradise_Water_MX25L12835F.bin");
-    if path.exists() {
-        let mut machine = Machine::new();
-        let res = machine.load_firmware_file(path);
-        assert!(res.is_ok());
-        assert_eq!(machine.cpu.regs.msp, 0x2001_BF00);
-        assert_eq!(machine.cpu.regs.pc, 0x0800_0040);
+fn un_fichier_sans_load_table_n_est_pas_demarrable() {
+    let mut machine = Machine::new();
+    let path = std::env::temp_dir().join("pas_sonix.bin");
+    std::fs::write(&path, vec![0xAAu8; 4096]).unwrap();
 
-        // Run frames
-        for _ in 0..5 {
-            let res = machine.run_frame();
-            assert!(matches!(res, StepResult::Ok(_)));
-            assert!(machine.is_running);
-        }
+    let report = machine.load_firmware_file(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
 
-        // Verify UART output received boot message
-        assert!(!machine.periph.uart.tx_buffer.is_empty());
+    assert!(!report.bootable);
+    assert!(!machine.is_running);
+}
+
+#[test]
+fn dump_reel_chiffre_sans_cle_reste_inspectable() {
+    let path = std::path::Path::new(REAL_DUMP);
+    if !path.exists() {
+        return;
     }
+    let mut machine = Machine::new();
+    machine.device_key = None;
+    std::env::remove_var("SONIX_DEVICE_KEY");
+
+    let report = machine.load_firmware_file(path).unwrap();
+    assert!(report.encrypted, "le code de boot du dump reel est chiffre");
+    assert!(!report.bootable, "sans cle, on ne pretend pas pouvoir demarrer");
+    assert!(!machine.is_running);
+    // Le code XIP, lui, est en clair et reste lisible.
+    assert_eq!(machine.bus.flash.read_u16(0x11000), 0xB082);
+}
+
+#[test]
+fn dump_reel_avec_cle_demarre_sur_le_vrai_vecteur() {
+    let path = std::path::Path::new(REAL_DUMP);
+    if !path.exists() {
+        return;
+    }
+    let mut machine = Machine::new();
+    machine.device_key = Some(REAL_DEVICE_KEY);
+
+    let report = machine.load_firmware_file(path).unwrap();
+    assert!(report.encrypted);
+    assert!(report.bootable);
+    assert_eq!(report.entry_sp, REAL_ENTRY_SP);
+    assert_eq!(report.entry_pc, REAL_ENTRY_PC);
+    assert_eq!(machine.cpu.regs.pc, REAL_ENTRY_PC & !1);
+
+    // Les vecteurs MemManage, BusFault et UsageFault du firmware reel.
+    assert_eq!(machine.bus.pram.read_u32(0x10), 0x0000_0321);
+    assert_eq!(machine.bus.pram.read_u32(0x14), 0x0000_0323);
+    assert_eq!(machine.bus.pram.read_u32(0x18), 0x0000_0325);
 }

@@ -83,5 +83,13 @@
   "hw_flash_xip": "Firmware XIP (0x011000 - 0x10FFFF)",
   "hw_flash_dpd": "Firmware DPD (0x110000 - 0x110FFF)",
   "hw_flash_assets": "Zone Assets (0x111000 - 0x8286C3)",
-  "hw_uart_status": "Liaison UART virtuelle : Connectée à 460800 bauds"
+  "hw_uart_status": "Liaison UART virtuelle : Connectée à 460800 bauds",
+  "emu_load_error": "Echec du chargement : {error}",
+  "emu_load_bootable": "Firmware charge ({bytes} octets). Vecteur de reset {pc}, pile initiale {sp}.",
+  "emu_load_need_key": "Le code de boot est chiffre. Fournir la cle de la puce pour l'executer (SONIX_DEVICE_KEY, ou un fichier .key a cote du dump). Le code XIP et les assets restent lisibles.",
+  "emu_load_not_bootable": "{bytes} octets charges, mais aucun vecteur de reset exploitable. Inspection seule.",
+  "emu_mmio_title": "Registres peripheriques non mappes",
+  "emu_mmio_empty": "Aucun acces non mappe releve pour l'instant.",
+  "emu_stop_undefined": "Arret : instruction non decodee {opcode} a {pc}.",
+  "emu_stop_halt": "Arret a {pc}."
 }

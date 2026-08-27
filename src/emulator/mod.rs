@@ -1,15 +1,29 @@
+pub mod aes;
 pub mod cpu;
 pub mod loader;
 pub mod mmu;
 pub mod peripherals;
+pub mod sonix;
 
 pub use cpu::{Cpu, DisassembledInst, Disassembler, Mode, Registers, StepResult};
-pub use loader::FirmwareLoader;
-pub use mmu::{BootRom, InternalSram, MemoryBus, SpiFlash};
-pub use peripherals::{DisplayController, GpioController, Peripherals, SysRegisters, Timers, UartController};
+pub use loader::{FirmwareLoader, ImageKind, LoadReport, LoadedRegion};
+pub use mmu::{BootRom, InternalSram, MemoryBus, MmioStat, MmioTrace, Pram, SpiFlash};
+pub use peripherals::{
+    DisplayController, FuseRegisters, GpioController, Peripherals, SysRegisters, Timers,
+    UartController,
+};
 
 use std::collections::HashSet;
 use std::path::Path;
+
+/// Raison pour laquelle l'execution s'est arretee.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopReason {
+    Breakpoint(u32),
+    Halted(u32),
+    /// Instruction non decodee : l'emulateur ne sait pas executer ce code.
+    Undefined { pc: u32, opcode: u32 },
+}
 
 pub struct Machine {
     pub cpu: Cpu,
@@ -19,6 +33,10 @@ pub struct Machine {
     pub is_running: bool,
     pub instructions_per_frame: u32,
     pub firmware_path: Option<String>,
+    /// Cle de la puce, indispensable pour dechiffrer un dump chiffre.
+    pub device_key: Option<u32>,
+    pub last_report: Option<LoadReport>,
+    pub last_stop: Option<StopReason>,
 }
 
 impl Default for Machine {
@@ -31,7 +49,7 @@ impl Machine {
     pub fn new() -> Self {
         let mut bus = MemoryBus::default();
         let mut periph = Peripherals::default();
-        FirmwareLoader::install_default_firmware(&mut bus);
+        FirmwareLoader::install_idle_state(&mut bus);
 
         let mut cpu = Cpu::default();
         cpu.reset(&mut bus, &mut periph);
@@ -41,14 +59,19 @@ impl Machine {
             bus,
             periph,
             breakpoints: HashSet::new(),
-            is_running: true,
+            // Sans firmware charge, rien ne tourne.
+            is_running: false,
             instructions_per_frame: 20_000,
             firmware_path: None,
+            device_key: None,
+            last_report: None,
+            last_stop: None,
         }
     }
 
     pub fn reset(&mut self) {
         self.cpu.reset(&mut self.bus, &mut self.periph);
+        self.last_stop = None;
     }
 
     pub fn step(&mut self) -> StepResult {
@@ -65,6 +88,7 @@ impl Machine {
             let pc = self.cpu.regs.pc;
             if self.breakpoints.contains(&pc) {
                 self.is_running = false;
+                self.last_stop = Some(StopReason::Breakpoint(pc));
                 return StepResult::Breakpoint;
             }
 
@@ -72,14 +96,20 @@ impl Machine {
                 StepResult::Ok(_) => executed += 1,
                 StepResult::Breakpoint => {
                     self.is_running = false;
+                    self.last_stop = Some(StopReason::Breakpoint(pc));
                     return StepResult::Breakpoint;
                 }
                 StepResult::Halt => {
                     self.is_running = false;
+                    self.last_stop = Some(StopReason::Halted(pc));
                     return StepResult::Halt;
                 }
-                StepResult::Undefined(_) => {
-                    executed += 1;
+                // Une instruction non decodee fausse tout ce qui suit. On s'arrete
+                // au lieu de continuer sur un etat de registres devenu faux.
+                StepResult::Undefined(op) => {
+                    self.is_running = false;
+                    self.last_stop = Some(StopReason::Undefined { pc, opcode: op as u32 });
+                    return StepResult::Undefined(op);
                 }
             }
         }
@@ -88,14 +118,22 @@ impl Machine {
         StepResult::Ok(executed)
     }
 
-    pub fn load_firmware_file<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, String> {
+    /// Charge un dump et prepare le demarrage du vrai firmware.
+    pub fn load_firmware_file<P: AsRef<Path>>(&mut self, path: P) -> Result<LoadReport, String> {
         let p = path.as_ref();
-        let len = FirmwareLoader::load_flash_dump(&mut self.bus, p)?;
+        let report = FirmwareLoader::load_flash_dump(&mut self.bus, p, self.device_key)?;
+
         self.firmware_path = Some(p.to_string_lossy().to_string());
+        // Le firmware peut relire la cle dans les fusibles, comme sur la puce.
+        self.periph.fuses.device_key = self.device_key;
+        self.bus.mmio_trace.clear();
+        self.bus.mmio_trace.enabled = true;
+
         self.reset();
-        self.is_running = true;
+        self.is_running = report.bootable;
         self.periph.display.sync_from_sram(&self.bus.sram.data);
-        Ok(len)
+        self.last_report = Some(report.clone());
+        Ok(report)
     }
 
     pub fn get_disassembly_window(&mut self, count: usize) -> Vec<DisassembledInst> {

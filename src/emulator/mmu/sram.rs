@@ -12,8 +12,8 @@ impl Default for InternalSram {
 impl InternalSram {
     pub fn new() -> Self {
         Self {
-            data: vec![0; 128 * 1024],    // 128 KB SRAM / PRAM
-            mailbox: vec![0; 16 * 1024],  // 16 KB Mailbox RAM
+            data: vec![0; super::map::SRAM_SIZE],       // SRAM AHB, 128 Ko
+            mailbox: vec![0; super::map::MAILBOX_SIZE], // Mailbox RAM, 4 Ko
         }
     }
 

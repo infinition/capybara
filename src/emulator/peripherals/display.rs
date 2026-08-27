@@ -23,7 +23,7 @@ impl DisplayController {
     pub fn new() -> Self {
         Self {
             ctrl: 0x01, // Enabled
-            fb_base_addr: 0x2000_8000,
+            fb_base_addr: 0x1800_8000,
             width: LCD_WIDTH,
             height: LCD_HEIGHT,
             vram: vec![0x1084; LCD_WIDTH * LCD_HEIGHT], // Initial retro green-grey tint
@@ -67,7 +67,7 @@ impl DisplayController {
     }
 
     pub fn sync_from_sram(&mut self, sram: &[u8]) {
-        let vram_offset = (self.fb_base_addr.saturating_sub(0x2000_0000)) as usize;
+        let vram_offset = (self.fb_base_addr.saturating_sub(0x1800_0000)) as usize;
         let pixel_count = self.width * self.height;
         let vram_byte_len = pixel_count * 2;
         if vram_offset + vram_byte_len <= sram.len() {

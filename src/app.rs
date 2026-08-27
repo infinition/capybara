@@ -46,6 +46,44 @@ impl TamagotchiApp {
     }
 }
 
+impl TamagotchiApp {
+    /// Charge un dump de flash et rend compte de ce qui s'est reellement passe.
+    fn load_firmware(&mut self, path: std::path::PathBuf) {
+        self.load_path_input = path.to_string_lossy().to_string();
+        match self.machine.load_firmware_file(&path) {
+            Ok(report) => {
+                let _ = self.flash_inspector.inspect_file(&path);
+                // Un firmware demarrable s'execute depuis la PRAM mappee a 0,
+                // sinon on laisse la vue sur le code XIP, lui toujours en clair.
+                self.hex_base_addr = if report.bootable { 0 } else { 0x6001_1000 };
+                self.disasm_view_addr = self.machine.cpu.regs.pc;
+                self.status_msg = Some(self.describe_load(&report));
+            }
+            Err(e) => {
+                self.status_msg = Some(self.i18n.t_args("emu_load_error", &[("error", &e)]));
+            }
+        }
+    }
+
+    fn describe_load(&self, r: &crate::emulator::LoadReport) -> String {
+        let bytes = r.bytes.to_string();
+        if r.bootable {
+            self.i18n.t_args(
+                "emu_load_bootable",
+                &[
+                    ("bytes", &bytes),
+                    ("pc", &format!("0x{:08X}", r.entry_pc)),
+                    ("sp", &format!("0x{:08X}", r.entry_sp)),
+                ],
+            )
+        } else if r.encrypted {
+            self.i18n.t("emu_load_need_key")
+        } else {
+            self.i18n.t_args("emu_load_not_bootable", &[("bytes", &bytes)])
+        }
+    }
+}
+
 impl eframe::App for TamagotchiApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let now = std::time::Instant::now();
@@ -75,20 +113,7 @@ impl eframe::App for TamagotchiApp {
         ctx.input(|i| {
             if let Some(dropped) = i.raw.dropped_files.first() {
                 if let Some(path) = &dropped.path {
-                    self.load_path_input = path.to_string_lossy().to_string();
-                    match self.machine.load_firmware_file(path) {
-                        Ok(bytes) => {
-                            let _ = self.flash_inspector.inspect_file(path);
-                            self.hex_base_addr = 0x6001_1000;
-                            self.status_msg = Some(format!(
-                                "Loaded {} ({} bytes). XIP entry: 0x60011000",
-                                self.flash_inspector.detected_edition, bytes
-                            ));
-                        }
-                        Err(e) => {
-                            self.status_msg = Some(format!("Load error: {}", e));
-                        }
-                    }
+                    self.load_firmware(path.clone());
                 }
             }
         });
@@ -154,38 +179,13 @@ impl eframe::App for TamagotchiApp {
                                     .set_title("Sélectionner un dump de firmware Tamagotchi")
                                     .pick_file()
                                 {
-                                    self.load_path_input = path.to_string_lossy().to_string();
-                                    match self.machine.load_firmware_file(&path) {
-                                        Ok(bytes) => {
-                                            let _ = self.flash_inspector.inspect_file(&path);
-                                            self.hex_base_addr = 0x6001_1000;
-                                            self.status_msg = Some(format!(
-                                                "Loaded {} ({} bytes). XIP entry: 0x60011000",
-                                                self.flash_inspector.detected_edition, bytes
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            self.status_msg = Some(format!("Load error: {}", e));
-                                        }
-                                    }
+                                    self.load_firmware(path.clone());
                                 }
                             }
 
                             ui.text_edit_singleline(&mut self.load_path_input);
                             if ui.button("Load").clicked() && !self.load_path_input.is_empty() {
-                                match self.machine.load_firmware_file(&self.load_path_input) {
-                                    Ok(bytes) => {
-                                        let _ = self.flash_inspector.inspect_file(&self.load_path_input);
-                                        self.hex_base_addr = 0x6001_1000;
-                                        self.status_msg = Some(format!(
-                                            "Loaded {} ({} bytes). XIP entry: 0x60011000",
-                                            self.flash_inspector.detected_edition, bytes
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        self.status_msg = Some(format!("Load error: {}", e));
-                                    }
-                                }
+                                self.load_firmware(std::path::PathBuf::from(self.load_path_input.clone()));
                             }
                         });
                         if let Some(msg) = &self.status_msg {

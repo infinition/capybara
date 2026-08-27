@@ -83,5 +83,13 @@
   "hw_flash_xip": "XIP Firmware (0x011000 - 0x10FFFF)",
   "hw_flash_dpd": "DPD Firmware (0x110000 - 0x110FFF)",
   "hw_flash_assets": "Assets Region (0x111000 - 0x8286C3)",
-  "hw_uart_status": "Virtual UART Link: Connected at 460800 baud"
+  "hw_uart_status": "Virtual UART Link: Connected at 460800 baud",
+  "emu_load_error": "Load failed: {error}",
+  "emu_load_bootable": "Firmware loaded ({bytes} bytes). Reset vector {pc}, initial stack {sp}.",
+  "emu_load_need_key": "Boot code is encrypted. Supply the chip device key to run it (SONIX_DEVICE_KEY, or a .key file next to the dump). XIP code and assets stay readable.",
+  "emu_load_not_bootable": "Loaded {bytes} bytes, but no usable reset vector was found. Inspection only.",
+  "emu_mmio_title": "Unmapped peripheral registers",
+  "emu_mmio_empty": "No unmapped access recorded yet.",
+  "emu_stop_undefined": "Stopped: undefined instruction {opcode} at {pc}.",
+  "emu_stop_halt": "Stopped at {pc}."
 }
