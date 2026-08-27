@@ -106,6 +106,7 @@ impl FirmwareLoader {
             return Ok(report);
         }
         bus.pram.load(&image.flash[src..end]);
+        install_boot_info(bus, &table);
 
         report.entry_sp = bus.pram.read_u32(0);
         report.entry_pc = bus.pram.read_u32(4);
@@ -163,6 +164,39 @@ impl FirmwareLoader {
         bus.pram.clear();
         bus.sram.data.fill(0);
     }
+}
+
+/// Emplacement du bloc boot-info dans la mailbox, et de son pointeur.
+///
+/// Le bootrom laisse ces donnees derriere lui avant de sauter dans le firmware.
+/// Comme le bootrom n'est pas emule, on reproduit les deux seuls champs que le
+/// firmware relit, releves en tracant son execution.
+pub const BOOT_INFO_BLOCK: u32 = 0x2000_0000;
+const BOOT_INFO_PTR: usize = 0xF60;
+const BOOT_INFO_XIP_BASE: usize = 0x818;
+
+/// Base de la region XIP telle que la load table la decrit.
+///
+/// Le firmware la recopie dans le registre BASE du controleur XIP, ce qui
+/// decale la fenetre 0x10000000 sur le debut du code, et non sur celui de la
+/// flash. Un saut vers 0x1006D1C4 vise donc l'offset 0x11000 + 0x6D1C4.
+pub fn xip_region_base(table: &crate::emulator::sonix::LoadTable) -> u32 {
+    if table.sram_code.addr != 0 {
+        table.sram_code.addr
+    } else {
+        table.user_code.addr.wrapping_add(table.user_code.len)
+    }
+}
+
+fn install_boot_info(bus: &mut MemoryBus, table: &crate::emulator::sonix::LoadTable) {
+    let mb = &mut bus.sram.mailbox;
+    let ptr_off = (BOOT_INFO_BLOCK & 0xFFF) as usize;
+    if mb.len() < BOOT_INFO_PTR + 4 || mb.len() < ptr_off + BOOT_INFO_XIP_BASE + 4 {
+        return;
+    }
+    mb[BOOT_INFO_PTR..BOOT_INFO_PTR + 4].copy_from_slice(&BOOT_INFO_BLOCK.to_le_bytes());
+    let field = ptr_off + BOOT_INFO_XIP_BASE;
+    mb[field..field + 4].copy_from_slice(&xip_region_base(table).to_le_bytes());
 }
 
 /// Cherche la deviceKey a cote du dump, faute de pouvoir la lire dans la puce.

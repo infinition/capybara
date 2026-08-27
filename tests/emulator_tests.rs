@@ -504,3 +504,69 @@ fn bloc_it_saute_l_instruction_quand_la_condition_est_fausse() {
     assert_eq!(machine.cpu.regs.get_reg(3), 5, "l'instruction conditionnelle est sautee");
     assert_eq!(machine.cpu.regs.itstate, 0, "le bloc IT est termine");
 }
+
+#[test]
+fn multiplications_longues_et_divisions_32_bits() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // UMULL r0, r1, r2, r3 : 0xFBA2 0x0103. Le firmware s'en sert pour diviser
+    // par 1000 via le reciproque magique 0x10624DD3.
+    regs.set_reg(2, 12_000_000);
+    regs.set_reg(3, 0x1062_4DD3);
+    Thumb32::execute(0xFBA2, 0x0103, &mut regs, &mut bus, &mut periph, &mut nvic);
+    let produit = ((regs.get_reg(1) as u64) << 32) | regs.get_reg(0) as u64;
+    assert_eq!(produit, 12_000_000u64 * 0x1062_4DD3u64);
+    // Le decalage de 38 bits qui suit donne bien 12000 kHz.
+    assert_eq!((produit >> 38) as u32, 12_000);
+
+    // SMULL r0, r1, r2, r3 : 0xFB82 0x0103, avec un operande negatif.
+    regs.set_reg(2, (-3i32) as u32);
+    regs.set_reg(3, 1000);
+    Thumb32::execute(0xFB82, 0x0103, &mut regs, &mut bus, &mut periph, &mut nvic);
+    let signe = (((regs.get_reg(1) as u64) << 32) | regs.get_reg(0) as u64) as i64;
+    assert_eq!(signe, -3000);
+
+    // UDIV r0, r2, r3 : 0xFBB2 0xF0F3. Le champ de discrimination tient sur
+    // quatre bits ; masque sur trois, cette forme etait inatteignable.
+    regs.set_reg(2, 1000);
+    regs.set_reg(3, 3);
+    Thumb32::execute(0xFBB2, 0xF0F3, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(0), 333);
+
+    // SDIV r0, r2, r3 : 0xFB92 0xF0F3.
+    regs.set_reg(2, (-1000i32) as u32);
+    regs.set_reg(3, 3);
+    Thumb32::execute(0xFB92, 0xF0F3, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(0) as i32, -333);
+
+    // Division par zero : resultat nul, pas de panique.
+    regs.set_reg(3, 0);
+    Thumb32::execute(0xFBB2, 0xF0F3, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(0), 0);
+}
+
+#[test]
+fn la_fenetre_xip_suit_la_base_programmee() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    bus.flash.write_u8(0x11000, 0x42);
+    bus.flash.write_u8(0x00000, 0x99);
+
+    // Base par defaut : la fenetre montre le debut de la flash.
+    assert_eq!(bus.read_u8(map::ICACHE_BASE, &mut periph, &nvic), 0x99);
+
+    // Le firmware programme la base sur le debut de la region XIP.
+    bus.write_u32(periph::XIP_CTRL + 4, 0x6001_1000, &mut periph, &mut nvic);
+    bus.write_u32(periph::XIP_CTRL, 3, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u8(map::ICACHE_BASE, &mut periph, &nvic), 0x42);
+
+    // C'est ce decalage qui fait tomber un saut vers 0x1006D1C4 sur le
+    // prologue reel, a l'offset flash 0x11000 + 0x6D1C4.
+    bus.flash.write_u8(0x11000 + 0x6D1C4, 0x7E);
+    assert_eq!(bus.read_u8(map::ICACHE_BASE + 0x6D1C4, &mut periph, &nvic), 0x7E);
+}

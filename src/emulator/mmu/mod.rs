@@ -52,7 +52,9 @@ pub mod periph {
     pub const SPI1: u32 = 0x4002_0000;
     pub const IDMA1: u32 = 0x4002_5000;
     pub const IDMA0: u32 = 0x4002_B000;
-    pub const GPIO2: u32 = 0x4002_F000;
+    /// Controleur de la fenetre XIP cachee. La figure 4-1 place GPIO2 ici,
+    /// mais le firmware y programme la base de la fenetre 0x10000000.
+    pub const XIP_CTRL: u32 = 0x4002_F000;
     pub const GPIO1: u32 = 0x4003_0000;
     pub const GPIO0: u32 = 0x4003_1000;
     pub const I2C1: u32 = 0x4003_3000;
@@ -81,7 +83,7 @@ pub mod periph {
             SPI1 => "SPI1",
             IDMA1 => "IDMA1",
             IDMA0 => "IDMA0",
-            GPIO2 => "GPIO2",
+            XIP_CTRL => "XIP_CTRL",
             GPIO1 => "GPIO1",
             GPIO0 => "GPIO0",
             I2C1 => "I2C1",
@@ -219,7 +221,8 @@ impl MemoryBus {
                 self.boot_rom.read_u8((addr - map::ROM_BASE) as usize)
             }
             map::ICACHE_BASE..=map::ICACHE_END => {
-                self.flash.read_u8((addr - map::ICACHE_BASE) as usize)
+                let off = periph.xip.flash_offset(addr - map::ICACHE_BASE);
+                self.flash.read_u8(off)
             }
             map::SRAM_BASE..=map::SRAM_END => {
                 self.sram.read_u8((addr - map::SRAM_BASE) as usize)
@@ -250,7 +253,8 @@ impl MemoryBus {
         match addr {
             map::PRAM_BASE..=map::PRAM_END => self.pram.write_u8(addr as usize, val),
             map::ICACHE_BASE..=map::ICACHE_END => {
-                self.flash.write_u8((addr - map::ICACHE_BASE) as usize, val)
+                let off = periph.xip.flash_offset(addr - map::ICACHE_BASE);
+                self.flash.write_u8(off, val)
             }
             map::SRAM_BASE..=map::SRAM_END => {
                 self.sram.write_u8((addr - map::SRAM_BASE) as usize, val)
@@ -336,6 +340,7 @@ impl MemoryBus {
             periph::SYSCTRL0 => p.sys.read_reg(off),
             // FEUSE (0x30..0x3f) puis les registres d'horloge/PLL de SN_SYS0.
             periph::FUSES if (0x30..=0x3f).contains(&off) => p.fuses.read_reg(off),
+            periph::XIP_CTRL => p.xip.read_reg(off),
             periph::FUSES => p.snsys.read_reg(off),
             p_ if (periph::TIMERS..=periph::TIMERS_LAST).contains(&p_) => p.timers.read_reg(off),
             _ => {
@@ -358,6 +363,7 @@ impl MemoryBus {
                 }
             }
             periph::FUSES if (0x30..=0x3f).contains(&off) => p.fuses.write_reg(off, val),
+            periph::XIP_CTRL => p.xip.write_reg(off, val),
             periph::FUSES => p.snsys.write_reg(off, val),
             p_ if (periph::TIMERS..=periph::TIMERS_LAST).contains(&p_) => {
                 p.timers.write_reg(off, val)

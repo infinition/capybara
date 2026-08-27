@@ -98,47 +98,82 @@ impl Thumb32 {
             return StepResult::Ok(1);
         }
 
-        // 3. 32-bit Multiply & Divide: 1111 1011 xxxx
-        if (w1 & 0xFF80) == 0xFB80 || (w1 & 0xFF80) == 0xFB00 {
+        // 3. Multiplications, multiplications longues et divisions : 1111 1011 xxxx
+        //
+        // Le champ qui distingue ces formes tient sur quatre bits, w2[7:4], et
+        // non trois : masque sur trois bits, la comparaison a 0xF des divisions
+        // ne pouvait jamais reussir.
+        if (w1 & 0xFF80) == 0xFB00 || (w1 & 0xFF80) == 0xFB80 {
             let rn = (w1 & 0xF) as u8;
-            let rd = ((w2 >> 8) & 0xF) as u8;
             let rm = (w2 & 0xF) as u8;
-            let ra = ((w2 >> 12) & 0xF) as u8;
-            let op1 = (w1 >> 4) & 0x7;
-            let op2 = (w2 >> 4) & 0x7;
+            // Formes courtes : Rd en w2[11:8], Ra en w2[15:12].
+            // Formes longues : RdHi en w2[11:8], RdLo en w2[15:12].
+            let rd_hi = ((w2 >> 8) & 0xF) as u8;
+            let rd_lo = ((w2 >> 12) & 0xF) as u8;
+            let op2 = (w2 >> 4) & 0xF;
 
-            let val_n = regs.get_reg(rn);
-            let val_m = regs.get_reg(rm);
+            let n = regs.get_reg(rn);
+            let m = regs.get_reg(rm);
+            let acc64 = || ((regs.get_reg(rd_hi) as u64) << 32) | regs.get_reg(rd_lo) as u64;
 
-            // SDIV / UDIV
-            if (w1 & 0xFFF0) == 0xFB90 && op2 == 0xF {
-                // SDIV
-                let res = if val_m == 0 { 0 } else { ((val_n as i32) / (val_m as i32)) as u32 };
-                regs.set_reg(rd, res);
-                return StepResult::Ok(2);
-            }
-            if (w1 & 0xFFF0) == 0xFBB0 && op2 == 0xF {
-                // UDIV
-                let res = if val_m == 0 { 0 } else { val_n / val_m };
-                regs.set_reg(rd, res);
-                return StepResult::Ok(2);
-            }
-
-            // MUL / MLA / MLS
-            if op1 == 0 {
-                if ra == 0xF {
-                    // MUL
-                    regs.set_reg(rd, val_n.wrapping_mul(val_m));
-                } else if op2 == 0 {
-                    // MLA
-                    let val_a = regs.get_reg(ra);
-                    regs.set_reg(rd, val_a.wrapping_add(val_n.wrapping_mul(val_m)));
-                } else if op2 == 1 {
-                    // MLS
-                    let val_a = regs.get_reg(ra);
-                    regs.set_reg(rd, val_a.wrapping_sub(val_n.wrapping_mul(val_m)));
+            match w1 & 0xFFF0 {
+                // MUL, MLA, MLS
+                0xFB00 => {
+                    let prod = n.wrapping_mul(m);
+                    let res = if rd_lo == 0xF {
+                        prod
+                    } else if op2 == 0 {
+                        regs.get_reg(rd_lo).wrapping_add(prod)
+                    } else if op2 == 1 {
+                        regs.get_reg(rd_lo).wrapping_sub(prod)
+                    } else {
+                        return StepResult::Undefined(w1);
+                    };
+                    regs.set_reg(rd_hi, res);
+                    return StepResult::Ok(1);
                 }
-                return StepResult::Ok(1);
+                0xFB80 if op2 == 0 => {
+                    // SMULL
+                    let p = (n as i32 as i64).wrapping_mul(m as i32 as i64) as u64;
+                    regs.set_reg(rd_lo, p as u32);
+                    regs.set_reg(rd_hi, (p >> 32) as u32);
+                    return StepResult::Ok(2);
+                }
+                0xFB90 if op2 == 0xF => {
+                    // SDIV. wrapping_div evite la panique sur i32::MIN / -1.
+                    let res = if m == 0 { 0 } else { (n as i32).wrapping_div(m as i32) as u32 };
+                    regs.set_reg(rd_hi, res);
+                    return StepResult::Ok(2);
+                }
+                0xFBA0 if op2 == 0 => {
+                    // UMULL
+                    let p = (n as u64).wrapping_mul(m as u64);
+                    regs.set_reg(rd_lo, p as u32);
+                    regs.set_reg(rd_hi, (p >> 32) as u32);
+                    return StepResult::Ok(2);
+                }
+                0xFBB0 if op2 == 0xF => {
+                    // UDIV
+                    let res = if m == 0 { 0 } else { n / m };
+                    regs.set_reg(rd_hi, res);
+                    return StepResult::Ok(2);
+                }
+                0xFBC0 if op2 == 0 => {
+                    // SMLAL
+                    let p = (n as i32 as i64).wrapping_mul(m as i32 as i64);
+                    let r = (acc64() as i64).wrapping_add(p) as u64;
+                    regs.set_reg(rd_lo, r as u32);
+                    regs.set_reg(rd_hi, (r >> 32) as u32);
+                    return StepResult::Ok(2);
+                }
+                0xFBE0 if op2 == 0 => {
+                    // UMLAL
+                    let r = acc64().wrapping_add((n as u64).wrapping_mul(m as u64));
+                    regs.set_reg(rd_lo, r as u32);
+                    regs.set_reg(rd_hi, (r >> 32) as u32);
+                    return StepResult::Ok(2);
+                }
+                _ => {}
             }
         }
 
