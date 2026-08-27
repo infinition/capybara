@@ -268,8 +268,34 @@ impl Thumb32 {
             return StepResult::Ok(2);
         }
 
-        // 8. 32-bit Multiple Load/Store: STMDB / LDMIA (1110 1000 10xx rn)
-        if (w1 & 0xFE40) == 0xE800 || (w1 & 0xFE40) == 0xE840 {
+        // 7b. Table branch TBB / TBH (w1 = 0xE8DF).
+        //     TBB [Rn, Rm]      : cible = PC + 2 * octet[Rn + Rm].
+        //     TBH [Rn, Rm, LSL#1]: cible = PC + 2 * demi-mot[Rn + 2*Rm].
+        //     PC vaut ici deja l'adresse de l'instruction + 4 (avance par step()).
+        if w1 == 0xE8DF {
+            let is_tbh = (w2 & 0x0010) != 0;
+            let rn = ((w2 >> 12) & 0xF) as u8;
+            let rm = (w2 & 0xF) as u8;
+            let base = if rn == 0xF { regs.pc } else { regs.get_reg(rn) };
+            let rm_val = regs.get_reg(rm);
+            let table = if is_tbh {
+                base.wrapping_add(rm_val << 1)
+            } else {
+                base.wrapping_add(rm_val)
+            };
+            let offset = if is_tbh {
+                bus.read_u16(table, periph, nvic) as u32
+            } else {
+                bus.read_u8(table, periph, nvic) as u32
+            };
+            regs.pc = regs.pc.wrapping_add(offset << 1);
+            return StepResult::Ok(2);
+        }
+
+        // 8. 32-bit Multiple Load/Store: STMDB / LDMIA (1110 1000 10xx rn).
+        //    Le bit 6 vaut toujours 0 pour LDM/STM ; 0xE8DF (TBB/TBH) a bit 6 = 1
+        //    et ne doit pas etre confondu ici.
+        if (w1 & 0xFE40) == 0xE800 {
             let is_ldm = (w1 & 0x0010) != 0;
             let rn = (w1 & 0xF) as u8;
             let reg_list = w2 & 0xFFFF;

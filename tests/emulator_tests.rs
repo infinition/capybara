@@ -138,6 +138,28 @@ fn cbz_et_cbnz_visent_la_bonne_adresse() {
 }
 
 #[test]
+fn tbb_et_tbh_branchent_via_la_table() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // TBB [PC, R1] a l'adresse 0x1000 : le PC architectural vaut 0x1004.
+    regs.pc = 0x1004;
+    regs.set_reg(1, 4);
+    bus.write_u32(0x1008, 0x0C, &mut periph, &mut nvic); // octet de table 0x0C
+    Thumb32::execute(0xE8DF, 0xF001, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.pc, 0x1004 + 2 * 0x0C);
+
+    // TBH [PC, R1, LSL#1] : bit 4 du second demi-mot = 1, demi-mot a PC + 2*Rm.
+    regs.pc = 0x1004;
+    regs.set_reg(1, 2);
+    bus.write_u32(0x1008, 0x0005, &mut periph, &mut nvic); // demi-mot de table 5
+    Thumb32::execute(0xE8DF, 0xF011, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.pc, 0x1004 + 2 * 5);
+}
+
+#[test]
 fn alu_32_bits_forme_registre_additionne_et_soustrait() {
     let mut regs = Registers::default();
     let mut bus = MemoryBus::default();
