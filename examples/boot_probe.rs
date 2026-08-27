@@ -21,7 +21,13 @@ fn main() {
 
     let mut m = Machine::new();
     m.device_key = key;
+    // `page=<hex>` journalise dans l'ordre tous les acces a une page de 4 Ko,
+    // ce que les compteurs ne permettent pas de reconstituer.
+    let page = std::env::var("MMIO_PAGE")
+        .ok()
+        .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok());
 
+    let report_page = page;
     let report = match m.load_firmware_file(&path) {
         Ok(r) => r,
         Err(e) => {
@@ -30,6 +36,7 @@ fn main() {
         }
     };
 
+    m.bus.mmio_trace.log_page = report_page;
     println!("== chargement");
     println!("  {} octets, image {:?}", report.bytes, report.kind);
     println!("  chiffre   : {}", report.encrypted);
@@ -48,6 +55,23 @@ fn main() {
     let mut pc_hist: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
     let mut executed = 0u64;
     let mut stop = None;
+    // Le printf de debug reutilise le meme tampon, donc seul le dernier message
+    // y subsiste. On l'echantillonne en cours de route pour reconstituer le
+    // journal complet du firmware.
+    let tampon = std::env::var("CONSOLE_ADDR")
+        .ok()
+        .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+        .unwrap_or(0x1801_C720);
+    let mut journal: Vec<String> = Vec::new();
+    let mut dernier = String::new();
+    // Dans la boucle de formatage, cette instruction appelle la fonction de
+    // sortie avec le caractere dans r0. L'intercepter donne la console complete,
+    // quel que soit le tampon de destination.
+    let sortie_pc = std::env::var("PRINTF_PC")
+        .ok()
+        .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+        .unwrap_or(0x0000_1070);
+    let mut console = String::new();
 
     while executed < budget {
         let pc = m.cpu.regs.pc;
@@ -61,6 +85,27 @@ fn main() {
         };
         *zones.entry(zone).or_default() += 1;
         *pc_hist.entry(pc).or_default() += 1;
+
+        if m.cpu.regs.pc == sortie_pc && console.len() < 8000 {
+            let c = (m.cpu.regs.get_reg(0) & 0xFF) as u8;
+            console.push(if (0x20..0x7f).contains(&c) || c == 10 { c as char } else { ' ' });
+        }
+
+        if executed % 20_000 == 0 {
+            let mut texte = String::new();
+            for k in 0..160u32 {
+                let b = m.bus.read_u8(tampon + k, &mut m.periph, &m.cpu.nvic);
+                if b == 0 {
+                    break;
+                }
+                texte.push(if (0x20..0x7f).contains(&b) { b as char } else { ' ' });
+            }
+            let texte = texte.trim().to_string();
+            if !texte.is_empty() && texte != dernier {
+                journal.push(texte.clone());
+                dernier = texte;
+            }
+        }
 
         match m.step() {
             StepResult::Ok(_) => executed += 1,
@@ -131,7 +176,7 @@ fn main() {
         );
     }
 
-    let all = m.bus.mmio_trace.hottest_all(20);
+    let all = m.bus.mmio_trace.hottest_all(60);
     println!("
 == tous les acces peripheriques ({} registres distincts)", m.bus.mmio_trace.all.len());
     if all.is_empty() {
@@ -139,8 +184,8 @@ fn main() {
     }
     for (addr, name, s) in all {
         println!(
-            "  {:#010x}  {:<9} +{:#05x}  lect {:>9}  ecr {:>7}  derniere {:#010x}",
-            addr, name, addr & 0xFFF, s.reads, s.writes, s.last_write
+            "  {:#010x}  {:<9} +{:#05x}  lect {:>9}  ecr {:>7}  derniere {:#010x}  depuis {:#010x}",
+            addr, name, addr & 0xFFF, s.reads, s.writes, s.last_write, s.first_pc
         );
     }
 
@@ -148,6 +193,64 @@ fn main() {
 == acces hors carte memoire ({} adresses)", m.bus.mmio_trace.off_map.len());
     for (addr, s) in m.bus.mmio_trace.off_map.iter().take(20) {
         println!("  {:#010x}  lect {:>9}  ecr {:>7}  derniere {:#010x}", addr, s.reads, s.writes, s.last_write);
+    }
+
+    if let Some(pg) = page {
+        println!("
+== journal des acces a la page {:#010x}", pg);
+        for e in m.bus.mmio_trace.log.iter().take(120) {
+            let sens = if e.is_write { "ecrit" } else { "lit  " };
+            println!(
+                "  {:#010x}  {} {:#010x}  {:#010x}",
+                e.pc, sens, e.addr, e.value
+            );
+        }
+    }
+
+    // Le printf de debug formate dans un tampon en SRAM avant tout transfert.
+    // Relever les suites imprimables suffit donc a lire ce que le firmware dit,
+    // sans avoir a modeliser le DMA de l'UART.
+    println!("
+== console du firmware ({} caracteres)", console.len());
+    for l in console.lines().take(40) {
+        if !l.trim().is_empty() {
+            println!("  {}", l.trim_end());
+        }
+    }
+
+    println!("
+== journal du firmware ({} messages)", journal.len());
+    for l in journal.iter().take(40) {
+        println!("  {}", l);
+    }
+
+    println!("
+== chaines lisibles en SRAM");
+    let mut courant = String::new();
+    let mut trouvees: Vec<(u32, String)> = Vec::new();
+    let mut debut = 0u32;
+    for (i, &b) in m.bus.sram.data.iter().enumerate() {
+        let c = b as char;
+        if (0x20..0x7f).contains(&b) || b == 10 || b == 13 {
+            if courant.is_empty() {
+                debut = 0x1800_0000 + i as u32;
+            }
+            courant.push(if b == 13 { ' ' } else { c });
+        } else {
+            if courant.trim().len() >= 6 {
+                trouvees.push((debut, courant.clone()));
+            }
+            courant.clear();
+        }
+    }
+    if courant.trim().len() >= 6 {
+        trouvees.push((debut, courant.clone()));
+    }
+    if trouvees.is_empty() {
+        println!("  aucune");
+    }
+    for (a, t) in trouvees.iter().take(30) {
+        println!("  {:#010x}  {}", a, t.replace(char::from(10), " / ").trim());
     }
 
     if !m.periph.uart.console_history.is_empty() {

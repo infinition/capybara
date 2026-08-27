@@ -579,3 +579,197 @@ fn la_fenetre_xip_suit_la_base_programmee() {
     bus.flash.write_u8(0x11000 + 0x6D1C4, 0x7E);
     assert_eq!(bus.read_u8(map::ICACHE_BASE + 0x6D1C4, &mut periph, &nvic), 0x7E);
 }
+
+#[test]
+fn la_region_bit_band_adresse_un_bit_a_la_fois() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // L'alias 0x42340000 vise l'octet 0x4001A000, bit 0 ; 0x42340004 son bit 1.
+    // Le firmware scrute un statut par ce chemin, et sans lui le coeur partait
+    // executer les octets de l'alias comme du code.
+    assert_eq!(map::bitband_target(0x4234_0000), Some((0x4001_A000, 0)));
+    assert_eq!(map::bitband_target(0x4234_0004), Some((0x4001_A000, 1)));
+    assert_eq!(map::bitband_target(0x2200_0000), Some((0x2000_0000, 0)));
+    // Hors des deux fenetres, aucune traduction.
+    assert_eq!(map::bitband_target(0x4001_A000), None);
+
+    // Ecrire par l'alias ne touche que le bit vise de la mailbox.
+    bus.write_u32(map::MAILBOX_BASE, 0, &mut periph, &mut nvic);
+    bus.write_u32(0x2200_0008, 1, &mut periph, &mut nvic); // octet 0, bit 2
+    assert_eq!(bus.read_u32(map::MAILBOX_BASE, &mut periph, &nvic) & 0xFF, 0b100);
+    assert_eq!(bus.read_u32(0x2200_0008, &mut periph, &nvic), 1);
+    assert_eq!(bus.read_u32(0x2200_0004, &mut periph, &nvic), 0);
+
+    bus.write_u32(0x2200_0008, 0, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(map::MAILBOX_BASE, &mut periph, &nvic) & 0xFF, 0);
+}
+
+#[test]
+fn le_dma_du_controleur_flash_recopie_vraiment() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    for i in 0..64u32 {
+        bus.flash.write_u8((0xD49000 + i) as usize, (i as u8).wrapping_mul(3));
+    }
+
+    // Sequence relevee dans le firmware : adresse flash, longueur, adresse RAM,
+    // puis depart.
+    let base = periph::FLASH_CTL;
+    bus.write_u32(base + 0x10C, 0x60D4_9000, &mut periph, &mut nvic);
+    bus.write_u32(base + 0x104, 64, &mut periph, &mut nvic);
+    bus.write_u32(base + 0x100, map::SRAM_BASE + 0x100, &mut periph, &mut nvic);
+    bus.write_u32(base + 0x108, 2, &mut periph, &mut nvic);
+
+    for i in 0..64u32 {
+        let attendu = (i as u8).wrapping_mul(3);
+        let obtenu = bus.read_u8(map::SRAM_BASE + 0x100 + i, &mut periph, &nvic);
+        assert_eq!(obtenu, attendu, "octet {} du transfert", i);
+    }
+    // Statut a zero, donc transfert termine.
+    assert_eq!(bus.read_u32(base + 0x108, &mut periph, &nvic), 0);
+}
+
+#[test]
+fn l_adc_signale_sa_conversion_terminee() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // Avant toute demande, le bit de fin est absent.
+    assert_eq!(bus.read_u32(periph::SAR_ADC1 + 0x14, &mut periph, &nvic) & 0x40, 0);
+
+    // Le firmware ecrit le canal puis attend le bit 6, teste par LSLS #25 / BMI.
+    bus.write_u32(periph::SAR_ADC1, 3, &mut periph, &mut nvic);
+    let statut = bus.read_u32(periph::SAR_ADC1 + 0x14, &mut periph, &nvic);
+    assert_ne!(statut << 25 & 0x8000_0000, 0, "le bit 6 doit etre pose");
+}
+
+#[test]
+fn decalages_par_registre_et_extensions() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // LSL.W r2, r0, r1 : 0xFA00 0xF201, la forme du set_bit du firmware.
+    regs.set_reg(0, 1);
+    regs.set_reg(1, 12);
+    Thumb32::execute(0xFA00, 0xF201, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(2), 1 << 12);
+
+    // Un decalage de 32 ou plus vide le resultat, la ou l'operateur Rust panique.
+    regs.set_reg(1, 40);
+    Thumb32::execute(0xFA00, 0xF201, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(2), 0);
+
+    // ASR.W conserve le signe : 0xFA40 0xF201.
+    regs.set_reg(0, 0xFFFF_FF00);
+    regs.set_reg(1, 4);
+    Thumb32::execute(0xFA40, 0xF201, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(2), 0xFFFF_FFF0);
+
+    // UXTB r2, r0 : 0xFA5F 0xF280.
+    regs.set_reg(0, 0xDEAD_BE95);
+    Thumb32::execute(0xFA5F, 0xF280, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(2), 0x95);
+    // SXTB r2, r0 : 0xFA4F 0xF280, le bit de signe est propage.
+    Thumb32::execute(0xFA4F, 0xF280, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(2), 0xFFFF_FF95);
+}
+
+#[test]
+fn bfc_efface_le_champ_au_lieu_d_extraire() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // BFC r4, #0, #3 = 0xF36F 0x0402, l'alignement de pile du handler SysTick.
+    // Decode en SBFX, il mettait r4 a zero, donc SP a zero.
+    regs.set_reg(4, 0x1801_EE3F);
+    Thumb32::execute(0xF36F, 0x0402, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(4), 0x1801_EE38);
+
+    // UBFX r0, r0, #4, #3 : extraction non signee des bits 6:4.
+    regs.set_reg(0, 0b0101_0000);
+    Thumb32::execute(0xF3C0, 0x1002, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(0), 0b101);
+
+    // BFI r0, r1, #4, #4 : insertion de quatre bits a partir du rang 4.
+    regs.set_reg(0, 0xFFFF_FF0F);
+    regs.set_reg(1, 0xA);
+    Thumb32::execute(0xF361, 0x1007, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(0), 0xFFFF_FFAF);
+}
+
+#[test]
+fn ldrd_et_strd_transferent_deux_registres() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    regs.set_reg(4, map::SRAM_BASE);
+    regs.set_reg(2, 0x1111_2222);
+    regs.set_reg(1, 0x3333_4444);
+    // STRD r2, r1, [r4, #4] = 0xE9C4 0x2101.
+    Thumb32::execute(0xE9C4, 0x2101, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(map::SRAM_BASE + 4, &mut periph, &nvic), 0x1111_2222);
+    assert_eq!(bus.read_u32(map::SRAM_BASE + 8, &mut periph, &nvic), 0x3333_4444);
+
+    // LDRD r5, r6, [r4, #4] = 0xE9D4 0x5601.
+    Thumb32::execute(0xE9D4, 0x5601, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(5), 0x1111_2222);
+    assert_eq!(regs.get_reg(6), 0x3333_4444);
+}
+
+#[test]
+fn lire_r15_rend_le_pc_architectural() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // ADD r3, pc = 0x447B, a l'adresse 0x1058 : step() a deja ajoute 2, le PC
+    // architectural vaut 0x105C. Deux octets manquants suffisaient a faire
+    // pointer un pointeur de fonction sur le BX lr de la fonction precedente.
+    regs.pc = 0x105A;
+    regs.set_reg(3, 0x1000);
+    Thumb16::execute(0x447B, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(3), 0x105C + 0x1000);
+}
+
+#[test]
+fn le_retour_d_exception_restaure_le_contexte() {
+    use tamagotchi_paradise_rs::emulator::Mode;
+
+    let mut machine = Machine::new();
+    machine.bus.pram.load(&[0u8; 256]);
+    machine.cpu.regs.msp = map::SRAM_BASE + 0x1000;
+    machine.cpu.regs.pc = 0x200;
+    machine.cpu.regs.set_reg(0, 0xAAAA_AAAA);
+
+    let sp_avant = machine.cpu.regs.get_sp();
+    // SysTick actif, interruption armee, compteur a bout.
+    machine.cpu.nvic.syst_csr = 0b11;
+    machine.cpu.nvic.syst_rvr = 1;
+    machine.cpu.nvic.syst_cvr = 0;
+    machine.cpu.nvic.systick_pending = true;
+
+    machine.step();
+    assert_eq!(machine.cpu.regs.mode, Mode::Handler);
+    assert_eq!(machine.cpu.regs.lr, 0xFFFF_FFF9, "EXC_RETURN attendu dans LR");
+    assert_eq!(machine.cpu.regs.get_sp(), sp_avant - 32);
+
+    // Le coeur doit reconnaitre EXC_RETURN et depiler, pas s'arreter.
+    machine.cpu.regs.pc = 0xFFFF_FFF9;
+    machine.step();
+    assert_eq!(machine.cpu.regs.mode, Mode::Thread);
+    assert_eq!(machine.cpu.regs.get_sp(), sp_avant);
+    assert_eq!(machine.cpu.regs.get_reg(0), 0xAAAA_AAAA);
+    assert_eq!(machine.cpu.regs.pc, 0x200);
+}

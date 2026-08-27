@@ -1,4 +1,6 @@
+pub mod adc;
 pub mod display;
+pub mod flashctl;
 pub mod fuses;
 pub mod gpio;
 pub mod snsys;
@@ -7,7 +9,9 @@ pub mod timers;
 pub mod uart;
 pub mod xip;
 
+pub use adc::SarAdc;
 pub use display::{DisplayController, LCD_HEIGHT, LCD_WIDTH};
+pub use flashctl::{FlashController, Transfer};
 pub use fuses::FuseRegisters;
 pub use gpio::GpioController;
 pub use snsys::SnSysRegisters;
@@ -25,6 +29,9 @@ pub struct Peripherals {
     pub uart: UartController,
     pub timers: Timers,
     pub xip: XipController,
+    /// Les deux convertisseurs, 0x4000A000 et 0x4000B000.
+    pub adc: [SarAdc; 2],
+    pub flashctl: FlashController,
 }
 
 impl Default for Peripherals {
@@ -38,6 +45,8 @@ impl Default for Peripherals {
             uart: UartController::default(),
             timers: Timers::default(),
             xip: XipController::default(),
+            adc: Default::default(),
+            flashctl: FlashController::default(),
         }
     }
 }

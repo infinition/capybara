@@ -7,7 +7,7 @@ pub mod sonix;
 
 pub use cpu::{Cpu, DisassembledInst, Disassembler, Mode, Registers, StepResult};
 pub use loader::{FirmwareLoader, ImageKind, LoadReport, LoadedRegion};
-pub use mmu::{BootRom, InternalSram, MemoryBus, MmioStat, MmioTrace, Pram, SpiFlash};
+pub use mmu::{BootRom, InternalSram, LogEntry, MemoryBus, MmioStat, MmioTrace, Pram, SpiFlash};
 pub use peripherals::{
     DisplayController, FuseRegisters, GpioController, Peripherals, SysRegisters, Timers,
     UartController,

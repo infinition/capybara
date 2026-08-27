@@ -366,17 +366,25 @@ impl Thumb16 {
         let h2 = (w >> 6) & 1;
         let rm = (((w >> 3) & 0x7) | (h2 << 3)) as u8;
         let rdn = ((w & 0x7) | (h1 << 3)) as u8;
-        let val_m = regs.get_reg(rm);
+
+        // Lire R15 doit rendre le PC architectural, soit l'adresse de
+        // l'instruction plus 4. Or step() n'a avance que de 2 pour une
+        // instruction 16 bits. Sans ce rattrapage, la sequence de code
+        // relogeable LDR.W r11, [pc, #..] / ADD r11, pc calcule un pointeur de
+        // fonction deux octets trop bas, qui tombe sur le BX lr de la fonction
+        // precedente au lieu de son point d'entree.
+        let lire = |r: u8| if r == 15 { regs.pc.wrapping_add(2) } else { regs.get_reg(r) };
+        let val_m = lire(rm);
 
         match op {
             0 => {
                 // ADD
-                let val_dn = regs.get_reg(rdn);
+                let val_dn = lire(rdn);
                 regs.set_reg(rdn, val_dn.wrapping_add(val_m));
             }
             1 => {
                 // CMP
-                let val_dn = regs.get_reg(rdn);
+                let val_dn = lire(rdn);
                 let (res, borrow) = val_dn.overflowing_sub(val_m);
                 regs.set_nz(res);
                 regs.set_flag_c(!borrow);

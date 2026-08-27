@@ -88,6 +88,8 @@ impl Cpu {
             }
         }
 
+        // La trace MMIO attribue chaque acces a l'instruction qui le provoque.
+        bus.current_pc = pc;
         let w1 = bus.read_u16(pc, periph, &self.nvic);
         self.regs.pc = self.regs.pc.wrapping_add(2);
 
