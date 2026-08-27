@@ -213,7 +213,7 @@ fn main() {
     if let Some(pg) = page {
         println!("
 == journal des acces a la page {:#010x}", pg);
-        for e in m.bus.mmio_trace.log.iter().take(120) {
+        for e in m.bus.mmio_trace.log.iter().rev().take(60).collect::<Vec<_>>().into_iter().rev() {
             let sens = if e.is_write { "ecrit" } else { "lit  " };
             println!(
                 "  {:#010x}  {} {:#010x}  {:#010x}",

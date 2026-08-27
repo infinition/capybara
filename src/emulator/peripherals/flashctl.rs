@@ -14,16 +14,21 @@
 /// rendre l'identifiant du MX25L12835F octet par octet ne suffit pas a le
 /// satisfaire, le role du registre 0x10 reste a determiner.
 ///
-/// Transfert par DMA, registres 0x100 a 0x10C :
+/// Transfert par DMA, registres 0x100 a 0x10C. Le registre de controle porte
+/// deux bits distincts, releves dans la fonction de depart du firmware :
+///
 /// ```text
-///   STR  adresse_flash, [base, #0x10c]
-///   STR  longueur,      [base, #0x104]
-///   STR  adresse_ram,   [base, #0x100]
-///   STR  2,             [base, #0x108]   ; depart
-///   LDR  statut,        [base, #0x108]   ; attente
+///   ctrl |= 2   ; direction : 0 = flash vers memoire, 1 = memoire vers flash
+///   ctrl &= ~2
+///   ctrl |= 1   ; bit 0 : depart
 /// ```
-/// La copie est faite d'un coup a l'ecriture du depart, et le statut retombe
-/// aussitot a zero : rien ne modelise ici la duree d'un transfert reel.
+///
+/// Le firmware procede par lecture-modification-ecriture sur ce registre : il
+/// doit donc se relire tel qu'il a ete ecrit, sinon le bit de direction est
+/// perdu entre les deux etapes et toute ecriture passe pour une lecture.
+///
+/// La copie est faite d'un coup au depart et le bit de depart retombe aussitot :
+/// rien ne modelise ici la duree d'un transfert reel.
 pub struct FlashController {
     pub ctrl: u32,
     pub command: u32,
@@ -40,6 +45,7 @@ pub struct FlashController {
     pub dma_mem_addr: u32,
     pub dma_len: u32,
     pub dma_flash_addr: u32,
+    pub dma_ctrl: u32,
     /// Derniere copie effectuee, pour l'affichage de diagnostic.
     pub last_transfer: Option<(u32, u32, u32)>,
 }
@@ -52,8 +58,13 @@ pub const DMA_MEM: u32 = 0x100;
 pub const DMA_LEN: u32 = 0x104;
 pub const DMA_CTRL: u32 = 0x108;
 pub const DMA_FLASH: u32 = 0x10C;
-/// Bit de depart du transfert, ecrit dans DMA_CTRL.
-pub const DMA_START: u32 = 0x2;
+/// Bit de depart du transfert, dans DMA_CTRL.
+pub const DMA_START: u32 = 0x1;
+/// Bit de direction. A zero le transfert va de la flash vers la memoire, pose
+/// il remonte la memoire vers la flash. Le sens est etabli par l'ordre des
+/// transferts : le tout premier lit une page de sauvegarde pour la valider, et
+/// il a ce bit a zero.
+pub const DMA_VERS_FLASH: u32 = 0x2;
 
 /// Macronix MX25L12835F : fabricant 0xC2, type 0x20, capacite 0x18 (128 Mbit).
 /// C'est la puce reellement montee sur la console.
@@ -77,6 +88,7 @@ impl Default for FlashController {
             dma_mem_addr: 0,
             dma_len: 0,
             dma_flash_addr: 0,
+            dma_ctrl: 0,
             last_transfer: None,
         }
     }
@@ -109,8 +121,9 @@ impl FlashController {
             }
             DMA_MEM => self.dma_mem_addr,
             DMA_LEN => self.dma_len,
-            // Zero signifie inactif, donc transfert termine.
-            DMA_CTRL => 0,
+            // Le bit de depart retombe des la fin du transfert, instantanee ici,
+            // mais le reste du registre doit se relire tel qu'ecrit.
+            DMA_CTRL => self.dma_ctrl & !DMA_START,
             DMA_FLASH => self.dma_flash_addr,
             _ => 0,
         }
@@ -134,14 +147,18 @@ impl FlashController {
             DMA_MEM => self.dma_mem_addr = val,
             DMA_LEN => self.dma_len = val,
             DMA_FLASH => self.dma_flash_addr = val,
-            DMA_CTRL if val & DMA_START != 0 => {
-                let t = Transfer {
-                    flash_offset: self.dma_flash_addr & 0x00FF_FFFF,
-                    mem_addr: self.dma_mem_addr,
-                    len: self.dma_len,
-                };
-                self.last_transfer = Some((t.flash_offset, t.mem_addr, t.len));
-                return Some(t);
+            DMA_CTRL => {
+                self.dma_ctrl = val;
+                if val & DMA_START != 0 {
+                    let t = Transfer {
+                        flash_offset: self.dma_flash_addr & 0x00FF_FFFF,
+                        mem_addr: self.dma_mem_addr,
+                        len: self.dma_len,
+                        vers_memoire: val & DMA_VERS_FLASH == 0,
+                    };
+                    self.last_transfer = Some((t.flash_offset, t.mem_addr, t.len));
+                    return Some(t);
+                }
             }
             _ => {}
         }
@@ -155,4 +172,6 @@ pub struct Transfer {
     pub flash_offset: u32,
     pub mem_addr: u32,
     pub len: u32,
+    /// Sens du transfert : vrai pour flash vers memoire, faux pour l'inverse.
+    pub vers_memoire: bool,
 }

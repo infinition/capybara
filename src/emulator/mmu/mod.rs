@@ -76,6 +76,9 @@ pub mod periph {
     pub const I2S4: u32 = 0x4000_E000;
     pub const I2S2: u32 = 0x4001_2000;
     pub const I2S0: u32 = 0x4001_9000;
+    /// Port d'entrees-sorties numero 2, resolu par la table de broches du
+    /// firmware. Ses broches 0 et 1 sont lues au demarrage.
+    pub const GPIO_PORT2: u32 = 0x4001_A000;
     pub const SPI1: u32 = 0x4002_0000;
     /// Controleur de la flash SPI NOR externe et son DMA.
     pub const FLASH_CTL: u32 = 0x4002_2000;
@@ -112,6 +115,7 @@ pub mod periph {
             I2S4 => "I2S4",
             I2S2 => "I2S2",
             I2S0 => "I2S0",
+            GPIO_PORT2 => "GPIO_P2",
             SPI1 => "SPI1",
             FLASH_CTL => "FLASH_CTL",
             IDMA1 => "IDMA1",
@@ -175,7 +179,7 @@ impl MmioTrace {
     /// Journalise un acces si sa page est celle observee. Le journal est borne
     /// pour ne pas gonfler indefiniment sur une boucle de scrutation.
     fn journalise(&mut self, addr: u32, is_write: bool, value: u32, pc: u32) {
-        if self.log_page == Some(addr & !0xFFF) && self.log.len() < 4000 {
+        if self.log_page == Some(addr & !0xFFF) && self.log.len() < 60000 {
             self.log.push(LogEntry { pc, addr, is_write, value });
         }
     }
@@ -477,8 +481,16 @@ impl MemoryBus {
         }
         let nvic = Nvic::default();
         for i in 0..t.len {
-            let octet = self.flash.read_u8((t.flash_offset + i) as usize);
-            self.ecrire_octet_brut(t.mem_addr.wrapping_add(i), octet, p, &nvic);
+            if t.vers_memoire {
+                let octet = self.flash.read_u8((t.flash_offset + i) as usize);
+                self.ecrire_octet_brut(t.mem_addr.wrapping_add(i), octet, p, &nvic);
+            } else {
+                // Sens inverse : la sauvegarde du jeu remonte en flash. Sans ce
+                // chemin, le firmware relit l'ancienne page et son controle de
+                // coherence echoue sur une somme qui ne correspond pas.
+                let octet = self.read_u8(t.mem_addr.wrapping_add(i), p, &nvic);
+                self.flash.write_u8((t.flash_offset + i) as usize, octet);
+            }
         }
     }
 
@@ -541,6 +553,9 @@ impl MemoryBus {
             }
             periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
                 p.adc[1].read_reg(off)
+            }
+            periph::GPIO_PORT2 if crate::emulator::peripherals::GpioPort::handles(off) => {
+                p.port2.read_reg(off)
             }
             periph::FLASH_CTL => p.flashctl.read_reg(off),
             periph::XIP_CTRL => p.xip.read_reg(off),

@@ -622,15 +622,17 @@ fn le_dma_du_controleur_flash_recopie_vraiment() {
     bus.write_u32(base + 0x10C, 0x60D4_9000, &mut periph, &mut nvic);
     bus.write_u32(base + 0x104, 64, &mut periph, &mut nvic);
     bus.write_u32(base + 0x100, map::SRAM_BASE + 0x100, &mut periph, &mut nvic);
-    bus.write_u32(base + 0x108, 2, &mut periph, &mut nvic);
+    // Direction a zero pour aller de la flash vers la memoire, puis depart.
+    bus.write_u32(base + 0x108, 0, &mut periph, &mut nvic);
+    bus.write_u32(base + 0x108, 1, &mut periph, &mut nvic);
 
     for i in 0..64u32 {
         let attendu = (i as u8).wrapping_mul(3);
         let obtenu = bus.read_u8(map::SRAM_BASE + 0x100 + i, &mut periph, &nvic);
         assert_eq!(obtenu, attendu, "octet {} du transfert", i);
     }
-    // Statut a zero, donc transfert termine.
-    assert_eq!(bus.read_u32(base + 0x108, &mut periph, &nvic), 0);
+    // Le bit de depart est retombe, le transfert est termine.
+    assert_eq!(bus.read_u32(base + 0x108, &mut periph, &nvic) & 1, 0);
 }
 
 #[test]
@@ -807,7 +809,8 @@ fn l_accelerateur_calcule_le_crc_de_la_page_de_sauvegarde() {
     machine.bus.write_u32(fc + 0x10C, 0x6000_0000 + PAGE as u32, p, n);
     machine.bus.write_u32(fc + 0x104, 0x1000, p, n);
     machine.bus.write_u32(fc + 0x100, tampon, p, n);
-    machine.bus.write_u32(fc + 0x108, 2, p, n);
+    machine.bus.write_u32(fc + 0x108, 0, p, n);
+    machine.bus.write_u32(fc + 0x108, 1, p, n);
 
     // Puis la sequence exacte de l'accelerateur, relevee dans le firmware.
     let cs = periph::CHECKSUM;
@@ -852,4 +855,73 @@ fn le_firmware_reel_valide_sa_sauvegarde_et_cesse_de_se_plaindre() {
         "la sauvegarde doit etre validee, console obtenue : {}",
         texte
     );
+}
+
+#[test]
+fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+    let fc = periph::FLASH_CTL;
+    let tampon = map::SRAM_BASE + 0x200;
+
+    for i in 0..32u32 {
+        bus.flash.write_u8((0xEFE000 + i) as usize, 0xA0 + i as u8);
+    }
+
+    // Le registre de controle porte deux bits distincts : bit 0 le depart, bit 1
+    // la direction. Le firmware procede par lecture-modification-ecriture, donc
+    // il doit relire ce qu'il a ecrit, sinon le bit de direction se perd et
+    // toute lecture passe pour une ecriture.
+    bus.write_u32(fc + 0x10C, 0x60EF_E000, &mut periph, &mut nvic);
+    bus.write_u32(fc + 0x104, 32, &mut periph, &mut nvic);
+    bus.write_u32(fc + 0x100, tampon, &mut periph, &mut nvic);
+
+    // Direction a zero : flash vers memoire.
+    bus.write_u32(fc + 0x108, 0, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(fc + 0x108, &mut periph, &nvic), 0, "le bit de direction se relit");
+    bus.write_u32(fc + 0x108, 1, &mut periph, &mut nvic);
+    for i in 0..32u32 {
+        assert_eq!(bus.read_u8(tampon + i, &mut periph, &nvic), 0xA0 + i as u8);
+    }
+
+    // Direction posee : memoire vers flash, ce qui permet au jeu de sauvegarder.
+    for i in 0..32u32 {
+        bus.write_u8(tampon + i, 0x50 + i as u8, &mut periph, &mut nvic);
+    }
+    bus.write_u32(fc + 0x108, 2, &mut periph, &mut nvic);
+    assert_eq!(bus.read_u32(fc + 0x108, &mut periph, &nvic), 2, "le bit de direction se relit");
+    bus.write_u32(fc + 0x108, 3, &mut periph, &mut nvic);
+    for i in 0..32u32 {
+        assert_eq!(
+            bus.flash.read_u8((0xEFE000 + i) as usize),
+            0x50 + i as u8,
+            "octet {} remonte en flash",
+            i
+        );
+    }
+}
+
+#[test]
+fn les_entrees_du_port_2_sont_hautes_au_repos() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let nvic = Nvic::default();
+
+    // Le firmware lit les broches 0x20 et 0x21, soit le port 2 broches 0 et 1,
+    // les combine en pin0 | (pin1 << 1) et attend la valeur 3. Des entrees a
+    // resistance de tirage se lisent hautes au repos.
+    let lire = |bus: &mut MemoryBus, p: &mut Peripherals, pin: u32| {
+        bus.read_u32(0x4200_0000 + 0x1A000 * 32 + pin * 4, p, &nvic)
+    };
+    let p0 = lire(&mut bus, &mut periph, 0);
+    let p1 = lire(&mut bus, &mut periph, 1);
+    assert_eq!(p0 | (p1 << 1), 3, "les deux broches doivent etre au repos");
+
+    // Un appui tire la broche vers le bas, et elle seule.
+    periph.port2.appuyer(0);
+    assert_eq!(lire(&mut bus, &mut periph, 0), 0);
+    assert_eq!(lire(&mut bus, &mut periph, 1), 1);
+    periph.port2.relacher(0);
+    assert_eq!(lire(&mut bus, &mut periph, 0), 1);
 }
