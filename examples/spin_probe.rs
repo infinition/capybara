@@ -20,6 +20,11 @@ fn main() {
     let mut m = Machine::new();
     m.device_key = Some(key);
     let report = m.load_firmware_file(&path).unwrap();
+    // Le dump d'origine porte le drapeau de pile faible : sans PILE_USEE, on
+    // remplace la pile, sinon le firmware affiche son message et s'eteint.
+    if std::env::var("PILE_USEE").is_err() {
+        m.remplacer_la_pile();
+    }
     println!("charge: {} octets, demarrable={}", report.bytes, report.bootable);
     println!("SP={:#010x} PC={:#010x}", report.entry_sp, report.entry_pc);
 

@@ -25,6 +25,11 @@ fn main() {
     let mut m = Machine::new();
     m.device_key = Some(key);
     m.load_firmware_file(&path).unwrap();
+    // Le dump d'origine porte le drapeau de pile faible : sans PILE_USEE, on
+    // remplace la pile, sinon le firmware affiche son message et s'eteint.
+    if std::env::var("PILE_USEE").is_err() {
+        m.remplacer_la_pile();
+    }
 
     // ECRAN_DEPART=n s'arrete au nieme transfert. Sans cela on va jusqu'au bout
     // du budget : le tampon contient alors le dernier rendu, alors que le

@@ -119,6 +119,59 @@ impl Machine {
     }
 
     /// Charge un dump et prepare le demarrage du vrai firmware.
+    /// Adresses des deux pages de sauvegarde, principale puis copie.
+    pub const PAGES_SAUVEGARDE: [usize; 2] = [0xEFE000, 0xEFF000];
+    /// Longueur d'une page de sauvegarde, en-tete compris.
+    pub const TAILLE_PAGE_SAUVEGARDE: usize = 0x1000;
+    /// Polynome de la somme de controle des pages de sauvegarde, celui que le
+    /// firmware programme dans l'accelerateur en 0x1000569E.
+    pub const POLYNOME_SAUVEGARDE: u16 = 0xA001;
+    /// Drapeau de pile faible, bit 3 du premier octet de l'etat sauvegarde.
+    ///
+    /// Le firmware le lit en 0x10030E54, imprime
+    /// "** LOW BATTERY FLAG DETECTED **" et passe a l'etat 111, qui affiche
+    /// "remplacez la pile" puis eteint la console. Le dump d'origine porte ce
+    /// drapeau : la console etait en fin de pile au moment de l'extraction.
+    pub const DRAPEAU_PILE_FAIBLE: u8 = 1 << 3;
+
+    /// Somme de controle d'une page de sauvegarde, sur ses 0xFFC octets utiles.
+    fn somme_sauvegarde(&self, page: usize) -> u16 {
+        let mut crc: u16 = 0;
+        for i in 4..Self::TAILLE_PAGE_SAUVEGARDE {
+            crc ^= self.bus.flash.read_u8(page + i) as u16;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ Self::POLYNOME_SAUVEGARDE
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        crc
+    }
+
+    /// Efface le drapeau de pile faible des deux pages de sauvegarde et remet
+    /// leur en-tete d'accord avec le contenu.
+    ///
+    /// C'est l'equivalent exact du geste physique : sans cela le firmware
+    /// affiche son message de pile a remplacer et s'eteint, quel que soit le
+    /// reste du modele.
+    pub fn remplacer_la_pile(&mut self) {
+        for page in Self::PAGES_SAUVEGARDE {
+            let etat = self.bus.flash.read_u8(page + 4);
+            if etat & Self::DRAPEAU_PILE_FAIBLE == 0 {
+                continue;
+            }
+            self.bus.flash.write_u8(page + 4, etat & !Self::DRAPEAU_PILE_FAIBLE);
+            let somme = self.somme_sauvegarde(page);
+            self.bus.flash.write_u8(page, (somme & 0xFF) as u8);
+            self.bus.flash.write_u8(page + 1, (somme >> 8) as u8);
+            let complement = !somme;
+            self.bus.flash.write_u8(page + 2, (complement & 0xFF) as u8);
+            self.bus.flash.write_u8(page + 3, (complement >> 8) as u8);
+        }
+    }
+
     pub fn load_firmware_file<P: AsRef<Path>>(&mut self, path: P) -> Result<LoadReport, String> {
         let p = path.as_ref();
         let report = FirmwareLoader::load_flash_dump(&mut self.bus, p, self.device_key)?;

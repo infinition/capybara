@@ -601,6 +601,9 @@ impl MemoryBus {
             periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
                 p.adc[1].read_reg(off)
             }
+            periph::WDT if crate::emulator::peripherals::AdcPile::handles(off) => {
+                p.adc_pile.read_reg(off)
+            }
             periph::DMA if crate::emulator::peripherals::DmaController::handles(off) => {
                 p.dma.read_reg(off)
             }
@@ -654,6 +657,9 @@ impl MemoryBus {
                 if let Some(t) = p.flashctl.write_reg(off, val) {
                     self.executer_transfert(t, p);
                 }
+            }
+            periph::WDT if crate::emulator::peripherals::AdcPile::handles(off) => {
+                p.adc_pile.write_reg(off, val)
             }
             periph::DMA if crate::emulator::peripherals::DmaController::handles(off) => {
                 if let Some(t) = p.dma.write_reg(off, val) {

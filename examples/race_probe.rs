@@ -33,6 +33,11 @@ fn main() {
     let mut m = Machine::new();
     m.device_key = Some(key);
     m.load_firmware_file(&path).unwrap();
+    // Le dump d'origine porte le drapeau de pile faible : sans PILE_USEE, on
+    // remplace la pile, sinon le firmware affiche son message et s'eteint.
+    if std::env::var("PILE_USEE").is_err() {
+        m.remplacer_la_pile();
+    }
 
     let mut pas = 0u64;
     while m.cpu.regs.pc != depart && pas < 400_000_000 {

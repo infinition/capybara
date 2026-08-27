@@ -1076,6 +1076,79 @@ fn le_registre_de_configuration_de_la_flash_se_relit() {
 }
 
 #[test]
+fn le_convertisseur_de_pile_rend_son_echantillon_et_enchaine() {
+    use tamagotchi_paradise_rs::emulator::peripherals::adc_pile;
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+    let adc = periph::WDT;
+
+    // Sequence de depart relevee en 0x000051F6 a 0x000052D8.
+    bus.write_u32(adc + adc_pile::CTRL, 0x8000, &mut periph, &mut nvic);
+    bus.write_u32(adc + adc_pile::COMMANDE, 0x8000, &mut periph, &mut nvic);
+    bus.write_u32(adc + adc_pile::COMMANDE, 0x8001, &mut periph, &mut nvic);
+
+    // Le gestionnaire de l'IRQ 9 extrait l'echantillon par UBFX #6, #10.
+    let brut = bus.read_u32(adc + adc_pile::RESULTAT, &mut periph, &nvic);
+    assert_eq!(
+        (brut >> adc_pile::DECALAGE_RESULTAT) & 0x3FF,
+        adc_pile::PILE_PLEINE,
+        "les dix bits utiles doivent commencer au rang 6"
+    );
+    assert!(periph.adc_pile.irq_a_lever, "le depart doit produire un premier echantillon");
+    periph.adc_pile.irq_a_lever = false;
+
+    // Le firmware ne relance jamais la conversion : elle doit s'enchainer.
+    assert!(!periph.adc_pile.tick(1), "aucun echantillon avant la fin de la conversion");
+    assert!(
+        periph.adc_pile.tick(adc_pile::DUREE_CONVERSION as u32),
+        "le convertisseur doit produire un echantillon a chaque duree ecoulee"
+    );
+
+    // Le bit de depart retombe, comme sur la puce.
+    assert_eq!(
+        bus.read_u32(adc + adc_pile::COMMANDE, &mut periph, &nvic) & adc_pile::DEPART,
+        0
+    );
+}
+
+#[test]
+fn remplacer_la_pile_efface_le_drapeau_et_refait_la_somme() {
+    // Earth et Land ont ete extraites pile faible, Water et Sky non.
+    let path = std::path::Path::new(REAL_DUMP);
+    if !path.exists() {
+        return;
+    }
+    let mut machine = Machine::new();
+    machine.device_key = Some(REAL_DEVICE_KEY);
+    machine.load_firmware_file(path).unwrap();
+
+    // Ce dump porte le drapeau : la console etait en fin de pile a l'extraction.
+    let page = Machine::PAGES_SAUVEGARDE[0];
+    assert_ne!(
+        machine.bus.flash.read_u8(page + 4) & Machine::DRAPEAU_PILE_FAIBLE,
+        0,
+        "le dump de reference doit porter le drapeau de pile faible"
+    );
+
+    machine.remplacer_la_pile();
+    for page in Machine::PAGES_SAUVEGARDE {
+        assert_eq!(machine.bus.flash.read_u8(page + 4) & Machine::DRAPEAU_PILE_FAIBLE, 0);
+        // L'en-tete doit rester d'accord avec le contenu, sinon le firmware
+        // rejette la page et la reformate.
+        let entete = u16::from_le_bytes([
+            machine.bus.flash.read_u8(page),
+            machine.bus.flash.read_u8(page + 1),
+        ]);
+        let complement = u16::from_le_bytes([
+            machine.bus.flash.read_u8(page + 2),
+            machine.bus.flash.read_u8(page + 3),
+        ]);
+        assert_eq!(entete, !complement, "en-tete de page coherent apres correction");
+    }
+}
+
+#[test]
 fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();

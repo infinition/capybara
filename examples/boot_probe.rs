@@ -36,6 +36,12 @@ fn main() {
         }
     };
 
+    // Le dump d'origine porte le drapeau de pile faible : sans PILE_USEE, on
+    // remplace la pile, sinon le firmware affiche son message et s'eteint.
+    if std::env::var("PILE_USEE").is_err() {
+        m.remplacer_la_pile();
+    }
+
     m.bus.mmio_trace.log_page = report_page;
     // MMIO_FORCE="adresse:valeur,adresse:valeur" impose des lectures sur des
     // registres non modelises, pour eprouver une hypothese sans coder un

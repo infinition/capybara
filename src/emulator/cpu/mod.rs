@@ -136,6 +136,11 @@ impl Cpu {
                 }
                 // Le bus realise la copie du controleur de transferts mais ne
                 // voit pas le NVIC : la fin de transfert se signale ici.
+                if periph.adc_pile.irq_a_lever | periph.adc_pile.tick(c) {
+                    periph.adc_pile.irq_a_lever = false;
+                    self.nvic
+                        .request_irq(crate::emulator::peripherals::adc_pile::IRQ);
+                }
                 if periph.dma.irq_a_lever {
                     periph.dma.irq_a_lever = false;
                     self.nvic.request_irq(crate::emulator::peripherals::dma::IRQ);
