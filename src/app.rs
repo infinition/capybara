@@ -20,6 +20,7 @@ pub struct TamagotchiApp {
     pub status_msg: Option<String>,
     pub flash_inspector: FlashInspector,
     pub active_modal: ActiveModal,
+    pub disasm_view_addr: u32,
 }
 
 impl TamagotchiApp {
@@ -40,6 +41,7 @@ impl TamagotchiApp {
             status_msg: Some("Tamagotchi Paradise Hardware Emulation Ready.".to_string()),
             flash_inspector: FlashInspector::new(),
             active_modal: ActiveModal::None,
+            disasm_view_addr: 0x6001_1000,
         }
     }
 }
@@ -205,30 +207,42 @@ impl eframe::App for TamagotchiApp {
                     ui.separator();
 
                     // Disassembly Stream
-                    let instructions = self.machine.get_disassembly_window(10);
+                    let instructions = self.machine.get_disassembly_at(self.disasm_view_addr, 12);
                     let current_pc = self.machine.cpu.regs.pc;
                     let is_running_ref = &mut self.machine.is_running;
+                    let view_addr_ref = &mut self.disasm_view_addr;
 
                     let mut step_requested = false;
                     let mut reset_requested = false;
+                    let mut new_pc_target = None;
                     DisasmPanel::render(
                         ui,
                         &instructions,
                         current_pc,
                         is_running_ref,
+                        view_addr_ref,
                         || {
                             step_requested = true;
                         },
                         || {
                             reset_requested = true;
                         },
+                        |target| {
+                            new_pc_target = Some(target);
+                        },
                     );
 
+                    if let Some(target) = new_pc_target {
+                        self.machine.cpu.regs.pc = target & !1;
+                        self.disasm_view_addr = target & !1;
+                    }
                     if step_requested {
                         self.machine.step();
+                        self.disasm_view_addr = self.machine.cpu.regs.pc;
                     }
                     if reset_requested {
                         self.machine.reset();
+                        self.disasm_view_addr = self.machine.cpu.regs.pc;
                     }
 
                     ui.separator();

@@ -99,8 +99,12 @@ impl Machine {
     }
 
     pub fn get_disassembly_window(&mut self, count: usize) -> Vec<DisassembledInst> {
+        self.get_disassembly_at(self.cpu.regs.pc, count)
+    }
+
+    pub fn get_disassembly_at(&mut self, start_addr: u32, count: usize) -> Vec<DisassembledInst> {
         let mut list = Vec::new();
-        let mut cur_pc = self.cpu.regs.pc;
+        let mut cur_pc = start_addr;
 
         for _ in 0..count {
             let w1 = self.bus.read_u16(cur_pc, &mut self.periph, &self.cpu.nvic);
@@ -108,7 +112,7 @@ impl Machine {
             let inst = Disassembler::disassemble(cur_pc, &[w1, w2]);
             let advance = if inst.is_32bit { 4 } else { 2 };
             list.push(inst);
-            cur_pc += advance;
+            cur_pc = cur_pc.wrapping_add(advance);
         }
 
         list
