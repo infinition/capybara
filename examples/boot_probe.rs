@@ -131,6 +131,25 @@ fn main() {
         );
     }
 
+    let all = m.bus.mmio_trace.hottest_all(20);
+    println!("
+== tous les acces peripheriques ({} registres distincts)", m.bus.mmio_trace.all.len());
+    if all.is_empty() {
+        println!("  aucun");
+    }
+    for (addr, name, s) in all {
+        println!(
+            "  {:#010x}  {:<9} +{:#05x}  lect {:>9}  ecr {:>7}  derniere {:#010x}",
+            addr, name, addr & 0xFFF, s.reads, s.writes, s.last_write
+        );
+    }
+
+    println!("
+== acces hors carte memoire ({} adresses)", m.bus.mmio_trace.off_map.len());
+    for (addr, s) in m.bus.mmio_trace.off_map.iter().take(20) {
+        println!("  {:#010x}  lect {:>9}  ecr {:>7}  derniere {:#010x}", addr, s.reads, s.writes, s.last_write);
+    }
+
     if !m.periph.uart.console_history.is_empty() {
         println!("\n== UART");
         println!("{}", m.periph.uart.console_history);

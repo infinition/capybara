@@ -109,7 +109,12 @@ pub struct MmioStat {
 #[derive(Default)]
 pub struct MmioTrace {
     pub enabled: bool,
+    /// Registres touches sans modele derriere.
     pub unknown: BTreeMap<u32, MmioStat>,
+    /// Tous les registres peripheriques touches, modelises ou non.
+    pub all: BTreeMap<u32, MmioStat>,
+    /// Adresses qui ne tombent dans aucune region de la carte memoire.
+    pub off_map: BTreeMap<u32, MmioStat>,
 }
 
 impl MmioTrace {
@@ -127,8 +132,50 @@ impl MmioTrace {
         }
     }
 
+    fn record_any_read(&mut self, addr: u32) {
+        if self.enabled {
+            self.all.entry(addr).or_default().reads += 1;
+        }
+    }
+
+    fn record_any_write(&mut self, addr: u32, val: u32) {
+        if self.enabled {
+            let e = self.all.entry(addr).or_default();
+            e.writes += 1;
+            e.last_write = val;
+        }
+    }
+
+    fn record_off_map_read(&mut self, addr: u32) {
+        if self.enabled {
+            self.off_map.entry(addr & !3).or_default().reads += 1;
+        }
+    }
+
+    fn record_off_map_write(&mut self, addr: u32, val: u32) {
+        if self.enabled {
+            let e = self.off_map.entry(addr & !3).or_default();
+            e.writes += 1;
+            e.last_write = val;
+        }
+    }
+
     pub fn clear(&mut self) {
         self.unknown.clear();
+        self.all.clear();
+        self.off_map.clear();
+    }
+
+    /// Meme classement que hottest, mais sur l'ensemble des acces peripheriques.
+    pub fn hottest_all(&self, count: usize) -> Vec<(u32, &'static str, MmioStat)> {
+        let mut v: Vec<_> = self
+            .all
+            .iter()
+            .map(|(a, s)| (*a, periph::name_of(*a & !0xFFF), *s))
+            .collect();
+        v.sort_by_key(|(_, _, s)| std::cmp::Reverse(s.reads + s.writes));
+        v.truncate(count);
+        v
     }
 
     /// Registres les plus sollicites, avec le peripherique auquel ils appartiennent.
@@ -192,7 +239,10 @@ impl MemoryBus {
                 let val = nvic.read_reg(addr & !3);
                 ((val >> ((addr & 3) * 8)) & 0xFF) as u8
             }
-            _ => 0,
+            _ => {
+                self.mmio_trace.record_off_map_read(addr);
+                0
+            }
         }
     }
 
@@ -227,7 +277,7 @@ impl MemoryBus {
                 current |= (val as u32) << shift;
                 nvic.write_reg(aligned, current);
             }
-            _ => {}
+            _ => self.mmio_trace.record_off_map_write(addr, val as u32),
         }
     }
 
@@ -277,6 +327,7 @@ impl MemoryBus {
     }
 
     fn read_mmio_u32(&mut self, addr: u32, p: &mut Peripherals) -> u32 {
+        self.mmio_trace.record_any_read(addr);
         let page = addr & !0xFFF;
         let off = addr & 0xFFF;
         match page {
@@ -295,6 +346,7 @@ impl MemoryBus {
     }
 
     fn write_mmio_u32(&mut self, addr: u32, val: u32, p: &mut Peripherals) {
+        self.mmio_trace.record_any_write(addr, val);
         let page = addr & !0xFFF;
         let off = addr & 0xFFF;
         match page {
