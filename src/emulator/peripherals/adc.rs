@@ -14,11 +14,33 @@
 /// Sans peripherique reel derriere, la conversion est instantanee : le bit de
 /// fin est pose des qu'un canal a ete demande. Seuls ces deux registres sont
 /// modelises, pour que les autres restent visibles dans la trace MMIO.
-#[derive(Default)]
 pub struct SarAdc {
     pub channel: u32,
     /// Une conversion a ete demandee, donc le resultat est disponible.
     pub converted: bool,
+    /// Valeur rendue dans les bits bas du registre de statut.
+    ///
+    /// Le registre de resultat n'a pas ete localise : le firmware n'est jamais
+    /// vu en train de lire un autre offset de cette page. La faire varier de
+    /// zero a pleine echelle ne change rien au comportement observe, cette
+    /// valeur est donc une commodite, pas un fait etabli.
+    pub valeur: u32,
+}
+
+/// Mesure correspondant a une pile pleine, sur douze bits.
+pub const PILE_PLEINE: u32 = 0x0C00;
+
+impl Default for SarAdc {
+    fn default() -> Self {
+        Self {
+            channel: 0,
+            converted: false,
+            valeur: std::env::var("SONIX_ADC")
+                .ok()
+                .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+                .unwrap_or(PILE_PLEINE),
+        }
+    }
 }
 
 pub const CHANNEL: u32 = 0x00;
@@ -37,7 +59,7 @@ impl SarAdc {
             CHANNEL => self.channel,
             STATUS => {
                 if self.converted {
-                    STATUS_DONE
+                    STATUS_DONE | (self.valeur & 0x0FFF)
                 } else {
                     0
                 }

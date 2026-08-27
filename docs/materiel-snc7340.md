@@ -109,12 +109,19 @@ modéliser le DMA de l'UART :
 cargo run --release --example boot_probe -- <dump.bin> <CLE> 300000000
 ```
 
-Sortie actuelle :
+Ce message a longtemps masqué le vrai problème :
 
 ```
 [example]flash id:
 unsupport chip, please check your flash vender
 ```
+
+C'est une **chaîne de repli du SDK**, sans rapport avec le fabricant de la flash.
+Elle s'affiche quand la fonction `0x0B574` rejette les deux emplacements de
+sauvegarde. Cette fonction lit une page de 4 Ko, vérifie que ses deux premiers
+octets sont le complément des deux suivants, puis compare la somme qu'ils portent
+à celle calculée sur les 4092 octets restants. Depuis que l'accélérateur de somme
+est modélisé, le firmware ne se plaint plus.
 
 ## Périphériques établis par la trace
 
@@ -123,8 +130,9 @@ unsupport chip, please check your flash vender
 | `0x4000A000` / `0x4000B000` | Convertisseurs SAR. Canal en `+0x00`, fin de conversion au bit 6 de `+0x14` | modélisé |
 | `0x40022000` | Contrôleur de flash externe. `+0x100` adresse mémoire, `+0x104` longueur, `+0x108` contrôle, `+0x10C` adresse flash | DMA modélisé, identifiant JEDEC non résolu |
 | `0x4002F000` | Contrôleur de la fenêtre XIP | modélisé |
+| `0x40038000` | Accélérateur de somme de contrôle. Polynôme en `+0x18`, source `+0x04`, longueur `+0x08`, départ bit 4 de `+0x00`, résultat `+0x1C`. CRC-16/ARC, polynôme réfléchi `0xA001`, init 0 | modélisé |
 | `0x45000000` | SN_SYS0, horloges et PLL | partiellement modélisé |
-| `0x4001A000`, `0x40018000` | scrutés en statut, rôle non établi | à faire |
+| `0x4001A000`, `0x40018000` | scrutés en statut, rôle non établi | **verrou actuel** |
 
 La région bit-band du Cortex-M (`0x22000000` et `0x42000000`) est implémentée :
 le firmware scrute un statut par l'alias `0x42340000`, qui vise `0x4001A000` bit 0.
@@ -135,12 +143,25 @@ Les cinq éditions démarrent, exécutent des centaines de millions d'instructio
 sans encodage inconnu, passent en code applicatif XIP et pilotent le watchdog,
 SN_SYS0, le contrôleur XIP, les convertisseurs et le contrôleur de flash.
 
-Le blocage actuel est identifié précisément : le firmware lit l'identifiant JEDEC
-de la flash, ne le reconnaît pas et boucle sur son message d'erreur. La fonction
-de lecture ne garde que l'octet de poids faible du registre `0x40022014`, donc
-l'identifiant se lit octet par octet, mais rendre `C2 20 18` dans cet ordre ne
-suffit pas. Le rôle du registre `0x40022010`, écrit à `0x00` puis `0x40` avant
-chaque lecture, reste à déterminer.
+Le firmware termine désormais son démarrage. Les cinq éditions valident leur
+sauvegarde et n'émettent plus aucun message d'erreur.
+
+Deux comportements distincts au terme du boot :
+
+**Earth et Land** (fichiers identiques, même empreinte) entrent en veille : bits
+de veille posés dans `0x45000300`, instruction `WFI`, effacement des interruptions
+en attente, boucle. SysTick désactivé, `PRIMASK` à 1, seule l'IRQ externe 3 armée,
+le RTC ayant été configuré juste avant. La source de réveil reste à modéliser.
+
+**Water, Sky et Jade Forest** vont plus loin : SysTick actif (`CSR = 0x00010007`,
+donc horloge cœur, interruption armée, compteur en marche) et deux IRQ armées.
+Elles butent sur un bit de `0x4001A000`, lu par la fenêtre bit-band et attendu
+à 1. C'est le prochain verrou.
+
+L'ADC a été instrumenté pour rendre une valeur de pile pleine, sans effet observé :
+le registre de résultat n'a pas été localisé, le firmware ne lisant jamais d'autre
+offset de cette page. L'hypothèse d'une coupure sur pile faible n'est donc **pas**
+vérifiée.
 
 Registres encore non modélisés, relevés par la trace MMIO :
 
