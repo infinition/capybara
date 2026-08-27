@@ -37,6 +37,21 @@ fn main() {
     };
 
     m.bus.mmio_trace.log_page = report_page;
+    // MMIO_FORCE="adresse:valeur,adresse:valeur" impose des lectures sur des
+    // registres non modelises, pour eprouver une hypothese sans coder un
+    // peripherique entier.
+    if let Ok(v) = std::env::var("MMIO_FORCE") {
+        for paire in v.split(',') {
+            if let Some((a, val)) = paire.split_once(':') {
+                let a = u32::from_str_radix(a.trim().trim_start_matches("0x"), 16);
+                let val = u32::from_str_radix(val.trim().trim_start_matches("0x"), 16);
+                if let (Ok(a), Ok(val)) = (a, val) {
+                    m.bus.mmio_trace.forcees.insert(a, val);
+                    println!("force: [{:#010x}] = {:#010x}", a, val);
+                }
+            }
+        }
+    }
     println!("== chargement");
     println!("  {} octets, image {:?}", report.bytes, report.kind);
     println!("  chiffre   : {}", report.encrypted);

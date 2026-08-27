@@ -153,6 +153,9 @@ pub struct MmioTrace {
     pub all: BTreeMap<u32, MmioStat>,
     /// Adresses qui ne tombent dans aucune region de la carte memoire.
     pub off_map: BTreeMap<u32, MmioStat>,
+    /// Valeurs imposees en lecture sur des registres non modelises, pour tester
+    /// une hypothese sans ecrire de peripherique. Alimente par MMIO_FORCE.
+    pub forcees: BTreeMap<u32, u32>,
     /// Page dont les acces sont journalises dans l'ordre, pour reconstituer un
     /// protocole. Les compteurs seuls ne disent pas la sequence.
     pub log_page: Option<u32>,
@@ -546,7 +549,7 @@ impl MemoryBus {
             _ => {
                 let pc = self.current_pc;
                 self.mmio_trace.record_read(addr, pc);
-                0
+                self.mmio_trace.forcees.get(&addr).copied().unwrap_or(0)
             }
         }
     }
