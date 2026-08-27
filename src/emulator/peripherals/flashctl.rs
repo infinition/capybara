@@ -30,11 +30,12 @@ pub struct FlashController {
     pub index: u32,
     /// Identifiant JEDEC rendu par le registre de donnee.
     pub jedec_id: u32,
-    /// Rang de l'octet d'identifiant a rendre a la prochaine lecture.
+    /// Reponse d'identification sur deux octets : fabricant puis composant.
     ///
     /// La fonction de lecture du firmware ne garde que l'octet de poids faible
     /// de 0x14 (LDRB.W apres le LDR), l'identifiant se lit donc octet par
     /// octet, comme sur la FIFO de reception d'un controleur SPI.
+    pub reponse: u32,
     pub id_index: usize,
     pub dma_mem_addr: u32,
     pub dma_len: u32,
@@ -57,6 +58,8 @@ pub const DMA_START: u32 = 0x2;
 /// Macronix MX25L12835F : fabricant 0xC2, type 0x20, capacite 0x18 (128 Mbit).
 /// C'est la puce reellement montee sur la console.
 pub const MX25L12835F_JEDEC: u32 = 0x00C2_2018;
+/// Reponse REMS du meme composant : fabricant 0xC2, identifiant 0x17.
+pub const MX25L12835F_REMS: u32 = 0x0000_C217;
 
 impl Default for FlashController {
     fn default() -> Self {
@@ -65,6 +68,11 @@ impl Default for FlashController {
             command: 0,
             index: 0,
             jedec_id: MX25L12835F_JEDEC,
+            // Surchargeable pour balayer les candidats sans recompiler.
+            reponse: std::env::var("SONIX_FLASH_ID")
+                .ok()
+                .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+                .unwrap_or(MX25L12835F_REMS),
             id_index: 0,
             dma_mem_addr: 0,
             dma_len: 0,
@@ -75,14 +83,16 @@ impl Default for FlashController {
 }
 
 impl FlashController {
-    /// Octet courant de l'identifiant, du fabricant vers la capacite.
+    /// Octet courant de la reponse d'identification.
+    ///
+    /// Le firmware fait deux lectures par tentative, pas trois : c'est la
+    /// signature de REMS (0x90), qui rend le fabricant puis l'identifiant de
+    /// composant, et non RDID (0x9F) qui en rend trois. Le rang est choisi par
+    /// le registre d'index plutot que par un compteur, pour que deux tentatives
+    /// successives ne se dephasent pas.
     fn octet_identifiant(&self) -> u32 {
-        let octets = [
-            (self.jedec_id >> 16) & 0xFF,
-            (self.jedec_id >> 8) & 0xFF,
-            self.jedec_id & 0xFF,
-        ];
-        octets[self.id_index % octets.len()]
+        let rang = if self.index == 0 { 0 } else { 1 };
+        (self.reponse >> (8 * (1 - rang))) & 0xFF
     }
 
     pub fn read_reg(&mut self, offset: u32) -> u32 {
@@ -116,11 +126,11 @@ impl FlashController {
         match offset {
             CTRL => self.ctrl = val,
             COMMAND => self.command = val,
-            // Une nouvelle transaction repart du premier octet.
-            INDEX => {
-                self.index = val;
-                self.id_index = 0;
-            }
+            // Le rang n'est pas remis a zero ici : le firmware ecrit 0x00 puis
+            // 0x40 dans ce registre entre deux lectures successives, et attend
+            // l'octet suivant, pas le meme. Remettre a zero lui rendait deux
+            // fois l'octet de fabricant.
+            INDEX => self.index = val,
             DMA_MEM => self.dma_mem_addr = val,
             DMA_LEN => self.dma_len = val,
             DMA_FLASH => self.dma_flash_addr = val,

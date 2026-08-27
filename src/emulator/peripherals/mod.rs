@@ -1,4 +1,5 @@
 pub mod adc;
+pub mod crc;
 pub mod display;
 pub mod flashctl;
 pub mod fuses;
@@ -10,6 +11,7 @@ pub mod uart;
 pub mod xip;
 
 pub use adc::SarAdc;
+pub use crc::{Calcul, ChecksumUnit};
 pub use display::{DisplayController, LCD_HEIGHT, LCD_WIDTH};
 pub use flashctl::{FlashController, Transfer};
 pub use fuses::FuseRegisters;
@@ -32,6 +34,7 @@ pub struct Peripherals {
     /// Les deux convertisseurs, 0x4000A000 et 0x4000B000.
     pub adc: [SarAdc; 2],
     pub flashctl: FlashController,
+    pub crc: ChecksumUnit,
 }
 
 impl Default for Peripherals {
@@ -47,6 +50,7 @@ impl Default for Peripherals {
             xip: XipController::default(),
             adc: Default::default(),
             flashctl: FlashController::default(),
+            crc: ChecksumUnit::default(),
         }
     }
 }

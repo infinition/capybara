@@ -210,6 +210,19 @@ fn main() {
     // Le printf de debug formate dans un tampon en SRAM avant tout transfert.
     // Relever les suites imprimables suffit donc a lire ce que le firmware dit,
     // sans avoir a modeliser le DMA de l'UART.
+    let n = &m.cpu.nvic;
+    println!("
+== etat des interruptions");
+    println!("  SysTick CSR={:#010x} RVR={:#010x} CVR={:#010x}  actif={} irq={}",
+        n.syst_csr, n.syst_rvr, n.syst_cvr, n.syst_csr & 1 != 0, n.syst_csr & 2 != 0);
+    println!("  VTOR={:#010x}  PRIMASK={}", n.vtor, m.cpu.regs.primask);
+    for i in 0..4 {
+        if n.iser[i] != 0 || n.ispr[i] != 0 {
+            println!("  IRQ {:>3}..{:<3} activees={:#010x} en attente={:#010x}",
+                i * 32, i * 32 + 31, n.iser[i], n.ispr[i]);
+        }
+    }
+
     println!("
 == console du firmware ({} caracteres)", console.len());
     for l in console.lines().take(40) {

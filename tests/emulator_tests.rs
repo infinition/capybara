@@ -272,7 +272,7 @@ fn test_uart_console_capture() {
     let mut machine = Machine::new();
     for c in b"HI!" {
         machine.bus.write_u32(
-            periph::UART0,
+            periph::UART1,
             *c as u32,
             &mut machine.periph,
             &mut machine.cpu.nvic,
@@ -772,4 +772,84 @@ fn le_retour_d_exception_restaure_le_contexte() {
     assert_eq!(machine.cpu.regs.get_sp(), sp_avant);
     assert_eq!(machine.cpu.regs.get_reg(0), 0xAAAA_AAAA);
     assert_eq!(machine.cpu.regs.pc, 0x200);
+}
+
+#[test]
+fn l_accelerateur_calcule_le_crc_de_la_page_de_sauvegarde() {
+    let path = std::path::Path::new(REAL_DUMP);
+    if !path.exists() {
+        return;
+    }
+    let mut machine = Machine::new();
+    machine.device_key = Some(REAL_DEVICE_KEY);
+    machine.load_firmware_file(path).unwrap();
+
+    // Une page de sauvegarde porte sa propre somme en tete : les deux premiers
+    // octets valent le CRC des 4092 suivants, et les deux d'apres son complement.
+    // C'est ce controle qui rejetait la sauvegarde tant que l'accelerateur
+    // rendait zero, et le firmware affichait alors la chaine de repli du SDK
+    // "unsupport chip", sans rapport avec le fabricant de la flash.
+    const PAGE: usize = 0xEFE000;
+    let attendu = u16::from_le_bytes([
+        machine.bus.flash.read_u8(PAGE),
+        machine.bus.flash.read_u8(PAGE + 1),
+    ]);
+    let complement = u16::from_le_bytes([
+        machine.bus.flash.read_u8(PAGE + 2),
+        machine.bus.flash.read_u8(PAGE + 3),
+    ]);
+    assert_eq!(attendu, !complement, "en-tete de page coherent");
+
+    // Recopie de la page en SRAM par le DMA du controleur de flash.
+    let tampon = map::SRAM_BASE + 0x6000;
+    let fc = periph::FLASH_CTL;
+    let (p, n) = (&mut machine.periph, &mut machine.cpu.nvic);
+    machine.bus.write_u32(fc + 0x10C, 0x6000_0000 + PAGE as u32, p, n);
+    machine.bus.write_u32(fc + 0x104, 0x1000, p, n);
+    machine.bus.write_u32(fc + 0x100, tampon, p, n);
+    machine.bus.write_u32(fc + 0x108, 2, p, n);
+
+    // Puis la sequence exacte de l'accelerateur, relevee dans le firmware.
+    let cs = periph::CHECKSUM;
+    machine.bus.write_u32(cs + 0x18, 0xA001, p, n);
+    machine.bus.write_u32(cs + 0x14, 0xF0, p, n);
+    machine.bus.write_u32(cs + 0x04, tampon + 4, p, n);
+    machine.bus.write_u32(cs + 0x08, 0xFFC, p, n);
+    machine.bus.write_u32(cs + 0x00, 0x10, p, n);
+
+    let obtenu = machine.bus.read_u32(cs + 0x1C, p, n) as u16;
+    assert_eq!(obtenu, attendu, "le CRC calcule doit valider la page");
+    // Le bit de lancement doit etre retombe.
+    assert_eq!(machine.bus.read_u32(cs, p, n) & 0x10, 0);
+}
+
+#[test]
+fn le_firmware_reel_valide_sa_sauvegarde_et_cesse_de_se_plaindre() {
+    let path = std::path::Path::new(REAL_DUMP);
+    if !path.exists() {
+        return;
+    }
+    let mut machine = Machine::new();
+    machine.device_key = Some(REAL_DEVICE_KEY);
+    machine.load_firmware_file(path).unwrap();
+
+    // La boucle de formatage du printf appelle la sortie avec le caractere dans
+    // r0 : l'intercepter donne la console de debug du firmware.
+    const SORTIE: u32 = 0x0000_1070;
+    let mut console = Vec::new();
+    for _ in 0..40_000_000u64 {
+        if machine.cpu.regs.pc == SORTIE {
+            console.push((machine.cpu.regs.get_reg(0) & 0xFF) as u8);
+        }
+        if !matches!(machine.step(), StepResult::Ok(_)) {
+            break;
+        }
+    }
+
+    let texte = String::from_utf8_lossy(&console);
+    assert!(
+        !texte.contains("unsupport chip"),
+        "la sauvegarde doit etre validee, console obtenue : {}",
+        texte
+    );
 }

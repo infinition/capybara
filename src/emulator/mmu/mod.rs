@@ -88,7 +88,9 @@ pub mod periph {
     pub const GPIO0: u32 = 0x4003_1000;
     pub const I2C1: u32 = 0x4003_3000;
     pub const UART1: u32 = 0x4003_4000;
-    pub const UART0: u32 = 0x4003_8000;
+    /// Accelerateur de somme de controle. La figure 4-1 annonce UART0 ici,
+    /// mais le firmware y programme source, longueur, polynome et resultat.
+    pub const CHECKSUM: u32 = 0x4003_8000;
     pub const WDT: u32 = 0x4003_A000;
     /// Timers CT32B1 a CT32B7, une page de 4 Ko chacun.
     pub const TIMERS: u32 = 0x4004_0000;
@@ -119,7 +121,7 @@ pub mod periph {
             GPIO0 => "GPIO0",
             I2C1 => "I2C1",
             UART1 => "UART1",
-            UART0 => "UART0",
+            CHECKSUM => "CHECKSUM",
             WDT => "WDT",
             FUSES => "SN_SYS0",
             p if (TIMERS..=TIMERS_LAST).contains(&p) => "CT32B",
@@ -196,8 +198,8 @@ impl MmioTrace {
         }
     }
 
-    fn record_any_read(&mut self, addr: u32, pc: u32) {
-        self.journalise(addr, false, 0, pc);
+    fn record_any_read(&mut self, addr: u32, pc: u32, valeur: u32) {
+        self.journalise(addr, false, valeur, pc);
         if self.enabled {
             let e = self.all.entry(addr).or_default();
             if e.reads == 0 && e.writes == 0 {
@@ -491,13 +493,42 @@ impl MemoryBus {
         }
     }
 
+    /// Realise la somme de controle demandee par l'accelerateur.
+    ///
+    /// Comme pour le DMA de la flash, le peripherique ne voit pas la memoire :
+    /// c'est le bus qui parcourt la zone source.
+    fn executer_calcul(&mut self, c: crate::emulator::peripherals::Calcul, p: &mut Peripherals) {
+        const MAX: u32 = 1 << 20;
+        if c.length > MAX {
+            return;
+        }
+        let nvic = Nvic::default();
+        let mut crc: u16 = 0;
+        for i in 0..c.length {
+            let octet = self.read_u8(c.source.wrapping_add(i), p, &nvic);
+            crc ^= octet as u16;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { (crc >> 1) ^ c.polynome } else { crc >> 1 };
+            }
+        }
+        p.crc.resultat = crc as u32;
+    }
+
     fn read_mmio_u32(&mut self, addr: u32, p: &mut Peripherals) -> u32 {
         let pc = self.current_pc;
-        self.mmio_trace.record_any_read(addr, pc);
+        let valeur = self.lire_mmio(addr, p);
+        // La valeur rendue n'est connue qu'apres le dispatch : journaliser avant
+        // aurait consigne zero pour toutes les lectures.
+        self.mmio_trace.record_any_read(addr, pc, valeur);
+        valeur
+    }
+
+    fn lire_mmio(&mut self, addr: u32, p: &mut Peripherals) -> u32 {
         let page = addr & !0xFFF;
         let off = addr & 0xFFF;
         match page {
-            periph::UART0 => p.uart.read_reg(off),
+            periph::CHECKSUM => p.crc.read_reg(off),
+            periph::UART1 => p.uart.read_reg(off),
             periph::GPIO0 => p.gpio.read_reg(off),
             periph::SYSCTRL0 => p.sys.read_reg(off),
             // FEUSE (0x30..0x3f) puis les registres d'horloge/PLL de SN_SYS0.
@@ -526,7 +557,12 @@ impl MemoryBus {
         let page = addr & !0xFFF;
         let off = addr & 0xFFF;
         match page {
-            periph::UART0 => p.uart.write_reg(off, val),
+            periph::CHECKSUM => {
+                if let Some(c) = p.crc.write_reg(off, val) {
+                    self.executer_calcul(c, p);
+                }
+            }
+            periph::UART1 => p.uart.write_reg(off, val),
             periph::GPIO0 => p.gpio.write_reg(off, val),
             periph::SYSCTRL0 => {
                 if p.sys.write_reg(off, val) {

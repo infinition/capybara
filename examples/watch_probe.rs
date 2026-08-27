@@ -13,6 +13,15 @@ fn main() {
     let watch =
         u32::from_str_radix(a.next().expect("adresse hex").trim_start_matches("0x"), 16).unwrap();
     let nth: u64 = a.next().and_then(|v| v.parse().ok()).unwrap_or(1);
+    // `cond=<registre>:<valeur hex>` restreint le declenchement, indispensable
+    // quand l'adresse observee est un accesseur generique appele partout.
+    let cond: Option<(u8, u32)> = std::env::var("WATCH_COND").ok().and_then(|v| {
+        let (r, val) = v.split_once(':')?;
+        Some((
+            r.trim_start_matches('r').parse().ok()?,
+            u32::from_str_radix(val.trim_start_matches("0x"), 16).ok()?,
+        ))
+    });
     let budget: u64 = a.next().and_then(|v| v.parse().ok()).unwrap_or(400_000_000);
 
     let mut m = Machine::new();
@@ -23,7 +32,8 @@ fn main() {
     let mut steps = 0u64;
     let mut reached = false;
     while steps < budget {
-        if m.cpu.regs.pc == watch {
+        let condition_ok = cond.map_or(true, |(r, v)| m.cpu.regs.get_reg(r) == v);
+        if m.cpu.regs.pc == watch && condition_ok {
             seen += 1;
             if seen == nth {
                 reached = true;
@@ -61,6 +71,37 @@ fn main() {
         m.cpu.regs.lr,
         m.cpu.regs.pc
     );
+
+    if let Ok(v) = std::env::var("MEM_DUMP") {
+        if let Ok(base) = u32::from_str_radix(v.trim_start_matches("0x"), 16) {
+            println!("
+== memoire a {:#010x}", base);
+            for ligne in 0..4u32 {
+                let mut octets = Vec::new();
+                for k in 0..16u32 {
+                    octets.push(m.bus.read_u8(base + ligne * 16 + k, &mut m.periph, &m.cpu.nvic));
+                }
+                println!("  {:#010x}  {}  |{}|", base + ligne * 16, hex(&octets), texte(&octets));
+            }
+        }
+    }
+
+    // La pile porte les adresses de retour empilees par les PUSH {.., lr} :
+    // les relever reconstitue la chaine d'appels.
+    println!("
+== chaine d'appels probable, lue sur la pile");
+    let sp = m.cpu.regs.get_sp();
+    println!("  LR direct  {:#010x}", m.cpu.regs.lr);
+    for k in 0..24u32 {
+        let a = sp + k * 4;
+        let v = m.bus.read_u32(a, &mut m.periph, &m.cpu.nvic);
+        let code = (v & 1 == 1)
+            && ((0x100..0x10000).contains(&(v & !1))
+                || (0x1000_0000..0x1010_0000).contains(&(v & !1)));
+        if code {
+            println!("  [sp+{:#05x}] {:#010x}  -> retour vers {:#010x}", k * 4, v, v & !1);
+        }
+    }
 
     // Suite de l'execution : a chaque nouveau passage sur l'adresse observee on
     // releve r0, ce qui donne directement le flux de caracteres d'un printf.
