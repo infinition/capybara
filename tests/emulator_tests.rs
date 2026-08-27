@@ -111,6 +111,33 @@ fn mov_immediat_32_bits_rn_zero_ne_lit_pas_pc() {
 }
 
 #[test]
+fn cbz_et_cbnz_visent_la_bonne_adresse() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // CBNZ r0, +8 = 0xB920. Le PC architectural vaut adresse + 4, or step()
+    // n'a avance que de 2 : la cible vaut adresse + 4 + 8, pas + 2 + 8.
+    regs.pc = 0x1002; // adresse 0x1000, step() a deja ajoute 2.
+    regs.set_reg(0, 1);
+    Thumb16::execute(0xB920, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.pc, 0x100C);
+
+    // CBZ r0, +8 = 0xB120, pris quand r0 est nul.
+    regs.pc = 0x1002;
+    regs.set_reg(0, 0);
+    Thumb16::execute(0xB120, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.pc, 0x100C);
+
+    // Non pris : le PC ne bouge pas.
+    regs.pc = 0x1002;
+    regs.set_reg(0, 0);
+    Thumb16::execute(0xB920, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.pc, 0x1002);
+}
+
+#[test]
 fn alu_32_bits_forme_registre_additionne_et_soustrait() {
     let mut regs = Registers::default();
     let mut bus = MemoryBus::default();

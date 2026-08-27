@@ -434,7 +434,9 @@ impl Thumb16 {
             let imm = (i << 6) | (imm5 << 1);
             let val = regs.get_reg(rn);
             if (is_cbnz && val != 0) || (!is_cbnz && val == 0) {
-                regs.pc = regs.pc.wrapping_add(imm);
+                // Le PC architectural vaut adresse + 4, or step() n'a avance
+                // que de 2 pour une instruction 16 bits : il manque 2.
+                regs.pc = regs.pc.wrapping_add(2).wrapping_add(imm);
                 return StepResult::Ok(2);
             }
             return StepResult::Ok(1);
