@@ -76,6 +76,59 @@ fn str_word_immediate_ecrit_32_bits_pas_un_octet() {
 }
 
 #[test]
+fn orr_immediat_32_bits_positionne_le_bit_demande() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    // ORR r0, r0, #0x10 = 0xF040 0x0010. Devait positionner le bit 4 de r0.
+    Thumb32::execute(0xF040, 0x0010, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(0), 0x10);
+
+    // ADD r0, r0, #1 = 0xF100 0x0001 (op=8).
+    Thumb32::execute(0xF100, 0x0001, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(0), 0x11);
+
+    // BIC r1, r1, #0x10 = 0xF021 0x0110 (op=1).
+    regs.set_reg(1, 0xFFFF_FFFF);
+    Thumb32::execute(0xF021, 0x0110, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(1), 0xFFFF_FFEF);
+}
+
+#[test]
+fn mov_immediat_32_bits_rn_zero_ne_lit_pas_pc() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    regs.pc = 0x0000_8A68;
+    // MOV r1, #0x45000000 = ORR r1, 0xF, #imm = 0xF04F 0x418A.
+    // ThumbExpandImm(0x48A) = ROR(0x8A, 9) = 0x45000000.
+    Thumb32::execute(0xF04F, 0x418A, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(1), 0x4500_0000);
+}
+
+#[test]
+fn alu_32_bits_forme_registre_additionne_et_soustrait() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    regs.set_reg(0, 0x20);
+    regs.set_reg(1, 0x0F);
+    // ADD r0, r0, r1 = 0xEA80 0x0001 (op=100).
+    Thumb32::execute(0xEA80, 0x0001, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(0), 0x2F);
+
+    // SUB r0, r0, r1 = 0xEA40 0x0001 (op=010).
+    Thumb32::execute(0xEA40, 0x0001, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(0), 0x20);
+}
+
+#[test]
 fn ldr_word_immediate_lit_32_bits_pas_un_octet() {
     let mut regs = Registers::default();
     let mut bus = MemoryBus::default();

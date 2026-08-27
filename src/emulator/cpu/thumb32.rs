@@ -153,63 +153,72 @@ impl Thumb32 {
             return StepResult::Ok(1);
         }
 
-        // 6. 32-bit Data Processing / ALU: 1111 000x / 1110 101x
-        if (w1 & 0xFEE0) == 0xF000 || (w1 & 0xFEE0) == 0xEA00 {
-            let op = (w1 >> 5) & 0xF;
+        // 6. 32-bit Data Processing / ALU.
+        //    Immediat modifie : 1111 0 i 0 op S Rn  (bit 9 = 0)
+        //    Registre decale  : 1110 1010 0 op S Rn  (bits 15:8 = 1110 1010)
+        if (w1 & 0xFA00) == 0xF000 || (w1 & 0xFA00) == 0xEA00 {
             let s_flag = (w1 & 0x0010) != 0;
             let rn = (w1 & 0xF) as u8;
             let rd = ((w2 >> 8) & 0xF) as u8;
-            let val_n = regs.get_reg(rn);
+            // Rn = 0xF est le marqueur MOV / MVN : la source vaut 0, pas PC.
+            let val_n = if rn == 0xF { 0 } else { regs.get_reg(rn) };
 
-            // Compute operand2 (either modified immediate or shifted register)
-            let val_op2 = if (w1 & 0x0200) == 0 {
-                // Modified 12-bit immediate
+            if (w1 & 0x0200) == 0 {
+                // Immediat modifie, code sur 12 bits i:imm3:imm8.
+                let op = (w1 >> 5) & 0xF;
                 let i = ((w1 >> 10) & 1) as u32;
                 let imm3 = ((w2 >> 12) & 7) as u32;
                 let imm8 = (w2 & 0xFF) as u32;
-                let imm12 = (i << 11) | (imm3 << 8) | imm8;
-                if (imm12 & 0xC00) == 0 {
-                    imm12
-                } else {
-                    let ctrl = (imm12 >> 8) & 0xF;
-                    let base = imm12 & 0xFF;
-                    match ctrl {
-                        1 => (base << 16) | base,
-                        2 => (base << 24) | (base << 8),
-                        3 => (base << 24) | (base << 16) | (base << 8) | base,
-                        _ => {
-                            let ror = (imm12 >> 7) & 0x1F;
-                            let v = 0x80 | (imm12 & 0x7F);
-                            v.rotate_right(ror)
-                        }
-                    }
+                let val_op2 = thumb_expand_imm((i << 11) | (imm3 << 8) | imm8);
+
+                let res = match op {
+                    0 => val_n & val_op2, // AND / TST
+                    1 => val_n & !val_op2, // BIC
+                    2 => val_n | val_op2, // ORR / MOV
+                    3 => val_n | !val_op2, // ORN / MVN
+                    4 => val_n ^ val_op2, // EOR / TEQ
+                    8 => val_n.wrapping_add(val_op2), // ADD / CMN
+                    10 => val_n.wrapping_add(val_op2).wrapping_add(if regs.flag_c() { 1 } else { 0 }), // ADC
+                    11 => val_n.wrapping_sub(val_op2).wrapping_sub(if !regs.flag_c() { 1 } else { 0 }), // SBC
+                    13 => val_n.wrapping_sub(val_op2), // SUB / CMP
+                    14 => val_op2.wrapping_sub(val_n), // RSB
+                    _ => val_n,
+                };
+                // TST/TEQ/CMN/CMP n'ecrivent pas de destination (rd == 0xF).
+                if !(rd == 0xF && matches!(op, 0 | 4 | 8 | 13)) {
+                    regs.set_reg(rd, res);
+                }
+                if s_flag {
+                    regs.set_nz(res);
                 }
             } else {
-                // Register operand
+                // Registre decale : Rm << / >> type.
+                let op = (w1 >> 5) & 0x7;
                 let rm = (w2 & 0xF) as u8;
-                regs.get_reg(rm)
-            };
+                let imm3 = ((w2 >> 12) & 0x7) as u32;
+                let imm2 = ((w2 >> 6) & 0x3) as u32;
+                let type_ = ((w2 >> 4) & 0x3) as u32;
+                let shift = (imm3 << 2) | imm2;
+                let val_op2 = shift_operand(regs.get_reg(rm), shift, type_);
 
-            let res = match op {
-                0 => val_n & val_op2, // AND / TST
-                1 => val_n & !val_op2, // BIC
-                2 => val_n | val_op2, // ORR
-                3 => !val_op2, // ORN / MVN
-                4 => val_n ^ val_op2, // EOR / TEQ
-                8 => val_n.wrapping_add(val_op2), // ADD / CMN
-                10 => val_n.wrapping_add(val_op2).wrapping_add(if regs.flag_c() { 1 } else { 0 }), // ADC
-                11 => val_n.wrapping_sub(val_op2).wrapping_sub(if !regs.flag_c() { 1 } else { 0 }), // SBC
-                13 => val_n.wrapping_sub(val_op2), // SUB / CMP
-                14 => val_op2.wrapping_sub(val_n), // RSB
-                _ => val_n.wrapping_add(val_op2),
-            };
-
-            // If destination is not dummy (e.g. TST/TEQ/CMP write to nowhere)
-            if !(rd == 0xF && (op == 0 || op == 4 || op == 8 || op == 13)) {
-                regs.set_reg(rd, res);
-            }
-            if s_flag {
-                regs.set_nz(res);
+                let res = match op {
+                    0 => val_n & val_op2, // AND / TST
+                    1 => val_n ^ val_op2, // EOR / TEQ
+                    2 => val_n.wrapping_sub(val_op2), // SUB / CMP
+                    3 => val_op2.wrapping_sub(val_n), // RSB
+                    4 => val_n.wrapping_add(val_op2), // ADD / CMN
+                    5 => val_n.wrapping_add(val_op2).wrapping_add(if regs.flag_c() { 1 } else { 0 }), // ADC
+                    6 => val_n.wrapping_sub(val_op2).wrapping_sub(if !regs.flag_c() { 1 } else { 0 }), // SBC
+                    7 => val_n | val_op2, // ORR
+                    _ => val_n,
+                };
+                // TST/TEQ/CMP/CMN n'ecrivent pas de destination.
+                if !(rd == 0xF && matches!(op, 0 | 1 | 2 | 4)) {
+                    regs.set_reg(rd, res);
+                }
+                if s_flag {
+                    regs.set_nz(res);
+                }
             }
             return StepResult::Ok(1);
         }
@@ -301,5 +310,40 @@ impl Thumb32 {
         }
 
         StepResult::Ok(1)
+    }
+}
+
+/// Deplie un immediat modifie 12 bits (i:imm3:imm8) selon ThumbExpandImm.
+fn thumb_expand_imm(imm12: u32) -> u32 {
+    if imm12 & 0xC00 == 0 {
+        // imm12[11:10] == 00 : imm8 decale de (imm3 * 8).
+        let imm8 = imm12 & 0xFF;
+        let shift = ((imm12 >> 8) & 0x3) * 8;
+        imm8 << shift
+    } else {
+        // Rotation d'un octet 0b1:imm12[6:0] de imm12[11:7] bits.
+        let unrotated = 0x80 | (imm12 & 0x7F);
+        unrotated.rotate_right((imm12 >> 7) & 0x1F)
+    }
+}
+
+/// Operande registre decale d'une instruction ALU 32 bits.
+fn shift_operand(rm: u32, shift: u32, type_: u32) -> u32 {
+    match type_ {
+        0 => if shift == 0 { rm } else { rm << shift }, // LSL
+        1 => if shift == 0 { 0 } else { rm >> shift }, // LSR #32 vaut 0
+        2 => {
+            // ASR, #0 equivaut a #32 (extension de signe).
+            if shift == 0 {
+                ((rm as i32) >> 31) as u32
+            } else {
+                ((rm as i32) >> shift) as u32
+            }
+        }
+        3 => {
+            // ROR ; shift == 0 est RRX, approximation sans carry (rare).
+            if shift == 0 { rm >> 1 } else { rm.rotate_right(shift) }
+        }
+        _ => rm,
     }
 }
