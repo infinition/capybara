@@ -1,56 +1,103 @@
-# Tamagotchi Paradise Hardware Emulator & Virtual Pet (Rust)
+# Tamagotchi Paradise, emulateur
 
-A high-performance ARM Cortex-M3 (Sonix SNC73410) hardware emulator and virtual pet simulator for Tamagotchi Paradise on Windows, built with Rust, eframe, and egui.
+Emulateur du Tamagotchi Paradise (Bandai, 2025), console a microcontroleur Sonix
+SNC7340, ecrit en Rust avec une interface egui. Le vrai firmware demarre et le
+jeu se joue : l'oeuf eclot, l'horloge avance, les jauges descendent, le son sort,
+et la sauvegarde survit a l'extinction de l'ordinateur.
 
-## Features
+**Le dossier de retro-ingenierie est la page `index.html` a la racine.** Il
+raconte le brochage, la carte memoire, le format des load tables Sonix, la
+derivation de cle AES, les procedures d'extraction, et les seize defauts de
+decodage ARMv7-M trouves en faisant tourner du vrai code. C'est la partie la plus
+reutilisable du projet. Voir `dossier/README.md`.
 
-### 1. Low-Level Hardware Emulation (Sonix SNC73410)
-- **ARM Cortex-M3 (ARMv7-M) Core**:
-  - Full support for Thumb-16 and Thumb-2 (32-bit) instruction sets.
-  - Hardware registers (R0-R12, MSP, PSP, LR, PC, xPSR, PRIMASK).
-  - Exception handler and NVIC interrupt controller with SysTick timer.
-- **Memory Bus Architecture**:
-  - 16 MB Macronix KH25L12833F SPI NOR Flash (XIP mapped).
-  - 128 KB internal SRAM / PRAM + 16 KB Mailbox RAM.
-  - 64 KB Boot ROM with `OSC_CTRL` protection bit logic.
-- **Peripherals**:
-  - Sonix SYS0 system control registers.
-  - Hardware LCD controller with 128x128 RGB565 VRAM framebuffer.
-  - GPIO controller for physical Buttons A, B, C and rotary dial encoder.
-  - UART serial port with bidirectional FIFO and real-time console logging.
-  - Timers and Watchdog Timer (WDT).
-- **Firmware Loading**: Load any raw `flash.bin`, `bootrom.bin`, or custom firmware dumps.
+## Ou en est l'emulateur
 
-### 2. Interactive GUI & Live Debugger
-- **Emulated LCD Display**: Real-time pixel output drawn directly from emulated hardware VRAM inside a virtual Tamagotchi shell.
-- **Live Disassembler**: Real-time instruction stream around PC, Step Into (F10), Step Over, Run, Pause, and Reset.
-- **CPU Register Inspector**: Live view of all 16 registers and APSR condition flags (N, Z, C, V).
-- **Hex Memory Viewer**: Real-time hex inspection across Flash, SRAM, BootROM, and MMIO address ranges.
-- **UART Serial Terminal**: Live text output emitted by the running firmware.
+Ce qui marche : mise en route complete, boutons et molette, horloge qui avance,
+eclosion, nourrissage, QR code secret, les deux veilles et le reveil materiel,
+sauvegardes persistantes par dump avec vieillissement en temps reel, coque fidele
+suivant l'edition chargee, et les notes que le firmware compose.
 
-### 3. Simulation & Companion Tools
-- Includes full Paradise virtual pet simulation engine, mini-games, secret code validation, and sound synthesis.
+**Vitesse : 1,07 fois le temps de la console sur `step`, 1,17 sur `run_frame`**,
+mesure du 28 aout 2026. Le gouverneur de l'interface la retient a 1,00. Il n'y a
+plus de defaut visible a l'ecran.
 
-## Quick Start
+Ce qui reste ouvert : le peripherique par lequel la console fait sortir ses notes
+n'est pas identifie, l'interface synthetise donc les frequences que le firmware a
+deja calculees. Seule l'edition Water a ete menee jusqu'au bout. La molette est
+modelisee en appuis simples, pas en signal a deux phases decalees. Le second
+coeur n'est pas emule, et le firmware ne l'a jamais reclame.
 
-### Build & Run
+Le detail complet est dans `docs/ou-on-en-est.md`. Pour reprendre le travail,
+commencer par `docs/reprise.md`.
+
+## Mise en route
+
+Il faut un dump de la Flash de votre propre appareil, et la deviceKey lue en SWD
+sur cet appareil. Ni l'un ni l'autre ne sont dans ce depot, et ils n'y entreront
+pas.
 
 ```bash
 cargo run --release
 ```
 
-### Run Tests
+Le dump se charge depuis l'interface. Pour les tests et les sondes, deux
+variables designent le materiel de travail :
 
 ```bash
-cargo test
+export SONIX_DEVICE_KEY=0x........
+export SONIX_DUMPS=<dossier contenant les .bin>
+cargo test --release
 ```
 
-### Keyboard Shortcuts
+Sans ces variables, les tests qui dependent d'un dump se sautent proprement et la
+suite reste verte. C'est voulu : le depot doit passer ses tests chez quelqu'un qui
+n'a pas l'appareil. **Verifier les deux cas quand on touche a ce mecanisme**,
+sinon on ne sait pas si les tests passent ou s'ils ne font plus rien.
 
-| Key | Action |
+## Commandes
+
+| Touche | Action |
 | --- | --- |
-| `A` / `Left Arrow` | Button A (Select / Action) |
-| `B` / `Space` / `Enter` | Button B (Confirm / Action) |
-| `C` / `Escape` / `Right Arrow` | Button C (Cancel / Back) |
-| `Mouse Wheel` | Turn Side Rotary Dial |
-| `F10` | Single Step Instruction (Debugger) |
+| `A` / fleche gauche / clic gauche sur l'ecran | bouton A |
+| `B` / espace / entree / clic droit sur l'ecran | bouton B |
+| `C` / echap / fleche droite | bouton C |
+| molette de la souris / clic milieu | molette laterale, appui long possible |
+| `F10` | pas a pas, dans le debogueur |
+
+## Les sondes
+
+Vingt-deux programmes dans `examples/`, tous en `<dump.bin> <cle hex> [...]`. Les
+plus rentables :
+
+- `scene_probe`, avec `RESET`, `SORTIE_ETAT` et `TRACE_PAS`
+- `temps_probe`, pour trouver une boucle morte : il donne la repartition du temps par PC
+- `watch_probe`, pour arreter sur une adresse ou une modification de memoire
+- `vitesse_probe`, qui mesure les deux boucles, `step` et `run_frame`
+- `son_probe` et `partie_probe`
+
+## Sauvegardes et instantanes
+
+A ne pas confondre. Un instantane, `.tamastate`, fige toute la machine pour
+revenir en arriere pendant la mise au point. Une sauvegarde, `.tamasave`, ne
+retient que ce que la console garde vraiment, et vit a cote de l'executable dans
+`sauvegardes/<empreinte du dump>/`. L'empreinte mele le nom du fichier et une
+somme FNV-1a de son contenu : les cinq editions ne se melangent pas, et deux
+copies renommees du meme dump se retrouvent.
+
+Le fichier porte les pages de Flash ecrites par le jeu, mais aussi l'horloge de
+la console. Un Tamagotchi range vieillit donc pendant que l'ordinateur est
+eteint, comme le vrai.
+
+## Ce que ce depot ne contient pas
+
+Aucun binaire proprietaire, aucun dump de Flash, aucune image de Boot ROM,
+aucune cle. La deviceKey est gravee dans les fusibles de la puce, ne figure dans
+aucun dump, et se lit en SWD sur l'appareil. L'historique git a ete reecrit le
+28 aout 2026 pour qu'elle n'apparaisse dans aucun commit.
+
+Les procedures d'extraction decrites dans le dossier s'appliquent a un appareil
+dont vous etes proprietaire.
+
+Tamagotchi et Tamagotchi Paradise sont des marques de Bandai. Ce projet n'est ni
+affilie ni approuve par Bandai.

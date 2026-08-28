@@ -1,1 +1,11 @@
 /target
+
+# La cle de dechiffrement et les chemins personnels ne doivent jamais entrer
+# dans l'historique. Un git add -A suffit a les y remettre, et une reecriture
+# d'historique coute une demi journee.
+/cle-device.txt
+
+# Les dumps et les instantanes n'ont rien a faire ici non plus.
+*.bin
+*.tamastate
+*.tamasave

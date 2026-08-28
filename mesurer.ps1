@@ -1,11 +1,24 @@
 # Mesure de vitesse stable : priorite haute et coeur fige, la machine etant
 # rarement au repos. Rend la meilleure des N passes, celle la moins polluee.
-param([string]$Exe = "target\release\examples\vitesse_probe.exe", [int]$Passes = 3, [int]$Secondes = 5)
-$dump = "%SONIX_DUMPS%\Tamagotchi_Paradise_Water_MX25L12835F.bin"
-$etat = "%SONIX_ETAT%\2222.tamastate"
+#
+# Le materiel de travail vient de l'environnement, jamais du script :
+#   $env:SONIX_DEVICE_KEY = "0x........"
+#   $env:SONIX_DUMPS      = "<dossier des .bin>"
+#   $env:SONIX_ETAT       = "<chemin d'un .tamastate>"
+param(
+  [string]$Exe = "target\release\examples\vitesse_probe.exe",
+  [int]$Passes = 3,
+  [int]$Secondes = 5,
+  [string]$Dump = "Tamagotchi_Paradise_Water_MX25L12835F.bin"
+)
+if (-not $env:SONIX_DEVICE_KEY) { throw "SONIX_DEVICE_KEY non definie" }
+if (-not $env:SONIX_DUMPS)      { throw "SONIX_DUMPS non definie" }
+if (-not $env:SONIX_ETAT)       { throw "SONIX_ETAT non definie" }
+$chemin = Join-Path $env:SONIX_DUMPS $Dump
 $best = @{}
 for ($i = 0; $i -lt $Passes; $i++) {
-  $p = Start-Process -FilePath $Exe -ArgumentList $dump, "<CLE>", $etat, $Secondes `
+  $p = Start-Process -FilePath $Exe `
+       -ArgumentList $chemin, $env:SONIX_DEVICE_KEY, $env:SONIX_ETAT, $Secondes `
        -NoNewWindow -PassThru -RedirectStandardOutput "$env:TEMP\vp$i.txt"
   $p.PriorityClass = "High"
   $p.ProcessorAffinity = 16
