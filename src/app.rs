@@ -246,6 +246,13 @@ impl TamagotchiApp {
                 self.status_msg = Some(format!("Partie {} chargee", nom));
             }
             Ok(false) => {
+                // La flash est revenue a l'image du dump : la console doit
+                // repartir dessus, sinon elle continue sur l'etat en memoire de
+                // la partie precedente et l'ecran ne bouge pas.
+                let tournait = self.machine.is_running;
+                self.machine.reset();
+                self.machine.is_running = tournait;
+                self.historique.vider();
                 self.status_msg = Some(format!("Nouvelle partie {}", nom));
             }
             Err(e) => {
@@ -265,7 +272,10 @@ impl TamagotchiApp {
     /// Note le dump et l'emplacement en cours, pour les retrouver au prochain
     /// lancement.
     fn retenir_la_partie(&self) {
-        if self.load_path_input.is_empty() {
+        // Rien a retenir tant qu'aucun dump n'est reellement charge : ecrire le
+        // chemin d'un fichier qui a echoue le ferait retenter a chaque
+        // lancement.
+        if self.load_path_input.is_empty() || self.machine.empreinte.is_none() {
             return;
         }
         crate::emulator::sauvegarde::ecrire_derniere_partie(

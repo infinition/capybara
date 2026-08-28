@@ -46,6 +46,53 @@ fn contour_oeuf(centre: Pos2, largeur: f32, hauteur: f32, cotes: usize) -> Vec<P
         .collect()
 }
 
+/// Decoupe de la fenetre transparente qui entoure l'ecran, en morceaux
+/// convexes a superposer.
+///
+/// La forme de la console n'est ni un rectangle ni un octogone : le haut est
+/// droit et plus etroit que le reste, les flancs avancent a mi hauteur, et le
+/// bas se resserre sur une pointe. Elle est donc concave, ce qu'egui ne sait
+/// pas remplir d'un coup. Trois morceaux convexes de la meme couleur suffisent,
+/// et comme rien n'est trace par dessus, leurs jointures ne se voient pas.
+///
+/// Les coordonnees sont donnees en fractions du cadre, l'origine au centre,
+/// pour que la forme suive la taille de la fenetre sans se deformer.
+fn silhouette_fenetre(cadre: Rect) -> Vec<Vec<Pos2>> {
+    let c = cadre.center();
+    let dx = cadre.width() * 0.5;
+    let dy = cadre.height() * 0.5;
+    let p = |x: f32, y: f32| pos2(c.x + dx * x, c.y + dy * y);
+
+    // Le corps : haut droit et resserre, flancs droits, base resserree.
+    let corps = vec![
+        p(-0.62, -1.00),
+        p(0.62, -1.00),
+        p(0.82, -0.74),
+        p(0.82, 0.62),
+        p(0.52, 0.94),
+        p(-0.52, 0.94),
+        p(-0.82, 0.62),
+        p(-0.82, -0.74),
+    ];
+
+    // Les joues : ce qui avance a mi hauteur, de part et d'autre.
+    let joues = vec![
+        p(-0.70, -0.46),
+        p(0.70, -0.46),
+        p(1.00, -0.16),
+        p(1.00, 0.20),
+        p(0.70, 0.50),
+        p(-0.70, 0.50),
+        p(-1.00, 0.20),
+        p(-1.00, -0.16),
+    ];
+
+    // La pointe, sous l'ecran.
+    let pointe = vec![p(-0.34, 0.80), p(0.34, 0.80), p(0.0, 1.16)];
+
+    vec![corps, joues, pointe]
+}
+
 impl LcdPanel {
     /// Dessine la console et rend l'etat de ses commandes.
     ///
@@ -179,57 +226,35 @@ impl LcdPanel {
         let ecran_rect =
             Rect::from_center_size(pos2(centre.x, centre.y - hauteur * 0.04), vec2(cote, cote));
 
-        // Le tour d'ecran de la console n'est pas un rectangle arrondi : c'est
-        // une plaque imprimee a huit cotes, coins coupes, avec une pointe vers
-        // le bas sous l'ecran. C'est aussi elle qui porte le cache transparent
-        // ou se glissent les papiers de personnalisation.
-        let cadre = ecran_rect.expand(cote * 0.22);
-        let coupe = cadre.width() * 0.20;
-        let pointe = cadre.height() * 0.16;
-        let plaque = vec![
-            pos2(cadre.min.x + coupe, cadre.min.y),
-            pos2(cadre.max.x - coupe, cadre.min.y),
-            pos2(cadre.max.x, cadre.min.y + coupe),
-            pos2(cadre.max.x, cadre.max.y - coupe),
-            pos2(cadre.max.x - coupe, cadre.max.y),
-            pos2(centre.x, cadre.max.y + pointe),
-            pos2(cadre.min.x + coupe, cadre.max.y),
-            pos2(cadre.min.x, cadre.max.y - coupe),
-            pos2(cadre.min.x, cadre.min.y + coupe),
-        ];
-        ui.painter().add(Shape::convex_polygon(
-            plaque.clone(),
-            motif_col,
-            Stroke::new(2.0, ombre_col),
-        ));
-        // Liseré interieur, plus clair : la plaque imprimee a un bord.
-        let interieur: Vec<Pos2> = plaque
-            .iter()
-            .map(|p| {
-                let v = *p - cadre.center();
-                cadre.center() + v * 0.88
-            })
-            .collect();
-        ui.painter().add(Shape::convex_polygon(
-            interieur,
-            calotte_col.gamma_multiply(0.92),
-            Stroke::NONE,
-        ));
+        // La fenetre transparente qui entoure l'ecran. Ce n'est pas un cadre :
+        // il n'y a aucun trait sur la console, c'est la decoupe du plastique
+        // clair qui fait la forme, et le papier de personnalisation se voit au
+        // travers. Elle ne touche pas l'ecran, elle l'entoure a distance.
+        //
+        // La silhouette n'est pas convexe : ses flancs avancent puis se
+        // reculent. On la compose donc de morceaux convexes de la meme
+        // couleur, poses l'un sur l'autre. Sans trait, les jointures ne se
+        // voient pas, et egui ne sait remplir que du convexe.
+        let cadre = ecran_rect.expand(cote * 0.30);
+        for morceau in silhouette_fenetre(cadre) {
+            ui.painter().add(Shape::convex_polygon(morceau, motif_col, Stroke::NONE));
+        }
 
         // Le mot de marque, au dessus de l'ecran, dans la couleur d'accent.
         ui.painter().text(
-            pos2(centre.x, cadre.min.y + cote * 0.11),
+            pos2(centre.x, cadre.min.y + cote * 0.10),
             egui::Align2::CENTER_CENTER,
             "TAMAGOTCHI",
-            egui::FontId::proportional((cote * 0.11).clamp(7.0, 14.0)),
+            egui::FontId::proportional((cote * 0.10).clamp(7.0, 13.0)),
             accent_col,
         );
 
-        // Fond blanc sous la dalle, comme la vitre de la vraie.
+        // La vitre, un liseré clair autour de la dalle. C'est le seul bord
+        // franc de cette zone sur la vraie console.
         ui.painter().rect_filled(
-            ecran_rect.expand(cote * 0.045),
-            cote * 0.03,
-            Color32::from_rgb(246, 248, 250),
+            ecran_rect.expand(cote * 0.05),
+            cote * 0.02,
+            Color32::from_rgb(248, 249, 251),
         );
         match ecran {
             Some(texture) => {

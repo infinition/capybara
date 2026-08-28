@@ -325,14 +325,53 @@ pub fn adopter_firmware(source: &Path) -> PathBuf {
     };
     let cible = dossier.join(nom);
     if cible.is_file() {
+        // Deja recopie, mais peut etre sans sa cle : les premieres versions ne
+        // la prenaient pas, et le dump chiffre restait alors illisible.
+        adopter_la_cle(source);
         return cible;
     }
     if std::fs::create_dir_all(&dossier).is_err() {
         return source.to_path_buf();
     }
     match std::fs::copy(source, &cible) {
-        Ok(_) => cible,
+        Ok(_) => {
+            adopter_la_cle(source);
+            cible
+        }
         Err(_) => source.to_path_buf(),
+    }
+}
+
+/// Nom du fichier de cle pose a cote d'un dump.
+fn cle_voisine(dump: &Path) -> PathBuf {
+    let extension = dump.extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    dump.with_extension(format!("{}.key", extension))
+}
+
+/// Fichier de cle du dossier de donnees, valable pour tous les dumps.
+pub fn chemin_cle_commune() -> PathBuf {
+    dossier_donnees().join("cle-device.txt")
+}
+
+/// Recopie la cle posee a cote d'un dump importe.
+///
+/// Sans elle, un dump chiffre recopie dans le dossier de donnees devient
+/// illisible : la cle etait restee a cote de l'original. Elle est ecrite deux
+/// fois, a cote de la copie et une fois pour toutes dans le dossier de
+/// donnees, la meme cle valant pour les cinq editions. Un dump importe plus
+/// tard sans sa cle se lit alors quand meme.
+fn adopter_la_cle(source: &Path) {
+    let voisine = cle_voisine(source);
+    let Ok(contenu) = std::fs::read_to_string(&voisine) else {
+        return;
+    };
+    let Some(nom) = source.file_name() else {
+        return;
+    };
+    let _ = std::fs::write(cle_voisine(&dossier_firmwares().join(nom)), &contenu);
+    let commune = chemin_cle_commune();
+    if !commune.is_file() {
+        let _ = std::fs::write(commune, &contenu);
     }
 }
 

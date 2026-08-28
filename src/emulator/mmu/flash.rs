@@ -74,6 +74,25 @@ impl SpiFlash {
         }
     }
 
+    /// Remet la flash dans l'etat ou le dump a ete charge.
+    ///
+    /// Seules les pages salies sont a refaire : le jeu n'en ecrit qu'une
+    /// poignee, celles de sa sauvegarde.
+    pub fn revenir_a_la_reference(&mut self) {
+        if self.reference.len() != self.data.len() {
+            return;
+        }
+        for &page in &self.pages_salies {
+            let debut = page * 0x1000;
+            let fin = (debut + 0x1000).min(self.data.len());
+            if debut < fin {
+                self.data[debut..fin].copy_from_slice(&self.reference[debut..fin]);
+            }
+        }
+        self.pages_salies.clear();
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     /// Fige l'image courante comme reference des instantanes.
     pub fn figer_reference(&mut self) {
         self.reference.clone_from(&self.data);

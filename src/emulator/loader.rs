@@ -220,7 +220,16 @@ fn resolve_device_key(path: &Path) -> Option<u32> {
         "{}.key",
         path.extension().and_then(|e| e.to_str()).unwrap_or("bin")
     ));
-    fs::read_to_string(sidecar).ok().and_then(|s| parse(&s))
+    if let Some(k) = fs::read_to_string(sidecar).ok().and_then(|s| parse(&s)) {
+        return Some(k);
+    }
+
+    // Cle commune du dossier de donnees. Elle est la meme pour les cinq
+    // editions : la retenir une fois evite d'avoir a poser un fichier a cote de
+    // chaque dump importe.
+    fs::read_to_string(crate::emulator::sauvegarde::chemin_cle_commune())
+        .ok()
+        .and_then(|s| parse(&s))
 }
 
 /// Adresses equivalentes d'un meme offset flash, fenetre cachee et non cachee.

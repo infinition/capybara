@@ -122,6 +122,11 @@ impl Machine {
         let existe = chemin.exists();
         if existe {
             sauvegarde::Sauvegarde::lire(&chemin)?.appliquer(self);
+        } else {
+            // Emplacement neuf : la flash doit repartir de l'image du dump.
+            // Sans cela la partie neuve heritait de ce que la precedente avait
+            // ecrit, et l'ecran ne changeait pas.
+            self.bus.flash.revenir_a_la_reference();
         }
         self.revision_ecrite = self.bus.flash.revision;
         self.sauvegarde_active = Some(chemin);
