@@ -74,9 +74,7 @@ fn main() {
         if pas % 2000 != 0 {
             continue;
         }
-        if m.voix_base.is_none() {
-            m.localiser_les_voix();
-        }
+        m.localiser_les_voix();
 
         let note = m.note_courante();
         if note != derniere {

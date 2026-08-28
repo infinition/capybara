@@ -68,7 +68,7 @@ fn main() {
             continue;
         }
         let joue = m.son_en_cours();
-        if joue && m.voix_base.is_none() {
+        if joue && !jouait {
             m.localiser_les_voix();
         }
         if joue && !jouait {

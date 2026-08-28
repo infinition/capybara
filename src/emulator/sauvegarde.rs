@@ -254,17 +254,127 @@ impl Sauvegarde {
     }
 }
 
-/// Dossier des sauvegardes, a cote de l'executable.
+/// Dossier de donnees du logiciel, celui que le systeme reserve a ce genre de
+/// contenu.
 ///
-/// C'est ce que demande l'usage : une copie du logiciel emporte ses parties
-/// avec elle. Si l'emplacement de l'executable n'est pas lisible, on se rabat
-/// sur le dossier courant plutot que d'echouer.
-pub fn dossier_racine() -> PathBuf {
-    let base = std::env::current_exe()
+/// `%APPDATA%\\TamagotchiParadise\\data` sur Windows,
+/// `~/Library/Application Support/TamagotchiParadise` sur Mac,
+/// `~/.local/share/tamagotchiparadise` sur Linux. Le logiciel se distribue en
+/// un seul executable : ses parties, ses reglages, ses points de reprise et les
+/// dumps importes n'ont rien a faire a cote de lui, ou un deplacement du
+/// fichier les perdrait et ou un dossier en lecture seule les empecherait.
+///
+/// Faute de dossier systeme lisible, on se rabat sur celui de l'executable,
+/// puis sur le dossier courant : mieux vaut ecrire quelque part que pas du tout.
+pub fn dossier_donnees() -> PathBuf {
+    if let Some(dirs) = directories::ProjectDirs::from("", "", "TamagotchiParadise") {
+        return dirs.data_dir().to_path_buf();
+    }
+    std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("sauvegardes")
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Dossier des sauvegardes.
+pub fn dossier_racine() -> PathBuf {
+    dossier_donnees().join("sauvegardes")
+}
+
+/// Dossier des dumps de flash connus du logiciel.
+///
+/// Tout `.bin` qui s'y trouve est propose au lancement. Un dump choisi
+/// ailleurs y est recopie : c'est ce qui permet de le retrouver au prochain
+/// demarrage meme si l'original a bouge.
+pub fn dossier_firmwares() -> PathBuf {
+    dossier_donnees().join("firmwares")
+}
+
+/// Dumps presents dans le dossier des firmwares, par ordre alphabetique.
+pub fn firmwares_connus() -> Vec<PathBuf> {
+    let mut trouves = Vec::new();
+    let Ok(entrees) = std::fs::read_dir(dossier_firmwares()) else {
+        return trouves;
+    };
+    for entree in entrees.flatten() {
+        let chemin = entree.path();
+        let extension = chemin
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        if matches!(extension.as_deref(), Some("bin" | "rom" | "dump" | "raw")) {
+            trouves.push(chemin);
+        }
+    }
+    trouves.sort();
+    trouves
+}
+
+/// Recopie un dump dans le dossier des firmwares et rend son nouveau chemin.
+///
+/// Un dump deja range la n'est pas recopie. Si la copie echoue, on rend le
+/// chemin d'origine : mieux vaut jouer sur le fichier ou il est que refuser de
+/// le charger.
+pub fn adopter_firmware(source: &Path) -> PathBuf {
+    let dossier = dossier_firmwares();
+    if source.starts_with(&dossier) {
+        return source.to_path_buf();
+    }
+    let Some(nom) = source.file_name() else {
+        return source.to_path_buf();
+    };
+    let cible = dossier.join(nom);
+    if cible.is_file() {
+        return cible;
+    }
+    if std::fs::create_dir_all(&dossier).is_err() {
+        return source.to_path_buf();
+    }
+    match std::fs::copy(source, &cible) {
+        Ok(_) => cible,
+        Err(_) => source.to_path_buf(),
+    }
+}
+
+/// Deplace les donnees ecrites a cote de l'executable vers le dossier systeme.
+///
+/// Les premieres versions rangeaient les parties a cote du binaire. Elles y
+/// sont deplacees une fois, sans quoi une partie en cours serait perdue de vue
+/// au premier lancement de cette version ci.
+pub fn migrer_les_anciennes_donnees() {
+    let Some(voisin) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    else {
+        return;
+    };
+    let ancien = voisin.join("sauvegardes");
+    let nouveau = dossier_racine();
+    if !ancien.is_dir() || nouveau.is_dir() || ancien == nouveau {
+        return;
+    }
+    if let Some(parent) = nouveau.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // Un renommage suffit sur le meme volume ; sinon on recopie.
+    if std::fs::rename(&ancien, &nouveau).is_ok() {
+        return;
+    }
+    let _ = copier_recursivement(&ancien, &nouveau);
+}
+
+fn copier_recursivement(source: &Path, cible: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(cible)?;
+    for entree in std::fs::read_dir(source)? {
+        let entree = entree?;
+        let vers = cible.join(entree.file_name());
+        if entree.file_type()?.is_dir() {
+            copier_recursivement(&entree.path(), &vers)?;
+        } else {
+            std::fs::copy(entree.path(), vers)?;
+        }
+    }
+    Ok(())
 }
 
 /// Derniere partie ouverte, retenue d'un lancement a l'autre.
@@ -272,15 +382,56 @@ pub fn dossier_racine() -> PathBuf {
 /// La sauvegarde `.tamasave` survivait deja a l'extinction de l'ordinateur,
 /// mais il fallait redesigner le dump et l'emplacement a chaque demarrage.
 /// Un vrai Tamagotchi qu'on rallume reprend ou il en etait, sans rien demander.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct DernierePartie {
     pub dump: String,
     pub emplacement: String,
+    /// Mode de la fenetre : `accueil`, `jeu` ou `inspection`. Quitter en mode
+    /// jeu sur une edition doit rallumer dessus, sans repasser par l'accueil.
+    #[serde(default)]
+    pub mode: String,
+    /// Reglages de son. Les champs manquants prennent leur valeur par defaut :
+    /// un fichier ecrit par une version anterieure reste lisible.
+    #[serde(default = "vrai")]
+    pub son: bool,
+    #[serde(default = "volume_par_defaut")]
+    pub volume: f32,
+    #[serde(default = "un")]
+    pub hauteur: f32,
+    /// Coque choisie a la main, quand elle ne suit pas l'edition.
+    #[serde(default)]
+    pub coque: String,
+}
+
+fn vrai() -> bool {
+    true
+}
+
+fn volume_par_defaut() -> f32 {
+    0.5
+}
+
+fn un() -> f32 {
+    1.0
+}
+
+impl Default for DernierePartie {
+    fn default() -> Self {
+        Self {
+            dump: String::new(),
+            emplacement: String::new(),
+            mode: String::new(),
+            son: true,
+            volume: 0.5,
+            hauteur: 1.0,
+            coque: String::new(),
+        }
+    }
 }
 
 /// Fichier qui la porte, a cote des sauvegardes.
 pub fn chemin_derniere_partie() -> PathBuf {
-    dossier_racine().join("derniere-partie.json")
+    dossier_donnees().join("derniere-partie.json")
 }
 
 pub fn lire_derniere_partie() -> Option<DernierePartie> {
@@ -325,6 +476,14 @@ pub fn empreinte(chemin_dump: &Path, contenu: &[u8]) -> String {
 /// Dossier des sauvegardes d'un dump donne.
 pub fn dossier_du_dump(empreinte: &str) -> PathBuf {
     dossier_racine().join(empreinte)
+}
+
+/// Dossier des points de reprise d'un dump.
+///
+/// Il vit a cote des sauvegardes de la meme console : chaque edition a le sien,
+/// et les points d'une console ne se melangent pas a ceux d'une autre.
+pub fn dossier_reprises(empreinte: &str) -> PathBuf {
+    dossier_du_dump(empreinte).join("reprises")
 }
 
 /// Chemin d'un emplacement de sauvegarde.

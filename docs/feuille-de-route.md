@@ -18,6 +18,11 @@ silences. `drapeau_son_probe` refait cette mesure sur n'importe quelle edition.
 
 A confirmer a l'oreille sur Jade avant de rayer la ligne.
 
+**Un bourdonnement en tete des sons de Jade Forest.** Releve : quarante
+secondes de 196 Hz avant que la melodie commence. Le drapeau de son en cours est
+leve pendant tout ce temps et une voix porte cette valeur. A trancher : voix de
+fond reelle du firmware, ou entree figee que le modele prend pour une note.
+
 **La transparence du mode jeu.** Le fond restait noir au premier essai. La
 fenetre nait desormais sans decor, ce qui est en general la condition pour
 obtenir une fenetre transparente sur Windows, le decor etant remis a l'execution
@@ -59,28 +64,6 @@ zoomer et la recadrer, puis garder le reglage par edition. Le tour d'ecran est
 deja dessine comme la plaque octogonale qui porte ce cache, dans
 `src/ui/lcd_panel.rs` : c'est la que l'image viendrait se poser, sous le liseré
 et derriere la dalle.
-
-### Reglages persistants
-
-Le dump et l'emplacement du dernier lancement sont deja retenus dans
-`derniere-partie.json`. Il faut y joindre le reste de ce qui doit survivre a une
-fermeture : la coupure du son et son volume, la hauteur, le mode dans lequel on
-etait. Quitter en mode jeu sur Water doit rallumer en mode jeu sur Water, sans
-passer par l'accueil.
-
-### Retour en arriere horodate
-
-Oui, c'est faisable, et l'essentiel existe deja. `Historique` prend des
-instantanes automatiques et `TamagotchiApp::reculer` en restaure un. Il manque
-la cadence et la vue : garder un instantane toutes les minutes sur une heure,
-puis un plus espace au dela, et presenter la liste avec l'heure de chaque point
-plutot qu'un simple pas en arriere. Un menu deroulant, une minute, cinq, dix,
-trente.
-
-Un point a verifier avant de s'y fier pour de bon : reprendre un instantane pris
-en scene de jeu peut figer la console, le tas etant alors presque plein. Voir
-« Blocages connus » dans `ou-on-en-est.md`. Les instantanes automatiques pris en
-cours de partie ne sont pas concernes, mais il faudra le confirmer sur la duree.
 
 ### Coques
 

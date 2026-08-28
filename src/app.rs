@@ -12,6 +12,20 @@ use crate::hw_bridge::FlashInspector;
 use crate::i18n::{I18n, Language};
 use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
+/// Ouvre un dossier dans l'explorateur du systeme.
+///
+/// Trois commandes selon la plateforme, aucune dependance de plus. Un echec
+/// n'est pas signale : c'est un confort, pas une fonction.
+fn open_dossier(chemin: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    let commande = "explorer";
+    #[cfg(target_os = "macos")]
+    let commande = "open";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let commande = "xdg-open";
+    std::process::Command::new(commande).arg(chemin).spawn().map(|_| ())
+}
+
 /// Ce que la fenetre montre.
 ///
 /// L'inspection coute plus cher a dessiner que l'emulation n'en gagne a
@@ -66,6 +80,10 @@ pub struct TamagotchiApp {
     pub ecran: Option<egui::TextureHandle>,
     /// Anneau d'instantanes automatiques, pour revenir avant un blocage.
     pub historique: crate::emulator::etat::Historique,
+    /// Points de reprise horodates, ecrits sur le disque et propres au dump.
+    pub reprises: crate::emulator::reprises::Journal,
+    /// Vue de restauration ouverte.
+    pub voir_reprises: bool,
     /// Etat publie au serveur local et commandes qui en reviennent.
     pub partage: std::sync::Arc<std::sync::Mutex<crate::web::Partage>>,
     /// Port du serveur local, quand il a pu demarrer.
@@ -137,6 +155,10 @@ impl TamagotchiApp {
         let partage = std::sync::Arc::new(std::sync::Mutex::new(crate::web::Partage::default()));
         let port_web: Option<u16> = None;
 
+        // Les premieres versions rangeaient les parties a cote du binaire :
+        // elles sont deplacees une fois vers le dossier de donnees du systeme.
+        crate::emulator::sauvegarde::migrer_les_anciennes_donnees();
+
         let mut app = Self {
             mode: Mode::Accueil,
             mode_applique: None,
@@ -159,6 +181,8 @@ impl TamagotchiApp {
             phases_encodeur: std::collections::VecDeque::new(),
             ecran: None,
             historique: crate::emulator::etat::Historique::default(),
+            reprises: crate::emulator::reprises::Journal::default(),
+            voir_reprises: false,
             partage,
             port_web,
             debit: 0.0,
@@ -228,6 +252,10 @@ impl TamagotchiApp {
         self.emplacement_choisi = nom;
         self.rafraichir_emplacements();
         self.retenir_la_partie();
+        if let Some(empreinte) = &self.machine.empreinte {
+            self.reprises
+                .ouvrir(crate::emulator::sauvegarde::dossier_reprises(empreinte));
+        }
     }
 
     /// Note le dump et l'emplacement en cours, pour les retrouver au prochain
@@ -240,6 +268,16 @@ impl TamagotchiApp {
             &crate::emulator::sauvegarde::DernierePartie {
                 dump: self.load_path_input.clone(),
                 emplacement: self.emplacement_choisi.clone(),
+                mode: match self.mode {
+                    Mode::Accueil => "accueil",
+                    Mode::Jeu => "jeu",
+                    Mode::Inspection => "inspection",
+                }
+                .to_string(),
+                son: self.audio.enabled,
+                volume: self.audio.volume,
+                hauteur: self.audio.hauteur,
+                coque: self.shell_color.nom().to_string(),
             },
         );
     }
@@ -252,6 +290,12 @@ impl TamagotchiApp {
         let Some(partie) = crate::emulator::sauvegarde::lire_derniere_partie() else {
             return;
         };
+        // Les reglages de son valent meme sans dump : ils ne dependent pas de
+        // la console chargee.
+        self.audio.enabled = partie.son;
+        self.audio.volume = partie.volume.clamp(0.0, 1.0);
+        self.audio.hauteur = if partie.hauteur > 0.0 { partie.hauteur } else { 1.0 };
+
         let chemin = std::path::PathBuf::from(&partie.dump);
         if !chemin.is_file() {
             return;
@@ -260,6 +304,19 @@ impl TamagotchiApp {
         if !partie.emplacement.is_empty() && partie.emplacement != self.emplacement_choisi {
             self.ouvrir_emplacement(partie.emplacement);
         }
+        // La coque suit l'edition par defaut ; un choix a la main la remplace.
+        if let Some(coque) =
+            ShellColor::TOUTES.iter().find(|c| c.nom() == partie.coque)
+        {
+            self.shell_color = *coque;
+        }
+        // On ne rallume en mode jeu que si la console y est prete : sans dump
+        // demarrable, l'accueil est le seul endroit ou faire quelque chose.
+        self.mode = match partie.mode.as_str() {
+            "jeu" if self.machine.is_running => Mode::Jeu,
+            "inspection" => Mode::Inspection,
+            _ => Mode::Accueil,
+        };
     }
 
     /// Recopie la partie sur le disque quand le jeu a ecrit sa flash.
@@ -602,9 +659,11 @@ impl TamagotchiApp {
     /// c'est que le firmware la joue vraiment.
     fn note_jouee(&mut self) -> f32 {
         let joue = self.machine.son_en_cours();
-        if joue && self.machine.voix_base.is_none() {
-            // Le tableau des voix ne se cherche qu'une fois, et pendant qu'un
-            // son joue : au silence il peut n'avoir jamais ete rempli.
+        if joue && !self.son_jouait {
+            // Le tableau des voix est reloue a chaque debut de son : le
+            // chercher une seule fois suffisait tant qu'il ne bougeait pas, ce
+            // qui n'est pas garanti. Un balayage de la memoire vive par son
+            // joue ne coute rien.
             self.machine.localiser_les_voix();
         }
         if joue && !self.son_jouait {
@@ -699,6 +758,84 @@ impl TamagotchiApp {
         }
     }
 
+    /// Restaure un point de reprise et remet les commandes au repos.
+    fn revenir_au_point(&mut self, indice: usize) {
+        let Some(etat) = self.reprises.restaurer(indice) else {
+            self.status_msg = Some("Point de reprise illisible.".to_string());
+            return;
+        };
+        let quand = self
+            .reprises
+            .points()
+            .get(indice)
+            .map(|p| p.quand.format("%H:%M").to_string())
+            .unwrap_or_default();
+        self.machine.restaurer(&etat);
+        self.appuis.clear();
+        self.maintenus.clear();
+        self.tenus_distants.clear();
+        self.phases_encodeur.clear();
+        self.historique.vider();
+        self.debit_depart = (self.machine.cpu.cycles, std::time::Instant::now());
+        self.status_msg = Some(format!("Console revenue a {}.", quand));
+    }
+
+    /// Liste des points de reprise, avec l'heure et l'age de chacun.
+    fn dessiner_les_reprises(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Revenir en arriere").strong());
+            ui.label(
+                egui::RichText::new(format!("{} points", self.reprises.points().len())).small(),
+            );
+        });
+        if !self.reprises.actif() {
+            ui.label(egui::RichText::new("Ouvre une partie pour en garder.").small());
+            return;
+        }
+        if self.reprises.points().is_empty() {
+            ui.label(
+                egui::RichText::new("Le premier point est pris apres une minute de jeu.")
+                    .small()
+                    .color(egui::Color32::GRAY),
+            );
+            return;
+        }
+        // Du plus recent au plus ancien : c'est dans cet ordre qu'on cherche.
+        let mut a_restaurer = None;
+        let mut a_oublier = None;
+        egui::ScrollArea::vertical()
+            .max_height(150.0)
+            .id_salt("reprises")
+            .show(ui, |ui| {
+                for (indice, point) in self.reprises.points().iter().enumerate().rev() {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(egui::RichText::new(point.quand.format("%H:%M").to_string()))
+                            .on_hover_text("Ramener la console a cet instant")
+                            .clicked()
+                        {
+                            a_restaurer = Some(indice);
+                        }
+                        ui.label(egui::RichText::new(point.age_lisible()).small());
+                        ui.label(
+                            egui::RichText::new(point.quand.format("%d/%m").to_string())
+                                .small()
+                                .color(egui::Color32::GRAY),
+                        );
+                        if ui.small_button("x").on_hover_text("Effacer ce point").clicked() {
+                            a_oublier = Some(indice);
+                        }
+                    });
+                }
+            });
+        if let Some(indice) = a_restaurer {
+            self.revenir_au_point(indice);
+        }
+        if let Some(indice) = a_oublier {
+            self.reprises.oublier(indice);
+        }
+    }
+
     /// Pose la fenetre pour le mode courant, une seule fois par changement.
     fn appliquer_le_mode(&mut self, ctx: &Context) {
         use egui::ViewportCommand as Cmd;
@@ -706,6 +843,7 @@ impl TamagotchiApp {
             return;
         }
         self.mode_applique = Some(self.mode);
+        self.retenir_la_partie();
         match self.mode {
             Mode::Accueil => {
                 ctx.send_viewport_cmd(Cmd::Decorations(true));
@@ -743,21 +881,48 @@ impl TamagotchiApp {
 
             ui.group(|ui| {
                 ui.label(egui::RichText::new("Console").strong());
+                // Les dumps deja connus, un bouton chacun : changer d'edition
+                // ne doit pas demander de retrouver un fichier.
+                let connus = crate::emulator::sauvegarde::firmwares_connus();
+                if connus.is_empty() {
+                    ui.label(
+                        egui::RichText::new("Aucun dump connu. Importes-en un.")
+                            .small()
+                            .color(egui::Color32::GRAY),
+                    );
+                } else {
+                    ui.horizontal_wrapped(|ui| {
+                        for chemin in &connus {
+                            let nom = chemin
+                                .file_stem()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            let courant = self.load_path_input
+                                == chemin.to_string_lossy().to_string();
+                            if ui.selectable_label(courant, &nom).clicked() && !courant {
+                                self.load_firmware(chemin.clone());
+                            }
+                        }
+                    });
+                }
                 ui.horizontal(|ui| {
-                    if ui.button("Choisir un dump...").clicked() {
+                    if ui.button("Importer un dump...").clicked() {
                         if let Some(chemin) = rfd::FileDialog::new()
                             .add_filter("Dump de flash", &["bin", "rom", "dump", "raw"])
                             .set_title("Choisir un dump de flash Tamagotchi")
                             .pick_file()
                         {
-                            self.load_firmware(chemin);
+                            // Le dump est recopie dans le dossier de donnees :
+                            // il reste disponible meme si l'original bouge.
+                            let range = crate::emulator::sauvegarde::adopter_firmware(&chemin);
+                            self.load_firmware(range);
                         }
                     }
-                    let nom = std::path::Path::new(&self.load_path_input)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "aucun".to_string());
-                    ui.label(egui::RichText::new(nom).monospace());
+                    if ui.small_button("Ouvrir le dossier").clicked() {
+                        let dossier = crate::emulator::sauvegarde::dossier_firmwares();
+                        let _ = std::fs::create_dir_all(&dossier);
+                        let _ = open_dossier(&dossier);
+                    }
                 });
                 if self.machine.empreinte.is_some() {
                     ui.label(
@@ -888,6 +1053,11 @@ impl TamagotchiApp {
                 // Clic droit sur la coque : le menu de la fenetre.
                 let mut mode_voulu = None;
                 fond.context_menu(|ui| {
+                    if ui.button("Revenir en arriere...").clicked() {
+                        // La liste vit dans le panneau lateral : on y va.
+                        mode_voulu = Some(Mode::Inspection);
+                        ui.close_menu();
+                    }
                     if ui.button("Inspection").clicked() {
                         mode_voulu = Some(Mode::Inspection);
                         ui.close_menu();
@@ -915,6 +1085,9 @@ impl eframe::App for TamagotchiApp {
     /// passage, la derniere sauvegarde du jeu pourrait rester en memoire.
     fn on_exit(&mut self) {
         let _ = self.machine.ecrire_sauvegarde();
+        // Les reglages de son ont pu changer sans qu'on ouvre d'emplacement :
+        // c'est ici qu'ils sont surs d'etre retenus.
+        self.retenir_la_partie();
     }
 
     /// Fond de la fenetre. Transparent en mode jeu : c'est ce qui decoupe la
@@ -1056,6 +1229,9 @@ impl eframe::App for TamagotchiApp {
             let faits = (self.machine.cpu.cycles - depart) as f64;
             self.cycles_dus = (self.cycles_dus - faits).max(0.0);
             self.historique.suivre(&self.machine);
+            // Les points de reprise, eux, sont horodates et ecrits sur le
+            // disque : un par minute, elagues avec l'age.
+            self.reprises.suivre(&self.machine);
             // Sans cela l'interface ne se redessine qu'aux evenements, et
             // l'animation de la console s'arrete des qu'on lache la souris.
             ctx.request_repaint();
@@ -1404,6 +1580,11 @@ impl eframe::App for TamagotchiApp {
                                         .wrap(),
                                 );
                             });
+                    });
+
+                    ui.separator();
+                    ui.group(|ui| {
+                        self.dessiner_les_reprises(ui);
                     });
 
                     // Les panneaux d'inspection coutent plus cher a dessiner que
