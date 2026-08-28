@@ -12,6 +12,23 @@ use crate::hw_bridge::FlashInspector;
 use crate::i18n::{I18n, Language};
 use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
+/// Rend un nom de partie utilisable comme nom de fichier.
+///
+/// Le nom saisi devient un fichier dans le dossier de la console : tout ce qui
+/// designe un chemin ou fache le systeme est remplace par un tiret.
+fn nettoyer_nom(brut: &str) -> String {
+    brut.trim()
+        .chars()
+        .map(|c| match c {
+            c if r#"/\:*?"<>|."#.contains(c) => '-',
+            c if c.is_control() => '-',
+            c => c,
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string()
+}
+
 /// Ouvre un dossier dans l'explorateur du systeme.
 ///
 /// Trois commandes selon la plateforme, aucune dependance de plus. Un echec
@@ -88,6 +105,12 @@ pub struct TamagotchiApp {
     pub fond: Option<crate::gui::fond::Fond>,
     /// Texture du papier, et rapport largeur sur hauteur de l'image d'origine.
     fond_texture: Option<(egui::TextureHandle, f32)>,
+    /// Nom en cours de saisie pour une nouvelle sauvegarde.
+    ///
+    /// `Some` tant que la fenetre de saisie est ouverte. Un menu contextuel ne
+    /// peut pas porter de champ de texte utilisable : il se referme au premier
+    /// clic ailleurs.
+    saisie_sauvegarde: Option<String>,
     /// Le papier doit etre relu a la prochaine image.
     ///
     /// Il faut un contexte egui pour en faire une texture, et le chargement
@@ -204,6 +227,7 @@ impl TamagotchiApp {
             fond: None,
             fond_texture: None,
             papier_a_relire: true,
+            saisie_sauvegarde: None,
             partage,
             port_web,
             serveur_actif: None,
@@ -928,6 +952,71 @@ impl TamagotchiApp {
         }
     }
 
+    /// Fenetre de saisie du nom d'une nouvelle sauvegarde.
+    ///
+    /// Elle est dessinee dans tous les modes : le mode jeu n'a pas de panneau
+    /// ou loger un champ de texte, et le menu contextuel se referme des qu'on
+    /// clique dedans.
+    fn dessiner_la_saisie(&mut self, ctx: &Context) {
+        let Some(mut nom) = self.saisie_sauvegarde.clone() else {
+            return;
+        };
+        let mut ouverte = true;
+        let mut valider = false;
+        let mut annuler = false;
+        egui::Window::new("Nouvelle sauvegarde")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .open(&mut ouverte)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new("Nom de la partie").small());
+                let champ = ui.add(
+                    egui::TextEdit::singleline(&mut nom)
+                        .hint_text("ma partie")
+                        .desired_width(200.0),
+                );
+                champ.request_focus();
+                if champ.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    valider = true;
+                }
+                let existe = self.emplacements.iter().any(|e| *e == nettoyer_nom(&nom));
+                if existe {
+                    ui.label(
+                        egui::RichText::new("Ce nom existe deja, il sera ouvert tel quel.")
+                            .small()
+                            .color(egui::Color32::from_rgb(220, 200, 90)),
+                    );
+                }
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            !nettoyer_nom(&nom).is_empty(),
+                            egui::Button::new("Creer"),
+                        )
+                        .clicked()
+                    {
+                        valider = true;
+                    }
+                    if ui.button("Annuler").clicked() {
+                        annuler = true;
+                    }
+                });
+            });
+
+        if valider {
+            let propre = nettoyer_nom(&nom);
+            self.saisie_sauvegarde = None;
+            if !propre.is_empty() {
+                self.ouvrir_emplacement(propre);
+            }
+        } else if annuler || !ouverte {
+            self.saisie_sauvegarde = None;
+        } else {
+            self.saisie_sauvegarde = Some(nom);
+        }
+    }
+
     /// Premier nom de partie libre, `partie-2`, `partie-3`, et ainsi de suite.
     ///
     /// Un menu contextuel n'est pas l'endroit ou saisir un nom : on en trouve
@@ -1406,6 +1495,7 @@ impl TamagotchiApp {
                 let mut partie_voulue = None;
                 let mut basculer_le_son = false;
                 let mut basculer_le_dessus = false;
+                let mut ouvrir_la_saisie = false;
                 fond.context_menu(|ui| {
                     // Des sections qui se deplient sur place, et non des sous
                     // menus. La fenetre du mode jeu fait quatre cents pixels de
@@ -1426,8 +1516,20 @@ impl TamagotchiApp {
                                     ui.close_menu();
                                 }
                             }
-                            if ui.button("Nouvelle partie").clicked() {
+                            if ui
+                                .button("Nouvelle partie")
+                                .on_hover_text("Cree une partie nommee toute seule")
+                                .clicked()
+                            {
                                 partie_voulue = Some(self.nom_de_partie_libre());
+                                ui.close_menu();
+                            }
+                            if ui
+                                .button("Nouvelle sauvegarde...")
+                                .on_hover_text("Cree une partie et demande son nom")
+                                .clicked()
+                            {
+                                ouvrir_la_saisie = true;
                                 ui.close_menu();
                             }
                         });
@@ -1545,6 +1647,9 @@ impl TamagotchiApp {
                         }
                     });
                 });
+                if ouvrir_la_saisie {
+                    self.saisie_sauvegarde = Some(String::new());
+                }
                 if let Some(nom) = partie_voulue {
                     self.ouvrir_emplacement(nom);
                 }
@@ -1799,6 +1904,7 @@ impl eframe::App for TamagotchiApp {
             self.recharger_le_papier(ctx);
         }
         self.appliquer_le_mode(ctx);
+        self.dessiner_la_saisie(ctx);
         match self.mode {
             Mode::Accueil => {
                 self.dessiner_accueil(ctx);
