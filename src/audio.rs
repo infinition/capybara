@@ -26,13 +26,12 @@ pub struct AudioEngine {
     /// Sans elle, chaque tranche repartirait de zero et l'oreille entendrait un
     /// claquement a chaque image.
     phase: f32,
-    /// Facteur applique a la frequence lue dans les voix du firmware.
+    /// Facteur applique a la hauteur tiree des voix du firmware.
     ///
-    /// Il vaut un : le champ de la voix donne bien la frequence en hertz, 568 a
-    /// 1516 sur une note reelle, verifie a l'oreille contre la console posee a
-    /// cote. Un facteur deux, essaye d'abord parce que ces valeurs semblaient
-    /// graves pour un piezo, sonnait une octave trop haut. Le reglage reste
-    /// accessible pour reprendre l'accord.
+    /// Il vaut un. La hauteur est calculee dans `Machine::hauteur_de_voix`, qui
+    /// lit le champ de la voix pour ce qu'il est, un compte de rechargement, et
+    /// non pour une frequence. Le reglage reste accessible pour reprendre
+    /// l'accord si la base de temps devait etre ajustee.
     pub hauteur: f32,
 }
 

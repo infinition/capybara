@@ -257,23 +257,46 @@ navigation qui sonne, ce sont les evenements du jeu.
 
 **Le tableau des voix, en `0x1801C820`,** compte huit entrees de `0x34` octets,
 indexees par le type de son a l'allocation, en `0x10022BE2`. Une voix porte
-l'horloge du coeur en tete, `0x05B8D800`, soit 96 MHz, sa frequence en `+4`, un
-temoin d'activite en `+8` et son volume en `+0xC`. Le tableau garde ses valeurs
-une fois le son fini : seul le drapeau `0x18014284` dit ce qui sonne vraiment,
-et seule la voix dont `+8` n'est pas nul est en cours.
+l'horloge du coeur en tete, `0x05B8D800`, soit 96 MHz, son compte de
+rechargement en `+4`, un temoin d'activite en `+8` et son volume en `+0xC`. Le
+tableau garde ses valeurs une fois le son fini : seul le drapeau `0x18014284`
+dit ce qui sonne vraiment, et seule la voix dont `+8` n'est pas nul est en
+cours.
 
-Releve sur une note reelle, apres l'appel : 568 Hz, puis 1516, 955 et 758, sur
-environ cent cinquante millisecondes. Une melodie.
+**Le champ `+4` n'est pas une frequence, c'est une periode.** La hauteur vaut
+`1500000 / valeur`. Les valeurs relevees sur des notes reelles, 4545, 1911,
+1516, 1351, 955, 758 et 568, ne tombent sur la gamme temperee que prises ainsi,
+a trois cents pres : Mi4, Sol5, Si5, Do#6, Sol6, Si6 et Mi7. Lues comme des
+hertz elles en sont toutes a quarante deux cents, presque un quart de ton, et un
+firmware ne compose pas faux de facon aussi reguliere. La base, 1 500 000, vaut
+96 MHz divises par 64, un prediviseur rond sur l'horloge du coeur, ce qui est la
+forme habituelle d'un timer en carre.
+
+La hauteur etant l'inverse du compte, le contour de chaque melodie s'inversait :
+une suite qui monte dans le tableau descend a l'oreille. C'est ce qui faisait
+entendre toutes les melodies a l'envers, et c'est aussi pourquoi le reglage de
+hauteur `/2` semblait plus juste sans l'etre.
+
+Releve sur une note reelle, apres l'appel : 568, 1516, 955 et 758, soit Mi7,
+Si5, Sol6 et Si6, sur environ cent cinquante millisecondes. Une melodie.
 
 **Le peripherique de sortie n'est pas atteint.** Pendant un son, aucun acces
 materiel ne vient du module audio, aucune page de PWM n'est touchee, et le
 port 1, qui porte le buzzer sur ses broches 11 et 13, n'est jamais ecrit. On ne
-le modelise donc pas : l'interface lit les frequences que le moteur a calculees
-et les rend en signal carre, ce qu'est un buzzer. Le son entendu est celui que
-la console a compose.
+le modelise donc pas : l'interface tire les hauteurs des comptes que le moteur a
+calcules et les rend en signal carre, ce qu'est un buzzer. Le son entendu est
+celui que la console a compose.
 
-L'interface sonne aussi pour elle meme : clic sur chaque appui, cran sur chaque
-pas de molette, avec un reglage de volume et une coupure.
+Corollaire pour qui cherchera ce peripherique : le registre attendu ne recoit
+pas un diviseur de 96 MHz par la frequence, mais le compte lui meme, 568 ou
+1516, sur une base a 1,5 MHz. C'est ce nombre la qu'il faut chercher dans les
+ecritures materielles pendant une note, sans filtre de PC, et un prediviseur a
+64 quelque part.
+
+L'interface ne sonne plus pour elle meme. Le clic de bouton et le cran de
+molette se superposaient aux tonalites du jeu et brouillaient le seul son qui
+compte. `SoundEffect` reste dans `audio.rs` si le besoin revient, derriere un
+reglage.
 
 ## La vitesse
 
@@ -481,5 +504,9 @@ vitesse atteinte, c'est le chiffre a regarder avant de conclure.
 - Ne pas chercher a accelerer par les chemins rapides de la memoire vive en 16
   bits, la recopie de trame en bloc, ou `target-cpu` adapte a la machine : les
   trois ont ete essayes et mesures, aucun ne donne rien. Le 32 bits, lui, paye.
-- Ne pas doubler la frequence du buzzer : le champ de la voix donne bien des
-  hertz, verifie a l'oreille contre la console posee a cote.
+- Ne pas lire le champ `+4` d'une voix comme une frequence : c'est une periode,
+  la hauteur vaut `1500000 / valeur`. La conclusion inverse avait ete tiree a
+  l'oreille et tenue pour acquise ; elle etait fausse, et c'est elle qui faisait
+  jouer toutes les melodies a l'envers. La gamme temperee tranche en une
+  commande, sans oreille : lues en periodes les valeurs tombent a trois cents,
+  lues en hertz a quarante deux.

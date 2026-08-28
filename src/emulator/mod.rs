@@ -294,12 +294,48 @@ impl Machine {
     /// Tableau des voix du moteur audio, huit entrees de 0x34 octets.
     ///
     /// L'allocation, en `0x10022BE2`, indexe ce tableau par le type de son.
-    /// Une voix porte l'horloge du coeur en tete, sa frequence en `+4` et son
-    /// volume en `+0xC`. Releve sur une note reelle : 96000000, puis 1000 Hz a
-    /// volume 100 pour l'une et 637 Hz pour l'autre.
+    /// Une voix porte l'horloge du coeur en tete, son compte de rechargement
+    /// en `+4`, un temoin d'activite en `+8` et son volume en `+0xC`. Le compte
+    /// n'est pas une frequence : voir `BASE_DE_TEMPS_AUDIO`.
     pub const VOIX_AUDIO: u32 = 0x1801_C820;
     pub const TAILLE_VOIX: u32 = 0x34;
     pub const NOMBRE_VOIX: u32 = 8;
+
+    /// Base de temps du generateur de notes, en hertz.
+    ///
+    /// Le champ `+4` d'une voix n'est pas une frequence, c'est un compte de
+    /// rechargement : la hauteur vaut cette base divisee par lui. Trois choses
+    /// le montrent, et la premiere suffit.
+    ///
+    /// Les valeurs relevees sur des notes reelles, 4545, 1911, 1516, 1351, 955,
+    /// 758 et 568, ne tombent sur la gamme temperee que prises ainsi, a trois
+    /// cents pres : Mi4, Sol5, Si5, Do#6, Sol6, Si6 et Mi7. Lues comme des
+    /// hertz elles en sont toutes a quarante deux cents, presque un quart de
+    /// ton, et un firmware ne compose pas faux de facon aussi reguliere.
+    ///
+    /// La hauteur etant l'inverse du compte, le contour de chaque melodie
+    /// s'inverse : une suite qui monte dans le tableau descend a l'oreille.
+    /// C'est ce qui faisait entendre les melodies a l'envers.
+    ///
+    /// Et 1 500 000 vaut 96 MHz divises par 64, soit un prediviseur rond sur
+    /// l'horloge du coeur, ce qui est la forme habituelle d'un timer en carre.
+    pub const BASE_DE_TEMPS_AUDIO: f32 = 1_500_000.0;
+
+    /// Hauteur d'une voix, en hertz, a partir du compte range dans son champ.
+    ///
+    /// Rend zero hors de la bande audible : c'est alors une voix au repos ou un
+    /// champ mal lu, pas une note.
+    pub fn hauteur_de_voix(compte: u32) -> f32 {
+        if compte == 0 {
+            return 0.0;
+        }
+        let hz = Self::BASE_DE_TEMPS_AUDIO / compte as f32;
+        if (20.0..=12_000.0).contains(&hz) {
+            hz
+        } else {
+            0.0
+        }
+    }
 
     /// Vrai quand le firmware est en train de jouer un son.
     pub fn son_en_cours(&self) -> bool {
@@ -321,9 +357,9 @@ impl Machine {
             if self.lire_sram_u8(base + 8) == 0 {
                 continue;
             }
-            let frequence = self.lire_sram_u32(base + 4);
-            if (20..=12_000).contains(&frequence) && self.lire_sram_u32(base + 0xC) > 0 {
-                return frequence as f32;
+            let hauteur = Self::hauteur_de_voix(self.lire_sram_u32(base + 4));
+            if hauteur > 0.0 && self.lire_sram_u32(base + 0xC) > 0 {
+                return hauteur;
             }
         }
         0.0
@@ -348,12 +384,10 @@ impl Machine {
                 if self.lire_sram_u8(base + 8) == 0 {
                     return None;
                 }
-                let frequence = self.lire_sram_u32(base + 4);
+                let hauteur = Self::hauteur_de_voix(self.lire_sram_u32(base + 4));
                 let volume = self.lire_sram_u32(base + 0xC);
-                // Une frequence hors de la bande audible ne vient pas d'une
-                // note : c'est une voix au repos, ou un champ mal lu.
-                if (20..=12_000).contains(&frequence) && volume > 0 {
-                    Some((frequence as f32, (volume.min(100) as f32) / 100.0))
+                if hauteur > 0.0 && volume > 0 {
+                    Some((hauteur, (volume.min(100) as f32) / 100.0))
                 } else {
                     None
                 }

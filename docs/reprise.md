@@ -57,7 +57,7 @@ Si un jour il faut plus de marge, restent la table de dispatch sur les quatre
 bits hauts plutot que la chaine de tests, et le cout du chemin de recuperation
 d'instruction dans la fenetre XIP.
 
-## Les cinq trouvailles qui ont debloque le reste
+## Les six trouvailles qui ont debloque le reste
 
 1. **Le temps du jeu ne se compte pas en logiciel.** Il se lit sur un compteur de
    secondes materiel en `0x45000304`, que le modele rendait constant. Tant qu'il
@@ -76,9 +76,19 @@ d'instruction dans la fenetre XIP.
 5. **Le son ne sort que sur des evenements de jeu**, jamais sur la navigation.
    Une premiere mesure sur quatre cents millions de pas avait conclu a tort au
    silence.
+6. **Le champ de hauteur d'une voix est une periode, pas une frequence.** La
+   hauteur vaut `1500000 / valeur`. Comme elle est l'inverse du compte, le
+   contour de chaque melodie s'inversait, et tous les sons s'entendaient a
+   l'envers. La gamme temperee tranche sans oreille : lues en periodes les
+   valeurs relevees tombent a trois cents des notes justes, lues en hertz a
+   quarante deux, presque un quart de ton.
 
 ## Les pieges qui coutent une journee
 
+- **Ne jamais trancher une question de hauteur a l'oreille seule.** La
+  conclusion « le champ donne des hertz » avait ete tiree ainsi et tenue pour
+  acquise pendant tout un jalon. Une comparaison a la gamme temperee la
+  renversait en une commande.
 - **Ne jamais reprendre un vieil instantane pris en scene de jeu.** La scene
   occupe 30,9 Ko d'un tas de 32 Ko, la sauvegarde en demande 4, et le firmware
   boucle sur son assertion en `0x1005B4AC`. `temps_probe` le montre en une

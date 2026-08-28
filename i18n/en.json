@@ -91,8 +91,5 @@
   "emu_mmio_title": "Unmapped peripheral registers",
   "emu_mmio_empty": "No unmapped access recorded yet.",
   "emu_stop_undefined": "Stopped: undefined instruction {opcode} at {pc}.",
-  "emu_stop_halt": "Stopped at {pc}.",
-  "son_sens": "Order:",
-  "son_sens_normal": "normal",
-  "son_sens_inverse": "reversed"
+  "emu_stop_halt": "Stopped at {pc}."
 }
