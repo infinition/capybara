@@ -99,12 +99,12 @@ font-size:12px;line-height:1.45;white-space:pre-wrap;max-width:640px;overflow:au
 <div>
 <canvas id="ecran" width="128" height="128" style="width:384px;height:384px"></canvas>
 <div style="margin-top:10px">
-<button data-b="a">A</button>
-<button data-b="ok">OK</button>
-<button data-b="c">C</button>
-<button data-b="b">B</button>
-<button onclick="cmd('tourner_arriere')">Molette +</button>
-<button onclick="cmd('tourner_avant')">Molette -</button>
+<button data-b="a">A, monter</button>
+<button data-b="b">B, valider</button>
+<button data-b="c">C, annuler</button>
+<button data-b="ok">Molette, appui</button>
+<button onclick="cmd('tourner_avant')">Molette droite</button>
+<button onclick="cmd('tourner_arriere')">Molette gauche</button>
 <button onclick="cmd('reculer')">Revenir en arriere</button>
 </div>
 <div style="margin-top:8px">Appui long, en secondes de temps console :
@@ -123,6 +123,10 @@ Garde le bouton enfonce, ou au clavier tiens la touche, pour un appui tenu.
 L'emulateur tournant a environ un tiers de la vitesse de la console, tenir
 trois secondes a la main n'en fait qu'une a ses yeux : les boutons d'appui
 long ci-dessus tiennent une duree connue, mesuree en temps console.
+<br><br>Clavier : A ou fleche gauche, B ou espace, C ou fleche droite, Entree
+pour l'appui de molette, fleches haut et bas pour la tourner. Les touches
+tenues se combinent, ce que les boutons de la page ne savent pas faire :
+molette plus B pour le menu special, A plus C pour la remise a zero.
 </p>
 <div style="margin-top:6px">
 <div style="margin-bottom:6px">Vitesse
@@ -191,11 +195,15 @@ async function boucle(){
   setTimeout(boucle, 250);
 }
 boucle();
-const touches = {a:'a', A:'a', b:'b', B:'b', c:'c', C:'c', ' ':'ok', Enter:'ok'};
+// Les touches tenues se combinent, comme les boutons de la console.
+const touches = {a:'a', A:'a', q:'a', Q:'a', ArrowLeft:'a',
+                 b:'b', B:'b', ' ':'b',
+                 c:'c', C:'c', d:'c', D:'c', ArrowRight:'c',
+                 Enter:'ok', s:'ok', S:'ok'};
 const tenues = new Set();
 document.addEventListener('keydown', ev => {
-  if(ev.key === 'ArrowUp'){ ev.preventDefault(); cmd('tourner_arriere'); return; }
-  if(ev.key === 'ArrowDown'){ ev.preventDefault(); cmd('tourner_avant'); return; }
+  if(ev.key === 'ArrowUp'){ ev.preventDefault(); cmd('tourner_avant'); return; }
+  if(ev.key === 'ArrowDown'){ ev.preventDefault(); cmd('tourner_arriere'); return; }
   const n = touches[ev.key];
   if(n && !tenues.has(n)){ ev.preventDefault(); tenues.add(n); cmd(n, 'bas'); }
 });

@@ -393,14 +393,20 @@ impl eframe::App for TamagotchiApp {
         //    qu'elle reste enfoncee : c'est ce que le jeu attend pour son appui
         //    long, celui qui ouvre le menu principal.
         let key_f10 = ctx.input(|i| i.key_pressed(Key::F10));
+        // Fleche haut tourne vers la droite, fleche bas vers la gauche, comme
+        // la molette de la console.
         let molette = ctx.input(|i| {
-            (i.key_pressed(Key::ArrowUp) as i32) - (i.key_pressed(Key::PageDown) as i32)
+            (i.key_pressed(Key::ArrowUp) as i32) - (i.key_pressed(Key::ArrowDown) as i32)
         });
+        // Chaque touche tient sa broche tant qu'elle est enfoncee, et plusieurs
+        // touches tenues ensemble donnent les combinaisons de la console :
+        // molette maintenue plus B pour le menu special, A plus C pour la
+        // remise a zero.
         let touches = [
-            (Machine::BOUTON_A, [Key::A, Key::ArrowLeft]),
-            (Machine::BOUTON_B, [Key::B, Key::ArrowDown]),
-            (Machine::BOUTON_C, [Key::C, Key::ArrowRight]),
-            (Machine::BOUTON_MOLETTE, [Key::Space, Key::Enter]),
+            (Machine::BOUTON_A, [Key::A, Key::Q, Key::ArrowLeft]),
+            (Machine::BOUTON_B, [Key::B, Key::Space, Key::Num2]),
+            (Machine::BOUTON_C, [Key::C, Key::D, Key::ArrowRight]),
+            (Machine::BOUTON_MOLETTE, [Key::Enter, Key::S, Key::Num0]),
         ];
         for (broche, keys) in touches {
             if ctx.input(|i| keys.iter().any(|k| i.key_down(*k))) {
@@ -650,7 +656,7 @@ impl eframe::App for TamagotchiApp {
                         }
                         ui.label(
                             egui::RichText::new(
-                                "Clavier : A, B, C pour les boutons, Espace ou Entree pour la                                  molette, Fleche haut et Page suivante pour la tourner.",
+                                "Clavier : A ou Fleche gauche, B ou Espace, C ou Fleche droite,                                  Entree pour l'appui de molette, Fleche haut et Fleche bas pour la                                  tourner. Les touches tenues se combinent : molette plus B ouvre le                                  menu special, A plus C reinitialise.",
                             )
                             .small(),
                         );

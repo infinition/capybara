@@ -136,6 +136,9 @@ impl Cpu {
                 }
                 // Le bus realise la copie du controleur de transferts mais ne
                 // voit pas le NVIC : la fin de transfert se signale ici.
+                if let Some(irq) = periph.tic.tick(c) {
+                    self.nvic.request_irq(irq);
+                }
                 if periph.adc_pile.irq_a_lever | periph.adc_pile.tick(c) {
                     periph.adc_pile.irq_a_lever = false;
                     self.nvic

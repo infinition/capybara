@@ -5,6 +5,7 @@ pub mod flashctl;
 pub mod fuses;
 pub mod gpio;
 pub mod adc_pile;
+pub mod tic;
 pub mod dma;
 pub mod gpio_port;
 pub mod snsys;
@@ -20,6 +21,7 @@ pub use flashctl::{FlashController, Transfer};
 pub use fuses::FuseRegisters;
 pub use gpio::GpioController;
 pub use adc_pile::AdcPile;
+pub use tic::TicSysteme;
 pub use dma::DmaController;
 pub use gpio_port::GpioPort;
 pub use snsys::SnSysRegisters;
@@ -44,6 +46,10 @@ pub struct Peripherals {
     pub crc: ChecksumUnit,
     /// Port 2, celui dont le firmware lit les broches 0 et 1.
     pub adc_pile: AdcPile,
+    /// Ajoute apres coup : les instantanes ecrits avant doivent rester
+    /// relisibles, d'ou la valeur par defaut.
+    #[serde(default)]
+    pub tic: TicSysteme,
     pub dma: DmaController,
     pub port0: GpioPort,
     pub port1: GpioPort,
@@ -65,6 +71,7 @@ impl Default for Peripherals {
             flashctl: FlashController::default(),
             crc: ChecksumUnit::default(),
             adc_pile: AdcPile::default(),
+            tic: TicSysteme::default(),
             dma: DmaController::default(),
             port0: GpioPort::default(),
             port1: GpioPort::port1(),
