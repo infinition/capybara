@@ -91,5 +91,8 @@
   "emu_mmio_title": "Registres peripheriques non mappes",
   "emu_mmio_empty": "Aucun acces non mappe releve pour l'instant.",
   "emu_stop_undefined": "Arret : instruction non decodee {opcode} a {pc}.",
-  "emu_stop_halt": "Arret a {pc}."
+  "emu_stop_halt": "Arret a {pc}.",
+  "son_sens": "Sens :",
+  "son_sens_normal": "normal",
+  "son_sens_inverse": "inverse"
 }

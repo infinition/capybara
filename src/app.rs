@@ -92,6 +92,20 @@ pub struct TamagotchiApp {
     pub perimee_jusqu: u64,
     /// Notes relevees pendant la tranche d'emulation, avec leur duree en cycles.
     pub notes: Vec<(f32, u64)>,
+    /// Rendre la melodie a l'envers, derniere note d'abord.
+    ///
+    /// Le firmware compose une suite montante, 1351 Hz puis 1911 Hz sur le son
+    /// de validation. Reste a savoir si c'est bien ce que la console fait
+    /// entendre : rien dans le modele ne dit dans quel sens le peripherique de
+    /// sortie, qu'on n'a pas trouve, lit la suite. Le reglage permet de
+    /// trancher a l'oreille contre la vraie machine.
+    pub melodie_inversee: bool,
+    /// Melodie complete en cours d'accumulation, quand elle doit etre inversee.
+    ///
+    /// Une suite ne se renverse qu'une fois complete : dans ce mode le son
+    /// n'est rendu qu'a la fin de la melodie, et arrive donc avec le retard de
+    /// sa propre duree.
+    pub melodie: Vec<(f32, u64)>,
     /// Cycles dus a la console, en retard a rattraper.
     ///
     /// La dette est bornee : apres un a coup de l'interface, il ne faut pas que
@@ -146,6 +160,8 @@ impl TamagotchiApp {
             note_perimee: 0.0,
             perimee_jusqu: 0,
             notes: Vec::new(),
+            melodie_inversee: false,
+            melodie: Vec::new(),
             vitesse: 1.0,
             cycles_dus: 0.0,
         }
@@ -520,6 +536,38 @@ impl TamagotchiApp {
         )
     }
 
+    /// Accumule la melodie et la rend a l'envers quand le firmware se tait.
+    ///
+    /// On ne peut pas renverser un flot : il faut la suite entiere. Le son
+    /// arrive donc avec le retard de sa propre duree, deux cent cinquante
+    /// millisecondes pour le son de validation. C'est le prix du reglage, et
+    /// il ne se paie que dans cette position.
+    fn rendre_melodie_inversee(&mut self) {
+        self.melodie.extend(self.notes.iter().copied());
+        if self.machine.son_en_cours() {
+            return;
+        }
+        // Les silences de tete et de queue n'appartiennent pas a la melodie :
+        // les garder decalerait le rendu sans rien apporter.
+        while self.melodie.first().map_or(false, |n| n.0 <= 0.0) {
+            self.melodie.remove(0);
+        }
+        while self.melodie.last().map_or(false, |n| n.0 <= 0.0) {
+            self.melodie.pop();
+        }
+        if self.melodie.is_empty() {
+            return;
+        }
+        self.melodie.reverse();
+        // Rendue au temps de la console, et non a celui de l'image : la suite
+        // est complete, ses durees sont donc celles de la vraie machine.
+        let cycles: u64 = self.melodie.iter().map(|n| n.1).sum();
+        let secondes =
+            cycles as f32 / crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as f32;
+        self.audio.buzzer_notes(&self.melodie, secondes);
+        self.melodie.clear();
+    }
+
     /// Note a jouer, la valeur heritee de la melodie precedente ecartee.
     ///
     /// Au moment ou le drapeau de son se leve, la voix porte encore la
@@ -704,7 +752,10 @@ impl eframe::App for TamagotchiApp {
             self.notes.push((self.note_courante, reste));
             self.note_depuis = self.machine.cpu.cycles;
         }
-        if self.notes.iter().any(|n| n.0 > 0.0) {
+        if self.melodie_inversee {
+            self.rendre_melodie_inversee();
+            ctx.request_repaint();
+        } else if self.notes.iter().any(|n| n.0 > 0.0) {
             self.audio.buzzer_notes(&self.notes, _dt.max(0.001));
             ctx.request_repaint();
         } else {
@@ -771,6 +822,20 @@ impl eframe::App for TamagotchiApp {
                         .clicked()
                     {
                         self.audio.hauteur = h;
+                    }
+                }
+                // Sens de lecture de la melodie. On ne sait pas par ou le son
+                // sort de la console : le sens ne se tranche donc qu'a
+                // l'oreille, contre la vraie machine.
+                ui.label(self.i18n.t("son_sens"));
+                for (cle, inverse) in
+                    [("son_sens_normal", false), ("son_sens_inverse", true)]
+                {
+                    let choisi = self.melodie_inversee == inverse;
+                    if ui.selectable_label(choisi, self.i18n.t(cle)).clicked() {
+                        self.melodie_inversee = inverse;
+                        self.melodie.clear();
+                        self.audio.silence_buzzer();
                     }
                 }
 
