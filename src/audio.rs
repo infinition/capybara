@@ -26,6 +26,14 @@ pub struct AudioEngine {
     /// Sans elle, chaque tranche repartirait de zero et l'oreille entendrait un
     /// claquement a chaque image.
     phase: f32,
+    /// Facteur applique a la frequence lue dans les voix du firmware.
+    ///
+    /// Le champ de la voix donne 568 a 1516 Hz sur une note reelle, ce qui est
+    /// grave pour un piezo, dont le rendement culmine entre deux et quatre
+    /// kilohertz ; double, l'intervalle y tombe. Compare a la console posee a
+    /// cote, le son sans facteur sonne une octave trop bas. Le reglage reste
+    /// accessible pour reprendre l'accord a l'oreille.
+    pub hauteur: f32,
 }
 
 impl AudioEngine {
@@ -46,6 +54,7 @@ impl AudioEngine {
             enabled: true,
             buzzer: None,
             phase: 0.0,
+            hauteur: 2.0,
         }
     }
 
@@ -88,7 +97,8 @@ impl AudioEngine {
         // Une seule phase pour toutes les voix : le buzzer est unique, il ne
         // rend qu'un signal. On prend la voix la plus grave comme fondamentale
         // et on mele les autres a poids egal, ce que fait un haut parleur.
-        let fondamentale = voix.iter().map(|v| v.0).fold(f32::MAX, f32::min);
+        let fondamentale =
+            voix.iter().map(|v| v.0).fold(f32::MAX, f32::min) * self.hauteur.max(0.05);
         let ampleur = voix.iter().map(|v| v.1).fold(0.0_f32, f32::max);
         for _ in 0..compte {
             self.phase += fondamentale / Self::TAUX as f32;

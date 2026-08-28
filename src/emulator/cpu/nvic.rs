@@ -12,6 +12,14 @@ pub struct Nvic {
     /// les registres ISER du NVIC, qui ne gouvernent que les IRQ externes : son
     /// seul interrupteur est le bit TICKINT de SYST_CSR.
     pub systick_pending: bool,
+    /// Vrai quand quelque chose a pu devenir en attente.
+    ///
+    /// Sans lui, le coeur parcourait les huit mots de drapeaux avant chaque
+    /// instruction, alors qu'il n'y a presque jamais rien a prendre. Le drapeau
+    /// se corrige tout seul : on le pose des qu'une interruption est demandee,
+    /// et le coeur l'efface quand il regarde et ne trouve rien.
+    #[serde(default = "vrai")]
+    pub en_attente: bool,
 }
 
 impl Default for Nvic {
@@ -26,6 +34,7 @@ impl Default for Nvic {
             syst_cvr: 0,
             vtor: 0x0000_0000,
             systick_pending: false,
+            en_attente: true,
         }
     }
 }
@@ -50,6 +59,7 @@ impl Nvic {
     }
 
     pub fn write_reg(&mut self, addr: u32, val: u32) {
+        self.en_attente = true;
         match addr {
             0xE000_E010 => self.syst_csr = val & 0x7,
             0xE000_E014 => self.syst_rvr = val & 0x00FF_FFFF,
@@ -91,6 +101,7 @@ impl Nvic {
                 // TICKINT
                 trigger_irq = true;
                 self.systick_pending = true;
+                self.en_attente = true;
             }
         } else {
             self.syst_cvr -= cycles;
@@ -100,6 +111,7 @@ impl Nvic {
     }
 
     pub fn request_irq(&mut self, irq: u32) {
+        self.en_attente = true;
         if irq < 240 {
             let idx = (irq / 32) as usize;
             let bit = irq % 32;
@@ -125,4 +137,10 @@ impl Nvic {
             self.ispr[idx] &= !(1 << bit);
         }
     }
+}
+
+/// Valeur par defaut du drapeau d'attente pour les anciens instantanes : il
+/// vaut mieux regarder une fois pour rien que manquer une interruption.
+fn vrai() -> bool {
+    true
 }

@@ -170,8 +170,10 @@ impl LcdPanel {
         }
         ui.painter().rect_stroke(ecran_rect, 0.0, Stroke::new(1.5, Color32::from_rgb(60, 60, 66)));
 
-        // Clic sur l'ecran : le bouton gauche vaut A, le droit vaut B. C'est le
-        // geste attendu quand on joue a la souris, sans viser les boutons.
+        // Clic sur l'ecran : gauche vaut A, droit vaut B, molette vaut l'appui
+        // de molette. C'est le geste attendu quand on joue a la souris, sans
+        // viser les boutons, et le maintien passe aussi, sans quoi l'appui long
+        // qui ouvre le laboratoire serait impossible.
         let sur_ecran = ui.allocate_rect(ecran_rect, Sense::click_and_drag());
         if sur_ecran.clicked() {
             commandes.bouton_a.clique = true;
@@ -179,12 +181,20 @@ impl LcdPanel {
         if sur_ecran.secondary_clicked() {
             commandes.bouton_b.clique = true;
         }
+        if sur_ecran.middle_clicked() {
+            commandes.molette.clique = true;
+        }
         if sur_ecran.is_pointer_button_down_on() {
-            let (gauche, droit) = ui.input(|i| {
-                (i.pointer.primary_down(), i.pointer.secondary_down())
+            let (gauche, droit, milieu) = ui.input(|i| {
+                (
+                    i.pointer.primary_down(),
+                    i.pointer.secondary_down(),
+                    i.pointer.middle_down(),
+                )
             });
             commandes.bouton_a.maintenu |= gauche;
             commandes.bouton_b.maintenu |= droit;
+            commandes.molette.maintenu |= milieu;
         }
 
         let _ = display;
@@ -249,14 +259,22 @@ impl LcdPanel {
             vec2(antenne.width() * 0.72, antenne.height() * 0.62),
         );
         let reponse = ui.allocate_rect(molette, Sense::click_and_drag());
+        let mut tourne = false;
         if reponse.dragged() {
             let dy = reponse.drag_delta().y;
             if dy.abs() > 2.0 {
                 commandes.molette_tournee += if dy > 0.0 { 1 } else { -1 };
+                tourne = true;
             }
         }
-        commandes.molette.maintenu = reponse.is_pointer_button_down_on() && !reponse.dragged();
-        commandes.molette.clique = reponse.clicked();
+        // La fenetre transparente est aussi un bouton, comme sur la console :
+        // maintenue elle ouvre le laboratoire, breve elle vaut B dans certains
+        // menus. On ne compte pas l'appui pendant qu'on tourne, sinon chaque
+        // cran vaudrait aussi une pression.
+        if !tourne {
+            commandes.molette.maintenu |= reponse.is_pointer_button_down_on();
+        }
+        commandes.molette.clique |= reponse.clicked();
 
         let roulette = ui.input(|i| i.raw_scroll_delta.y);
         let survol = ui

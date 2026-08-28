@@ -18,6 +18,15 @@ pub struct Cpu {
     pub nvic: Nvic,
     pub cycles: u64,
     pub is_halted: bool,
+    /// Cycles pas encore distribues aux peripheriques.
+    ///
+    /// Les entretenir a chaque instruction coutait sept appels par pas, dont
+    /// une division en soixante quatre bits pour le signal de trame. Or rien ne
+    /// se joue en dessous de quelques microsecondes : le SysTick compte 96000
+    /// cycles, la demi periode de trame 800000. On les regroupe donc, ce qui ne
+    /// change rien a ce que le firmware observe et rend le coeur nettement plus
+    /// rapide.
+    cycles_en_attente: u32,
 }
 
 impl Default for Cpu {
@@ -33,6 +42,7 @@ impl Cpu {
             nvic: Nvic::default(),
             cycles: 0,
             is_halted: false,
+            cycles_en_attente: 0,
         }
     }
 
@@ -40,6 +50,7 @@ impl Cpu {
         self.regs = Registers::default();
         self.cycles = 0;
         self.is_halted = false;
+        self.cycles_en_attente = 0;
 
         // Fetch initial SP from 0x00000000 / VTOR
         let sp = bus.read_u32(self.nvic.vtor, periph, &self.nvic);
@@ -76,7 +87,7 @@ impl Cpu {
         // Exceptions en attente. On ne les prend que depuis le mode Thread :
         // sans modele de priorites, autoriser la preemption d'un handler par un
         // autre empilerait indefiniment.
-        if self.regs.mode == Mode::Thread && self.regs.primask == 0 {
+        if self.nvic.en_attente && self.regs.mode == Mode::Thread && self.regs.primask == 0 {
             if self.nvic.systick_pending {
                 self.nvic.systick_pending = false;
                 self.enter_exception(Nvic::SYSTICK_EXCEPTION, bus, periph);
@@ -86,6 +97,9 @@ impl Cpu {
                 self.enter_exception(irq + 16, bus, periph);
                 return StepResult::Ok(1);
             }
+            // Rien a prendre, et on etait en etat de le prendre : inutile de
+            // regarder a nouveau tant que rien n'est demande.
+            self.nvic.en_attente = false;
         }
 
         // La trace MMIO attribue chaque acces a l'instruction qui le provoque.
@@ -124,39 +138,20 @@ impl Cpu {
         match result {
             StepResult::Ok(c) => {
                 self.cycles += c as u64;
-                // Le SysTick pose lui-meme son drapeau d'attente : c'est une
-                // exception systeme, pas une IRQ externe a inscrire dans ISPR.
-                self.nvic.tick_systick(c);
-                // Le TE de l'ecran est entretenu ici : c'est un signal
-                // exterieur, sans quoi le firmware l'attend sans fin.
-                if periph.port1.tick(c) {
-                    self.nvic.request_irq(
-                        crate::emulator::peripherals::gpio_port::PORT1_IRQ,
-                    );
-                }
                 // Le bus realise la copie du controleur de transferts mais ne
-                // voit pas le NVIC : la fin de transfert se signale ici.
-                if let Some(irq) = periph.tic.tick(c) {
-                    self.nvic.request_irq(irq);
-                }
-                if periph.adc_pile.irq_a_lever | periph.adc_pile.tick(c) {
-                    periph.adc_pile.irq_a_lever = false;
-                    self.nvic
-                        .request_irq(crate::emulator::peripherals::adc_pile::IRQ);
-                }
+                // voit pas le NVIC : la fin de transfert se signale ici. Elle
+                // reste hors du regroupement, un simple drapeau ne coutant rien
+                // et l'ecran attendant cette interruption au plus tot.
                 if periph.dma.irq_a_lever {
                     periph.dma.irq_a_lever = false;
                     self.nvic.request_irq(crate::emulator::peripherals::dma::IRQ);
                 }
-                // Tick Peripherals
-                if periph.timers.tick(c) {
-                    self.nvic.request_irq(16); // Timer IRQ
+                self.cycles_en_attente += c as u32;
+                if self.cycles_en_attente >= Self::GRAIN_PERIPHERIQUES {
+                    let ecoules = self.cycles_en_attente;
+                    self.cycles_en_attente = 0;
+                    self.entretenir_peripheriques(ecoules, periph);
                 }
-                // Le compteur de secondes de la zone systeme. C'est la seule
-                // source de temps du calendrier du jeu : sans lui la date reste
-                // sur celle qui a ete reglee, et rien ne vieillit. Son alarme
-                // est ce qui sort la console de sa veille profonde.
-                periph.snsys.tick(c);
                 StepResult::Ok(c)
             }
             StepResult::Breakpoint => StepResult::Breakpoint,
@@ -166,6 +161,39 @@ impl Cpu {
             }
             StepResult::Undefined(op) => StepResult::Undefined(op),
         }
+    }
+
+    /// Grain d'entretien des peripheriques, en cycles.
+    ///
+    /// Deux cent cinquante six cycles valent moins de trois microsecondes a
+    /// 96 MHz, cent fois plus fin que la plus courte echeance du firmware.
+    const GRAIN_PERIPHERIQUES: u32 = 256;
+
+    /// Fait avancer tout ce qui vit au rythme des cycles.
+    fn entretenir_peripheriques(&mut self, ecoules: u32, periph: &mut Peripherals) {
+        // Le SysTick pose lui-meme son drapeau d'attente : c'est une exception
+        // systeme, pas une IRQ externe a inscrire dans ISPR.
+        self.nvic.tick_systick(ecoules);
+        // Le TE de l'ecran est entretenu ici : c'est un signal exterieur, sans
+        // quoi le firmware l'attend sans fin.
+        if periph.port1.tick(ecoules) {
+            self.nvic.request_irq(crate::emulator::peripherals::gpio_port::PORT1_IRQ);
+        }
+        if let Some(irq) = periph.tic.tick(ecoules) {
+            self.nvic.request_irq(irq);
+        }
+        if periph.adc_pile.irq_a_lever | periph.adc_pile.tick(ecoules) {
+            periph.adc_pile.irq_a_lever = false;
+            self.nvic.request_irq(crate::emulator::peripherals::adc_pile::IRQ);
+        }
+        if periph.timers.tick(ecoules) {
+            self.nvic.request_irq(16);
+        }
+        // Le compteur de secondes de la zone systeme. C'est la seule source de
+        // temps du calendrier du jeu : sans lui la date reste sur celle qui a
+        // ete reglee, et rien ne vieillit. Son alarme est ce qui sort la console
+        // de sa veille profonde.
+        periph.snsys.tick(ecoules);
     }
 
     /// ITAdvance : le masque est decale d'un cran, et le bloc se termine quand

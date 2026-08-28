@@ -454,6 +454,14 @@ impl MemoryBus {
                 return u16::from_le_bytes([self.flash.data[o], self.flash.data[o + 1]]);
             }
         }
+        // La memoire vive est la zone de donnees du jeu : chaque LDRH y passait
+        // par deux decodages d'adresse complets.
+        if (map::SRAM_BASE..map::SRAM_END).contains(&addr) {
+            let i = (addr - map::SRAM_BASE) as usize;
+            if i + 1 < self.sram.data.len() {
+                return u16::from_le_bytes([self.sram.data[i], self.sram.data[i + 1]]);
+            }
+        }
         if map::bitband_target(addr).is_some() {
             return self.read_u32(addr & !3, periph, nvic) as u16;
         }
@@ -469,6 +477,16 @@ impl MemoryBus {
     }
 
     pub fn write_u16(&mut self, addr: u32, val: u16, periph: &mut Peripherals, nvic: &mut Nvic) {
+        // Meme raison qu'en lecture : la memoire vive est le cas courant, et
+        // elle n'a ni alias bit-band ni effet de bord.
+        if (map::SRAM_BASE..map::SRAM_END).contains(&addr) {
+            let i = (addr - map::SRAM_BASE) as usize;
+            if i + 1 < self.sram.data.len() {
+                self.sram.data[i] = (val & 0xFF) as u8;
+                self.sram.data[i + 1] = (val >> 8) as u8;
+                return;
+            }
+        }
         self.write_u8(addr, (val & 0xFF) as u8, periph, nvic);
         self.write_u8(addr + 1, ((val >> 8) & 0xFF) as u8, periph, nvic);
     }
@@ -573,14 +591,25 @@ impl MemoryBus {
         if vers_panneau {
             trame.reserve(t.unites as usize);
         }
-        for i in 0..t.unites {
-            let src = t.source.wrapping_add(i * pas_source);
-            let dst = t.destination.wrapping_add(i * pas_dest);
-            let unite = self.read_u16(src, p, &nvic);
-            if vers_panneau {
-                trame.push(unite);
+        if vers_panneau && pas_source == LARGEUR_UNITE {
+            // Cas de loin le plus frequent : seize mille unites par trame,
+            // soixante fois par seconde. Les lire une par une a travers le bus,
+            // puis les ecrire une par une dans un registre dont seul le total
+            // compte, coutait deux millions d'acces par seconde de console pour
+            // rien.
+            for i in 0..t.unites {
+                trame.push(self.read_u16(t.source.wrapping_add(i * pas_source), p, &nvic));
             }
-            self.write_u16(dst, unite, p, &mut nvic);
+        } else {
+            for i in 0..t.unites {
+                let src = t.source.wrapping_add(i * pas_source);
+                let dst = t.destination.wrapping_add(i * pas_dest);
+                let unite = self.read_u16(src, p, &nvic);
+                if vers_panneau {
+                    trame.push(unite);
+                }
+                self.write_u16(dst, unite, p, &mut nvic);
+            }
         }
         if vers_panneau {
             p.display.recevoir_trame(&trame);

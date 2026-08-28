@@ -266,6 +266,40 @@ la console a compose.
 L'interface sonne aussi pour elle meme : clic sur chaque appui, cran sur chaque
 pas de molette, avec un reglage de volume et une coupure.
 
+## La vitesse
+
+**L'emulateur ne tient pas encore le temps reel.** Mesure sur une partie, avec
+`vitesse_probe` : 68 millions de cycles par seconde, soit 0,71 fois la vitesse
+de la console, et environ 84 trames poussees en six secondes la ou la vraie en
+pousse 360. Une seconde de console vaut 96 millions de cycles, ce que le
+firmware declare en armant son SysTick a 95999 pour une milliseconde.
+
+L'interface est donc gouvernee : elle n'accorde a la console que le temps qui
+lui revient, ce qui l'empeche d'aller trop vite sur une machine rapide et de
+pousser plus de trames que la fenetre n'en affiche. Tant que la mesure reste
+sous un, les reglages au dessus de « temps reel » ne changent rien : la machine
+donne deja tout.
+
+Le diagnostic affiche la vitesse atteinte. Trois changements l'ont fait passer
+de 0,36 a 0,71 :
+
+- **Les peripheriques sont entretenus par paquets de 256 cycles** au lieu de
+  chaque instruction. C'etait sept appels par pas, dont une division en soixante
+  quatre bits pour le signal de trame. Deux cent cinquante six cycles valent
+  moins de trois microsecondes, cent fois plus fin que la plus courte echeance
+  du firmware.
+- **La recherche d'interruption en attente est conditionnee a un drapeau.** Elle
+  parcourait les huit mots de drapeaux avant chaque instruction, alors qu'il n'y
+  a presque jamais rien a prendre.
+- **L'optimisation entre modules est activee**, en une seule unite de
+  generation. Le coeur passe son temps dans une poignee de fonctions appelees
+  des millions de fois par seconde.
+
+Ce qui n'a rien donne, pour ne pas le refaire : les chemins rapides de lecture
+et d'ecriture en memoire vive, la recopie de trame en bloc, et `target-cpu`
+adapte a la machine. Le cout restant est dans le decodage lui meme, une chaine
+d'une vingtaine de tests parcourue a chaque instruction.
+
 ## Le tas et la sauvegarde
 
 Le tas fait 32 Ko, pose en dur par `heap_init(0x18005D70, 0x8000)` en

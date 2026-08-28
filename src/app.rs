@@ -68,6 +68,18 @@ pub struct TamagotchiApp {
     /// Angle de la molette, en degres cumules. Il ne sert qu'a animer les deux
     /// fleches de la fenetre transparente, et retombe doucement au repos.
     pub angle_molette: f32,
+    /// Vitesse d'ecoulement du temps de la console, 1 pour le temps reel.
+    ///
+    /// Sans gouverneur, l'emulateur va aussi vite que la machine le permet, et
+    /// la console vit plusieurs fois plus vite que la vraie. Elle pousse alors
+    /// plus d'images que la fenetre n'en affiche, ce qui saccade en plus d'etre
+    /// faux. Zero met en pause.
+    pub vitesse: f32,
+    /// Cycles dus a la console, en retard a rattraper.
+    ///
+    /// La dette est bornee : apres un a coup de l'interface, il ne faut pas que
+    /// l'emulation reparte en trombe pour se rattraper.
+    pub cycles_dus: f64,
 }
 
 impl TamagotchiApp {
@@ -111,6 +123,8 @@ impl TamagotchiApp {
             nouvel_emplacement: String::new(),
             derniere_ecriture: std::time::Instant::now(),
             angle_molette: 0.0,
+            vitesse: 1.0,
+            cycles_dus: 0.0,
         }
     }
 }
@@ -197,6 +211,12 @@ impl TamagotchiApp {
                 // La console reprend sa partie toute seule, comme un vrai
                 // Tamagotchi qu'on rallume. Sans cela il faudrait penser a
                 // choisir un emplacement avant de jouer.
+                // La trace des acces peripheriques coute une recherche par
+                // acces, et l'ecran en fait des millions par seconde. Elle sert
+                // aux sondes, pas au jeu : sans elle l'emulation tient le temps
+                // reel, avec elle non.
+                self.machine.bus.mmio_trace.enabled = false;
+                self.machine.bus.mmio_trace.clear();
                 self.shell_color = ShellColor::pour_edition(self.machine.edition);
                 self.status_msg = Some(format!(
                     "{} charge, coque {}",
@@ -405,6 +425,7 @@ impl TamagotchiApp {
             "== diagnostic emulateur Tamagotchi Paradise\n\
              firmware      {}\n\
              pas executes  {}   debit {:.1} millions par seconde\n\
+             vitesse       demandee {}   atteinte {:.2} fois le temps reel\n\
              cout interface {:.1} ms par image\n\
              PC            {:#010x}   mode {}   PRIMASK {}\n\
              trames ecran  {}   instantanes {}\n\
@@ -418,6 +439,14 @@ impl TamagotchiApp {
             self.load_path_input,
             self.machine.cpu.cycles,
             self.debit / 1e6,
+            if self.vitesse == 0.0 {
+                "pause".to_string()
+            } else if self.vitesse.is_infinite() {
+                "max".to_string()
+            } else {
+                format!("x{}", self.vitesse)
+            },
+            self.debit / crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as f64,
             self.cout_ui,
             self.machine.cpu.regs.pc,
             mode,
@@ -568,15 +597,37 @@ impl eframe::App for TamagotchiApp {
 
         self.appliquer_entrees();
         let debut_emulation = std::time::Instant::now();
-        if self.machine.is_running && self.budget_ms > 0 {
+        if self.machine.is_running && self.vitesse > 0.0 {
             let debut = std::time::Instant::now();
-            let limite = std::time::Duration::from_millis(self.budget_ms);
-            while debut.elapsed() < limite {
+            let limite = std::time::Duration::from_millis(self.budget_ms.max(1));
+            // Une seconde de console vaut 96 millions de cycles : c'est ce que
+            // le firmware declare en armant son SysTick a 95999 pour une
+            // milliseconde. La dette suit donc le temps reel, multipliee par la
+            // vitesse demandee.
+            let par_seconde =
+                crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as f64;
+            if self.vitesse.is_finite() {
+                self.cycles_dus += par_seconde * self.vitesse as f64 * _dt as f64;
+                // Au plus un quart de seconde de retard : au dela, on abandonne
+                // le rattrapage plutot que de partir en trombe.
+                self.cycles_dus = self.cycles_dus.min(par_seconde * 0.25);
+            } else {
+                self.cycles_dus = f64::INFINITY;
+            }
+            let depart = self.machine.cpu.cycles;
+            while ((self.machine.cpu.cycles - depart) as f64) < self.cycles_dus
+                && debut.elapsed() < limite
+            {
                 if !matches!(self.machine.run_frame(), crate::emulator::StepResult::Ok(_)) {
                     break;
                 }
             }
+            let faits = (self.machine.cpu.cycles - depart) as f64;
+            self.cycles_dus = (self.cycles_dus - faits).max(0.0);
             self.historique.suivre(&self.machine);
+            // Sans cela l'interface ne se redessine qu'aux evenements, et
+            // l'animation de la console s'arrete des qu'on lache la souris.
+            ctx.request_repaint();
         }
         // La partie suit le jeu sur le disque : eteindre l'ordinateur ne coute
         // plus rien, la console retrouve son personnage au prochain lancement.
@@ -647,6 +698,15 @@ impl eframe::App for TamagotchiApp {
                         .show_value(false)
                         .text(""),
                 );
+                ui.label("Hauteur :");
+                for (nom, h) in [("/2", 0.5_f32), ("x1", 1.0), ("x2", 2.0), ("x4", 4.0)] {
+                    if ui
+                        .selectable_label((self.audio.hauteur - h).abs() < 0.01, nom)
+                        .clicked()
+                    {
+                        self.audio.hauteur = h;
+                    }
+                }
 
                 ui.separator();
 
@@ -777,14 +837,24 @@ impl eframe::App for TamagotchiApp {
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("Vitesse :").strong());
-                            for (nom, ms) in
-                                // Au dela de quarante millisecondes l'emulation
-                                // ne gagne presque plus rien et la fenetre cesse
-                                // de repondre : il n'y a pas de mode plus rapide.
-                                [("Pause", 0u64), ("Normale", 12), ("Rapide", 40)]
-                            {
-                                if ui.selectable_label(self.budget_ms == ms, nom).clicked() {
-                                    self.budget_ms = ms;
+                            // La console avance au temps reel par defaut, comme
+                            // la vraie. Les vitesses au dessus servent a faire
+                            // passer le temps, pas a jouer.
+                            for (nom, v) in [
+                                ("Pause", 0.0_f32),
+                                ("Temps reel", 1.0),
+                                ("x2", 2.0),
+                                ("x8", 8.0),
+                                ("Max", f32::INFINITY),
+                            ] {
+                                let choisi = if v.is_infinite() {
+                                    self.vitesse.is_infinite()
+                                } else {
+                                    (self.vitesse - v).abs() < 0.01
+                                };
+                                if ui.selectable_label(choisi, nom).clicked() {
+                                    self.vitesse = v;
+                                    self.cycles_dus = 0.0;
                                 }
                             }
                             if ui.button("Revenir en arriere").clicked() {

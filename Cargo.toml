@@ -14,3 +14,12 @@ rand = "0.8"
 directories = "5.0"
 byteorder = "1.5"
 rfd = "0.15"
+
+# Le coeur est un interpreteur : il passe son temps dans une poignee de
+# fonctions qui s'appellent des millions de fois par seconde. L'optimisation
+# entre modules et une seule unite de generation permettent de les fondre, ce
+# qui compte bien plus ici que le temps de compilation.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
