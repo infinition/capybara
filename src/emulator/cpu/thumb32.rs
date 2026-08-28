@@ -15,6 +15,19 @@ impl Thumb32 {
         periph: &mut Peripherals,
         nvic: &mut Nvic,
     ) -> StepResult {
+        // Aiguillage sur l'octet haut du premier demi mot. Les transferts, les
+        // acces multiples et le traitement de donnees a registre decale font a
+        // eux seuls la moitie du code long, et ils se trouvaient au bout d'une
+        // chaine de quinze tests de masque reparcourue a chaque instruction.
+        // Aucune forme situee plus haut dans la chaine ne partage leur octet
+        // haut : les sortir de la chaine ne change donc pas ce qui est decode.
+        match w1 >> 8 {
+            0xF8 | 0xF9 => return Self::exec_transfert(w1, w2, regs, bus, periph, nvic),
+            0xE8 | 0xE9 => return Self::exec_acces_multiple(w1, w2, regs, bus, periph, nvic),
+            0xEA | 0xEB => return Self::exec_donnees(w1, w2, regs, false),
+            _ => {}
+        }
+
         // 1. Branch with Link (BL / BLX): 1111 0 s imm10  11 j1 1 j2 imm11
         if (w1 & 0xF800) == 0xF000 && (w2 & 0xD000) == 0xD000 {
             let s = ((w1 >> 10) & 1) as u32;
@@ -311,91 +324,159 @@ impl Thumb32 {
             return StepResult::Ok(1);
         }
 
-        // 6. Traitement de donnees 32 bits, deux formes qui partagent le meme
-        //    champ d'operation sur 4 bits :
-        //      immediat modifie : 1111 0 i 0 oooo S nnnn, avec w2[15] = 0
-        //      registre decale  : 1110 101 oooo S nnnn
-        //    Le garde-fou w2[15] = 0 est indispensable : sans lui, les
+        // 6. Traitement de donnees a immediat modifie : 1111 0 i 0 oooo S nnnn.
+        //    La forme a registre decale, en 0xEAxx et 0xEBxx, est aiguillee en
+        //    tete. Le garde-fou w2[15] = 0 est indispensable : sans lui, les
         //    branchements conditionnels longs (w2[15] = 1) etaient executes ici.
-        let is_alu_imm = (w1 & 0xFA00) == 0xF000 && (w2 & 0x8000) == 0;
-        let is_alu_reg = (w1 & 0xFE00) == 0xEA00;
-        if is_alu_imm || is_alu_reg {
-            let s_flag = (w1 & 0x0010) != 0;
-            let rn = (w1 & 0xF) as u8;
-            let rd = ((w2 >> 8) & 0xF) as u8;
-            let op = (w1 >> 5) & 0xF;
-            // Rn = 0xF est le marqueur MOV / MVN : la source vaut 0, pas PC.
-            let val_n = if rn == 0xF { 0 } else { regs.get_reg(rn) };
-            let carry_in = regs.flag_c();
+        if (w1 & 0xFA00) == 0xF000 && (w2 & 0x8000) == 0 {
+            return Self::exec_donnees(w1, w2, regs, true);
+        }
 
-            // Les operations logiques prennent leur retenue de l'etage de decalage,
-            // les operations arithmetiques la produisent elles-memes.
-            let (val_op2, shifter_c) = if is_alu_imm {
-                let i = ((w1 >> 10) & 1) as u32;
-                let imm3 = ((w2 >> 12) & 7) as u32;
-                let imm8 = (w2 & 0xFF) as u32;
-                thumb_expand_imm_c((i << 11) | (imm3 << 8) | imm8, carry_in)
-            } else {
-                let rm = (w2 & 0xF) as u8;
-                let imm3 = ((w2 >> 12) & 0x7) as u32;
-                let imm2 = ((w2 >> 6) & 0x3) as u32;
-                let type_ = ((w2 >> 4) & 0x3) as u32;
-                shift_c(regs.get_reg(rm), (imm3 << 2) | imm2, type_, carry_in)
-            };
-
-            let mut c_out = shifter_c;
-            let mut v_out = regs.flag_v();
-            let res = match op {
-                0 => val_n & val_op2,  // AND / TST
-                1 => val_n & !val_op2, // BIC
-                2 => val_n | val_op2,  // ORR / MOV
-                3 => val_n | !val_op2, // ORN / MVN
-                4 => val_n ^ val_op2,  // EOR / TEQ
-                8 => {
-                    let (r, c, v) = add_with_carry(val_n, val_op2, false);
-                    c_out = c;
-                    v_out = v;
-                    r
-                } // ADD / CMN
-                10 => {
-                    let (r, c, v) = add_with_carry(val_n, val_op2, carry_in);
-                    c_out = c;
-                    v_out = v;
-                    r
-                } // ADC
-                11 => {
-                    let (r, c, v) = add_with_carry(val_n, !val_op2, carry_in);
-                    c_out = c;
-                    v_out = v;
-                    r
-                } // SBC
-                13 => {
-                    let (r, c, v) = add_with_carry(val_n, !val_op2, true);
-                    c_out = c;
-                    v_out = v;
-                    r
-                } // SUB / CMP
-                14 => {
-                    let (r, c, v) = add_with_carry(!val_n, val_op2, true);
-                    c_out = c;
-                    v_out = v;
-                    r
-                } // RSB
-                _ => return StepResult::Undefined(w1),
-            };
-
-            // TST, TEQ, CMN et CMP s'ecrivent avec Rd = PC et ne rangent rien.
-            if !(rd == 0xF && matches!(op, 0 | 4 | 8 | 13)) {
-                regs.set_reg(rd, res);
-            }
-            if s_flag {
-                regs.set_nz(res);
-                regs.set_flag_c(c_out);
-                regs.set_flag_v(v_out);
-            }
+        // 9. Data Barriers: DMB / DSB / ISB
+        if (w1 & 0xFFF0) == 0xF3B0 && (w2 & 0xFFF0) == 0x8F40 {
             return StepResult::Ok(1);
         }
 
+        // 10. MSR : 1111 0011 100 0 nnnn | 1000 10mm 0000 SYSm.
+        //     L'ancien test attrapait la plage MRS et inversait les deux sens,
+        //     si bien qu'un MSR PRIMASK n'etait pas decode du tout.
+        if (w1 & 0xFFF0) == 0xF380 && (w2 & 0xF000) == 0x8000 {
+            let rn = (w1 & 0xF) as u8;
+            let sysm = (w2 & 0xFF) as u8;
+            let val = regs.get_reg(rn);
+            match sysm {
+                // APSR et alias : seuls les drapeaux de condition sont ecrits.
+                0..=3 => regs.xpsr = (regs.xpsr & 0x07FF_FFFF) | (val & 0xF800_0000),
+                8 => regs.msp = val & !3,
+                9 => regs.psp = val & !3,
+                16 => regs.primask = val & 1,
+                17 | 18 => regs.basepri = val & 0xFF,
+                19 => regs.faultmask = val & 1,
+                20 => regs.control = val & 3,
+                _ => {}
+            }
+            return StepResult::Ok(2);
+        }
+
+        // 11. MRS : 1111 0011 1110 1111 | 1000 dddd 0000 SYSm.
+        if w1 == 0xF3EF && (w2 & 0xF000) == 0x8000 {
+            let rd = ((w2 >> 8) & 0xF) as u8;
+            let sysm = (w2 & 0xFF) as u8;
+            let val = match sysm {
+                0 => regs.xpsr & 0xF800_0000,                    // APSR
+                1 => regs.xpsr & (0xF800_0000 | 0x1FF),          // IAPSR
+                2 => regs.xpsr & (0xF800_0000 | 0x0100_0000),    // EAPSR
+                3 | 7 => regs.xpsr,                              // xPSR / IEPSR
+                5 => regs.xpsr & 0x1FF,                          // IPSR
+                6 => regs.xpsr & 0x0100_0000,                    // EPSR
+                8 => regs.msp,
+                9 => regs.psp,
+                16 => regs.primask,
+                17 | 18 => regs.basepri,
+                19 => regs.faultmask,
+                20 => regs.control,
+                _ => 0,
+            };
+            regs.set_reg(rd, val);
+            return StepResult::Ok(2);
+        }
+
+        // Rien n'a reconnu cet encodage. On le signale au lieu de l'executer comme
+        // un NOP : une instruction avalee en silence fausse tout ce qui suit.
+        StepResult::Undefined(w1)
+    }
+
+    /// Traitement de donnees 32 bits, deux formes qui partagent le meme champ
+    /// d'operation sur 4 bits :
+    ///   immediat modifie : 1111 0 i 0 oooo S nnnn, avec w2[15] = 0
+    ///   registre decale  : 1110 101 oooo S nnnn
+    fn exec_donnees(w1: u16, w2: u16, regs: &mut Registers, imm: bool) -> StepResult {
+        let s_flag = (w1 & 0x0010) != 0;
+        let rn = (w1 & 0xF) as u8;
+        let rd = ((w2 >> 8) & 0xF) as u8;
+        let op = (w1 >> 5) & 0xF;
+        // Rn = 0xF est le marqueur MOV / MVN : la source vaut 0, pas PC.
+        let val_n = if rn == 0xF { 0 } else { regs.get_reg(rn) };
+        let carry_in = regs.flag_c();
+
+        // Les operations logiques prennent leur retenue de l'etage de decalage,
+        // les operations arithmetiques la produisent elles-memes.
+        let (val_op2, shifter_c) = if imm {
+            let i = ((w1 >> 10) & 1) as u32;
+            let imm3 = ((w2 >> 12) & 7) as u32;
+            let imm8 = (w2 & 0xFF) as u32;
+            thumb_expand_imm_c((i << 11) | (imm3 << 8) | imm8, carry_in)
+        } else {
+            let rm = (w2 & 0xF) as u8;
+            let imm3 = ((w2 >> 12) & 0x7) as u32;
+            let imm2 = ((w2 >> 6) & 0x3) as u32;
+            let type_ = ((w2 >> 4) & 0x3) as u32;
+            shift_c(regs.get_reg(rm), (imm3 << 2) | imm2, type_, carry_in)
+        };
+
+        let mut c_out = shifter_c;
+        let mut v_out = regs.flag_v();
+        let res = match op {
+            0 => val_n & val_op2,  // AND / TST
+            1 => val_n & !val_op2, // BIC
+            2 => val_n | val_op2,  // ORR / MOV
+            3 => val_n | !val_op2, // ORN / MVN
+            4 => val_n ^ val_op2,  // EOR / TEQ
+            8 => {
+                let (r, c, v) = add_with_carry(val_n, val_op2, false);
+                c_out = c;
+                v_out = v;
+                r
+            } // ADD / CMN
+            10 => {
+                let (r, c, v) = add_with_carry(val_n, val_op2, carry_in);
+                c_out = c;
+                v_out = v;
+                r
+            } // ADC
+            11 => {
+                let (r, c, v) = add_with_carry(val_n, !val_op2, carry_in);
+                c_out = c;
+                v_out = v;
+                r
+            } // SBC
+            13 => {
+                let (r, c, v) = add_with_carry(val_n, !val_op2, true);
+                c_out = c;
+                v_out = v;
+                r
+            } // SUB / CMP
+            14 => {
+                let (r, c, v) = add_with_carry(!val_n, val_op2, true);
+                c_out = c;
+                v_out = v;
+                r
+            } // RSB
+            _ => return StepResult::Undefined(w1),
+        };
+
+        // TST, TEQ, CMN et CMP s'ecrivent avec Rd = PC et ne rangent rien.
+        if !(rd == 0xF && matches!(op, 0 | 4 | 8 | 13)) {
+            regs.set_reg(rd, res);
+        }
+        if s_flag {
+            regs.set_nz(res);
+            regs.set_flag_c(c_out);
+            regs.set_flag_v(v_out);
+        }
+        return StepResult::Ok(1);
+    
+    }
+
+    /// Transferts simples 32 bits : LDR et STR, octet, demi mot et mot.
+    fn exec_transfert(
+        w1: u16,
+        w2: u16,
+        regs: &mut Registers,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+        nvic: &mut Nvic,
+    ) -> StepResult {
         // 7. 32-bit Single Data Transfer: LDR / STR (Byte, Halfword, Word)
         if (w1 & 0xFE00) == 0xF800 || (w1 & 0xFE00) == 0xF900 {
             let is_ldr = (w1 & 0x0010) != 0;
@@ -470,7 +551,19 @@ impl Thumb32 {
             }
             return StepResult::Ok(2);
         }
+        StepResult::Undefined(w1)
+    }
 
+    /// Groupe 0xE8xx et 0xE9xx : branchement par table, LDRD et STRD, et les
+    /// acces multiples.
+    fn exec_acces_multiple(
+        w1: u16,
+        w2: u16,
+        regs: &mut Registers,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+        nvic: &mut Nvic,
+    ) -> StepResult {
         // 7b. Table branch TBB / TBH (w1 = 0xE8DF).
         //     TBB [Rn, Rm]      : cible = PC + 2 * octet[Rn + Rm].
         //     TBH [Rn, Rm, LSL#1]: cible = PC + 2 * demi-mot[Rn + 2*Rm].
@@ -585,58 +678,6 @@ impl Thumb32 {
             }
             return StepResult::Ok(3);
         }
-
-        // 9. Data Barriers: DMB / DSB / ISB
-        if (w1 & 0xFFF0) == 0xF3B0 && (w2 & 0xFFF0) == 0x8F40 {
-            return StepResult::Ok(1);
-        }
-
-        // 10. MSR : 1111 0011 100 0 nnnn | 1000 10mm 0000 SYSm.
-        //     L'ancien test attrapait la plage MRS et inversait les deux sens,
-        //     si bien qu'un MSR PRIMASK n'etait pas decode du tout.
-        if (w1 & 0xFFF0) == 0xF380 && (w2 & 0xF000) == 0x8000 {
-            let rn = (w1 & 0xF) as u8;
-            let sysm = (w2 & 0xFF) as u8;
-            let val = regs.get_reg(rn);
-            match sysm {
-                // APSR et alias : seuls les drapeaux de condition sont ecrits.
-                0..=3 => regs.xpsr = (regs.xpsr & 0x07FF_FFFF) | (val & 0xF800_0000),
-                8 => regs.msp = val & !3,
-                9 => regs.psp = val & !3,
-                16 => regs.primask = val & 1,
-                17 | 18 => regs.basepri = val & 0xFF,
-                19 => regs.faultmask = val & 1,
-                20 => regs.control = val & 3,
-                _ => {}
-            }
-            return StepResult::Ok(2);
-        }
-
-        // 11. MRS : 1111 0011 1110 1111 | 1000 dddd 0000 SYSm.
-        if w1 == 0xF3EF && (w2 & 0xF000) == 0x8000 {
-            let rd = ((w2 >> 8) & 0xF) as u8;
-            let sysm = (w2 & 0xFF) as u8;
-            let val = match sysm {
-                0 => regs.xpsr & 0xF800_0000,                    // APSR
-                1 => regs.xpsr & (0xF800_0000 | 0x1FF),          // IAPSR
-                2 => regs.xpsr & (0xF800_0000 | 0x0100_0000),    // EAPSR
-                3 | 7 => regs.xpsr,                              // xPSR / IEPSR
-                5 => regs.xpsr & 0x1FF,                          // IPSR
-                6 => regs.xpsr & 0x0100_0000,                    // EPSR
-                8 => regs.msp,
-                9 => regs.psp,
-                16 => regs.primask,
-                17 | 18 => regs.basepri,
-                19 => regs.faultmask,
-                20 => regs.control,
-                _ => 0,
-            };
-            regs.set_reg(rd, val);
-            return StepResult::Ok(2);
-        }
-
-        // Rien n'a reconnu cet encodage. On le signale au lieu de l'executer comme
-        // un NOP : une instruction avalee en silence fausse tout ce qui suit.
         StepResult::Undefined(w1)
     }
 }
