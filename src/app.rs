@@ -138,9 +138,11 @@ impl TamagotchiApp {
             Ok(true) => {
                 // La flash porte maintenant la partie : le firmware doit la
                 // relire depuis son demarrage, sinon il continue sur l'etat
-                // vide qu'il avait deja en memoire.
+                // vide qu'il avait deja en memoire. On ne remet en marche que ce
+                // qui tournait deja : un dump non demarrable doit le rester.
+                let tournait = self.machine.is_running;
                 self.machine.reset();
-                self.machine.is_running = true;
+                self.machine.is_running = tournait;
                 self.historique.vider();
                 self.status_msg = Some(format!("Partie {} chargee", nom));
             }
