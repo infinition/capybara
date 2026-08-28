@@ -437,6 +437,32 @@ impl MemoryBus {
         }
     }
 
+    /// Recuperation d'instruction : le demi mot vise et le suivant, en une
+    /// seule resolution de region.
+    ///
+    /// Le coeur lisait un demi mot par appel, deux pour une instruction longue,
+    /// et un tiers du code en est fait. Chaque appel refaisait le decodage
+    /// d'adresse et, dans la fenetre XIP, le calcul de l'offset flash. Le code
+    /// ne vit qu'en PRAM et dans cette fenetre : on y prend quatre octets d'un
+    /// coup. Le second demi mot est lu meme quand l'instruction est courte, ce
+    /// qui ne coute rien et n'a aucun effet de bord dans ces deux memoires.
+    #[inline(always)]
+    pub fn fetch_pair(&self, addr: u32, periph: &Peripherals) -> Option<(u16, u16)> {
+        let quatre: &[u8] = if addr < map::PRAM_END {
+            let i = addr as usize;
+            self.pram.data.get(i..i + 4)?
+        } else if (map::ICACHE_BASE..map::ICACHE_END).contains(&addr) {
+            let o = periph.xip.flash_offset(addr - map::ICACHE_BASE);
+            self.flash.data.get(o..o + 4)?
+        } else {
+            return None;
+        };
+        Some((
+            u16::from_le_bytes([quatre[0], quatre[1]]),
+            u16::from_le_bytes([quatre[2], quatre[3]]),
+        ))
+    }
+
     pub fn read_u16(&mut self, addr: u32, periph: &mut Peripherals, nvic: &Nvic) -> u16 {
         // Chemin rapide de la recuperation d'instruction. Le code ne vit qu'en
         // PRAM et dans la fenetre XIP, et le coeur y lit un demi-mot avant

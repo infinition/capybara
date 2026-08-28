@@ -104,15 +104,31 @@ impl Cpu {
 
         // La trace MMIO attribue chaque acces a l'instruction qui le provoque.
         bus.current_pc = pc;
-        let w1 = bus.read_u16(pc, periph, &self.nvic);
-        self.regs.pc = self.regs.pc.wrapping_add(2);
+        // Les deux demi mots viennent d'une seule resolution de region. Le
+        // chemin general reste la pour le code qui ne serait ni en PRAM ni dans
+        // la fenetre XIP, ce qui n'arrive pas en fonctionnement normal.
+        let (w1, w2_lu) = match bus.fetch_pair(pc, periph) {
+            Some(paire) => paire,
+            None => {
+                let premier = bus.read_u16(pc, periph, &self.nvic);
+                // Le second demi mot n'est lu que s'il existe : hors des deux
+                // memoires de code, une lecture de plus pourrait tomber sur un
+                // registre et fausser la trace.
+                let second = if Self::est_longue(premier) {
+                    bus.read_u16(pc.wrapping_add(2), periph, &self.nvic)
+                } else {
+                    0
+                };
+                (premier, second)
+            }
+        };
 
-        let is_32 = (w1 & 0xF800) == 0xE800 || (w1 & 0xF800) == 0xF000 || (w1 & 0xF800) == 0xF800;
+        let is_32 = Self::est_longue(w1);
         let w2 = if is_32 {
-            let w = bus.read_u16(self.regs.pc, periph, &self.nvic);
-            self.regs.pc = self.regs.pc.wrapping_add(2);
-            w
+            self.regs.pc = self.regs.pc.wrapping_add(4);
+            w2_lu
         } else {
+            self.regs.pc = self.regs.pc.wrapping_add(2);
             0
         };
 
@@ -161,6 +177,12 @@ impl Cpu {
             }
             StepResult::Undefined(op) => StepResult::Undefined(op),
         }
+    }
+
+    /// Vrai pour le premier demi mot d'une instruction de 32 bits.
+    #[inline(always)]
+    fn est_longue(w: u16) -> bool {
+        (w & 0xF800) == 0xE800 || (w & 0xF800) == 0xF000 || (w & 0xF800) == 0xF800
     }
 
     /// Grain d'entretien des peripheriques, en cycles.
