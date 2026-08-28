@@ -220,8 +220,8 @@ footer p{max-width:70ch}
   </dl>
 
   <div class="note win" style="margin-top:26px">
-    <p><strong>Révision 5. L'émulateur joue, et il tient le rythme.</strong> Mise en route complète, boutons et molette, horloge qui avance, œuf qui éclot, nourrissage, QR code secret, veille et réveil, sauvegardes persistantes qui survivent à l'extinction du PC, vieillissement en temps réel, coque fidèle suivant l'édition, et le son que la console compose. 75 commits, 16 415 lignes de Rust, 22 sondes, 73 tests. La vitesse était le dernier défaut visible ; elle est passée à 1,40 fois le temps de la console, et le gouverneur la retient désormais à 1,00. Ce qui reste ouvert ne se voit pas à l'écran.</p>
-    <p>Cette révision <strong>ajoute sans retirer</strong>. Les constats des révisions précédentes sont conservés tels quels, y compris ceux que la suite a démentis, avec la mention de ce qui les a remplacés. Un dossier de rétro-ingénierie vaut autant par ses fausses pistes datées que par son état final.</p>
+    <p><strong>Révision 5.</strong> Mise en route complète, boutons et molette, horloge qui avance, œuf qui éclot, nourrissage, QR code secret, veille et réveil, sauvegardes persistantes qui survivent à l'extinction du PC, vieillissement en temps réel, coque fidèle suivant l'édition, et le son que la console compose. 16 415 lignes de Rust, 22 sondes, 73 tests. La vitesse était le dernier défaut visible ; elle est passée à 1,40 fois le temps de la console, et le gouverneur la retient désormais à 1,00. Ce qui reste ouvert ne se voit pas à l'écran.</p>
+    <p>Je n'efface rien quand je me suis trompé. Les vieux constats restent où ils sont, et j'écris à côté ce qui les a remplacés. Ça m'a resservi plusieurs fois : quand quelque chose recasse, je retrouve pourquoi j'avais cru l'inverse, et je gagne les deux jours que j'avais déjà perdus.</p>
     <p>Six sections sont apparues depuis la révision 3, à mesure que le firmware révélait des morceaux dont je ne soupçonnais pas l'existence : les démentis de la carte périphériques, le catalogue des défauts de cœur, le temps et la veille, le moteur audio, les sauvegardes, et la vitesse.</p>
   </div>
 
@@ -261,13 +261,13 @@ footer p{max-width:70ch}
   <!-- ===== JOURNAL ===== -->
   <section id="journal">
     <div class="sec-head"><span class="sec-code">LOG</span><h2>Journal des avancées</h2></div>
-    <p class="sec-intro">Tout est sur la branche <code>feat/real-firmware-boot</code>. Je liste du plus récent au plus ancien. À ce jour, 75 commits, 16 415 lignes de Rust, 22 sondes et 73 tests.</p>
+    <p class="sec-intro">Tout est sur la branche <code>feat/real-firmware-boot</code>. Je liste du plus récent au plus ancien. À ce jour, 16 415 lignes de Rust, 22 sondes et 73 tests.</p>
 
     <h3>Depuis la révision 4</h3>
-    <p>Une seule journée, le 28 août 2026, mais elle ferme les deux derniers points ouverts.</p>
+    <p>Le 28 août 2026. Deux chantiers, la vitesse et la clé.</p>
     <div class="log">
-      <div class="log-row"><code>Vitesse</code><div><b>L'émulation passe devant la console</b><span>1,40 fois le temps réel sur <code>step</code>, 1,37 sur <code>run_frame</code>. Deux tests posés dans le chemin chaud, dont un hachage complet par instruction pour une table de points d'arrêt vide. La sonde ne les voyait pas : elle mesurait la boucle que l'interface n'appelle pas.</span></div></div>
-      <div class="log-row"><code>Sécurité</code><div><b>La clé sort de l'historique</b><span>Trois passes, dont deux qui ont échoué en silence. 75 commits réécrits, zéro occurrence restante, 99 fichiers suivis, rien de perdu, tests verts. Les trois pièges sont en section AUD, et ils valent au-delà de ce projet.</span></div></div>
+      <div class="log-row"><code>Vitesse</code><div><b>Vitesse</b><span>1,40 fois le temps réel sur <code>step</code>, 1,37 sur <code>run_frame</code>. Deux tests posés dans le chemin chaud, dont un hachage complet par instruction pour une table de points d'arrêt vide. La sonde ne les voyait pas : elle mesurait la boucle que l'interface n'appelle pas.</span></div></div>
+      <div class="log-row"><code>Sécurité</code><div><b>La clé sort de l'historique</b><span>Trois passes, dont deux qui ont échoué en silence. Tout l'historique réécrit, zéro occurrence restante, 99 fichiers suivis, tests verts. Les trois pièges sont en section AUD.</span></div></div>
     </div>
 
     <h3>Depuis la révision 3</h3>
@@ -464,7 +464,7 @@ footer p{max-width:70ch}
   <!-- ===== PERIPHERIQUES ===== -->
   <section id="peripheriques">
     <div class="sec-head"><span class="sec-code">PER</span><h2>Démentis matériels</h2></div>
-    <p class="sec-intro">Je laisse la section précédente telle que je l'avais écrite, avec la table du datasheet. Faire tourner le vrai firmware l'a démentie sur cinq pages. Je les corrige ici plutôt que de réécrire au-dessus. Savoir qu'une étiquette officielle peut mentir vaut mieux que de faire disparaître l'erreur.</p>
+    <p class="sec-intro">Je laisse la section précédente telle que je l'avais écrite, avec la table du datasheet. Faire tourner le vrai firmware l'a démentie sur cinq pages. Je corrige ici plutôt que par-dessus. J'ai passé des jours à faire confiance à une étiquette officielle, je préfère garder la trace de ce que ça coûte.</p>
 
     <div class="note warn">
       <p><strong>Ne jamais croire une étiquette sur parole.</strong> Le datasheet SNC7340 nomme des pages que le SNC73410 utilise autrement. Cinq attributions se sont révélées fausses à l'usage, et chacune a coûté du temps d'enquête avant d'être retournée.</p>
@@ -591,7 +591,7 @@ footer p{max-width:70ch}
   <!-- ===== CRYPTO ===== -->
   <section id="crypto">
     <div class="sec-head"><span class="sec-code">CRY</span><h2>Déchiffrement</h2></div>
-    <p class="sec-intro">C'est réglé, et réglé seul. Aucun outil extérieur n'a déchiffré ce firmware, aucune bibliothèque de cryptographie n'a servi. La seule ressource extérieure que j'ai utilisée est la documentation publique du sens des drapeaux d'en-tête.</p>
+    <p class="sec-intro">Le déchiffrement marche. Je l'ai écrit sans bibliothèque de cryptographie et sans outil tiers ; la seule chose que j'ai reprise ailleurs, c'est la documentation publique du sens des drapeaux d'en-tête.</p>
 
     <div class="note win">
       <p><strong>Chaîne de déchiffrement entièrement autonome.</strong> AES-128 et AES-256 sont écrits à la main dans <code>src/emulator/aes.rs</code> : S-box générée au premier appel, multiplication dans GF(2⁸), expansion de clé. Le format de load table, la dérivation d'IV et les deux modes de chiffrement sont dans <code>src/emulator/sonix.rs</code>. Le <code>Cargo.toml</code> ne déclare aucune crate de cryptographie, et rien dans le code ne lance de processus externe. Le déchiffrement se fait en mémoire au chargement du dump.</p>
@@ -776,10 +776,10 @@ cargo run --example boot_probe -- dump.bin xxxxxxxx 2000000</code></pre>
   <!-- ===== COEUR ===== -->
   <section id="coeur">
     <div class="sec-head"><span class="sec-code">CPU</span><h2>Défauts de cœur</h2></div>
-    <p class="sec-intro">Seize défauts de décodage ARMv7-M, tous trouvés en faisant tourner du vrai code. C'est la partie la plus réutilisable de ce dossier. Ces pièges attendent quiconque écrit un interpréteur Thumb-2, et aucun ne se voit sur du code de test écrit à la main.</p>
+    <p class="sec-intro">Seize défauts de décodage ARMv7-M, tous trouvés en faisant tourner du vrai code. Si vous écrivez un interpréteur Thumb-2, c'est la section à lire : aucun de ces pièges ne se voit sur du code de test écrit à la main.</p>
 
     <div class="note warn">
-      <p><strong>La leçon.</strong> Les bugs les plus coûteux étaient dans le cœur, pas dans les périphériques. Un décodeur faux ne plante pas : il produit un état plausible et faux, qui envoie l'enquête sur un périphérique innocent. Plusieurs modèles matériels ont été écrits pour compenser un défaut de cœur, puis jetés.</p>
+      <p><strong>Ce que ça m'a coûté.</strong> Mes pires bugs étaient dans le cœur, pas dans les périphériques. Un décodeur faux ne plante pas, il produit un état plausible et faux, et l'enquête part sur un périphérique innocent. J'ai écrit plusieurs modèles matériels pour compenser un défaut de cœur, avant de les jeter.</p>
     </div>
 
     <h3>Collisions de masques</h3>
@@ -1060,7 +1060,7 @@ heure = (secondes / 3600) % 24, minute = (secondes / 60) % 60</code></pre>
     </ul>
 
     <div class="note">
-      <p><strong>Les deux derniers ont mis des mois à se voir, et pour une raison bête.</strong> La sonde de vitesse mesurait <code>step</code>. L'interface, elle, appelle <code>run_frame</code>. Les deux freins étaient dans <code>run_frame</code>, donc invisibles à l'instrument. La sonde donne maintenant les deux boucles. La leçon vaut au-delà de ce projet : mesurer le chemin que le programme emprunte vraiment, pas celui qu'il est commode d'instrumenter.</p>
+      <p><strong>Les deux derniers ont mis des mois à se voir, et pour une raison bête.</strong> La sonde de vitesse mesurait <code>step</code>. L'interface, elle, appelle <code>run_frame</code>. Les deux freins étaient dans <code>run_frame</code>, donc invisibles à l'instrument. La sonde donne les deux boucles maintenant. J'ai passé des mois à optimiser en regardant la mauvaise.</p>
     </div>
 
     <h3>Ce qui n'a rien donné, pour ne pas le refaire</h3>
@@ -1267,22 +1267,22 @@ sha256sum flash.bin
       <li><strong>Réécrire.</strong> <code>git filter-branch --tree-filter</code> sur <code>--all</code>, avec un script qui remplace la clé par <code>&lt;CLE&gt;</code> et les chemins personnels par les variables. C'est ici que les choses se sont mal passées, deux fois, et les trois pièges ci-dessous disent pourquoi.</li>
     </ol>
 
-    <p>Il a fallu trois passes. Les deux premières ont échoué, et en silence, ce qui est la partie intéressante.</p>
+    <p>Il a fallu trois passes. Les deux premières ont échoué sans le dire.</p>
 
     <div class="note">
-      <p><strong>Piège 1, celui qui fait croire à un échec alors que tout va bien.</strong> Juste après la réécriture, <code>git log --all -S"&lt;la clé&gt;"</code> renvoyait encore six commits. La purge avait pourtant marché : <code>filter-branch</code> range les anciennes références sous <code>refs/original/</code>, et <code>--all</code> les inclut. Un balayage de tous les blobs, lui, ne trouvait déjà plus rien. Il faut supprimer <code>refs/original/</code>, faire expirer le reflog et passer <code>git gc --prune=now</code> pour que la mesure dise la vérité.</p>
+      <p><strong>Premier piège, la fausse alerte.</strong> Juste après la réécriture, <code>git log --all -S"&lt;la clé&gt;"</code> renvoyait encore six commits. La purge avait pourtant marché : <code>filter-branch</code> range les anciennes références sous <code>refs/original/</code>, et <code>--all</code> les inclut. Un balayage de tous les blobs, lui, ne trouvait déjà plus rien. Il faut supprimer <code>refs/original/</code>, faire expirer le reflog et passer <code>git gc --prune=now</code> pour que la mesure dise la vérité.</p>
     </div>
 
     <div class="note">
-      <p><strong>Piège 2, celui qui fait croire à un succès alors que rien n'a bougé.</strong> Le script de purge ne balayait qu'une liste d'extensions, <code>.md .rs .toml .json .txt .html .yml</code>. Un <code>mesurer.ps1</code> écrit le lendemain portait la clé et deux chemins absolus : <code>.ps1</code> n'était pas dans la liste, le fichier n'a jamais été ouvert, et la purge s'est déclarée satisfaite. La version qui a marché ne filtre plus sur l'extension du tout : elle ouvre tout et laisse <code>grep -I</code> écarter le binaire.</p>
+      <p><strong>Deuxième, le fichier jamais ouvert.</strong> Le script de purge ne balayait qu'une liste d'extensions, <code>.md .rs .toml .json .txt .html .yml</code>. Un <code>mesurer.ps1</code> écrit après coup, le même jour, portait la clé et deux chemins absolus : <code>.ps1</code> n'était pas dans la liste, le fichier n'a jamais été ouvert, et la purge s'est déclarée satisfaite. La version qui a marché ne filtre plus sur l'extension du tout : elle ouvre tout et laisse <code>grep -I</code> écarter le binaire.</p>
     </div>
 
     <div class="note">
-      <p><strong>Piège 3, le plus fourbe, parce qu'il est muet.</strong> Les chemins personnels ont résisté à deux purges complètes. La raison tient dans une expression : <code>s|C:\\Users\\infinition\\Downloads|…|</code> ne remplace rien dans ce sed, alors que <code>s|C:[\\/]Users[\\/]infinition[\\/]Downloads|…|</code> remplace. Une substitution qui ne matche pas n'est pas une erreur pour sed : il ne dit rien, sort en code 0, et <code>filter-branch</code> réécrit consciencieusement les commits à l'identique. La clé, elle, partait bien à chaque fois, ce qui rendait la purge crédible.</p>
-      <p><strong>La leçon générale :</strong> ne jamais croire une purge sur ce qu'elle affiche. La seule vérification qui vaut est un balayage de tous les blobs atteignables, reflog expiré et <code>gc</code> passé, avec un motif écrit indépendamment de celui du script de purge. Si le motif de vérification est copié depuis le script, les deux partagent le même bug et se confirment l'un l'autre.</p>
+      <p><strong>Troisième, la substitution muette.</strong> Les chemins personnels ont résisté à deux purges complètes. La raison tient dans une expression : <code>s|C:\\Users\\infinition\\Downloads|…|</code> ne remplace rien dans ce sed, alors que <code>s|C:[\\/]Users[\\/]infinition[\\/]Downloads|…|</code> remplace. Une substitution qui ne matche pas n'est pas une erreur pour sed : il ne dit rien, sort en code 0, et <code>filter-branch</code> réécrit consciencieusement les commits à l'identique. La clé, elle, partait bien à chaque fois, ce qui rendait la purge crédible.</p>
+      <p><strong>Ce que j'en retiens.</strong> Je ne crois plus une purge sur ce qu'elle affiche. Je rebalaie tous les blobs atteignables, reflog expiré et <code>gc</code> passé, avec un motif que je réécris à la main. La première fois j'avais copié le motif depuis le script de purge : les deux avaient le même bug et se confirmaient l'un l'autre.</p>
     </div>
 
-    <p>Résultat après la troisième passe : 75 commits, 99 fichiers suivis, rien de perdu, les tests verts, et zéro occurrence de la clé comme des chemins sur les six écritures possibles. Le seul <code>infinition</code> qui subsiste est l'identifiant d'organisation de l'application, dans <code>ProjectDirs::from("com", "infinition", …)</code>, qui n'est pas un chemin personnel mais le nom du dossier de configuration.</p>
+    <p>Résultat après la troisième passe : 99 fichiers suivis, rien de perdu, les tests verts, et zéro occurrence de la clé comme des chemins sur les six écritures possibles. Le seul <code>infinition</code> qui subsiste est l'identifiant d'organisation de l'application, dans <code>ProjectDirs::from("com", "infinition", …)</code>, qui n'est pas un chemin personnel mais le nom du dossier de configuration.</p>
 
     <p>Le fichier de clé local est recréé après coup, hors suivi. <code>.gitignore</code> ne portait toujours pas sa règle au moment de la première purge, et un <code>git add -A</code> l'avait repris dans un commit ultérieur. La règle y est maintenant, avec les dumps, les instantanés et les sauvegardes.</p>
 
@@ -1340,7 +1340,7 @@ sha256sum flash.bin
     </div>
 
     <h3>Feuille de route de la révision 3, pour mémoire</h3>
-    <p class="sec-intro">Je l'avais réordonnée à l'époque. Les phases 1 à 3 de la révision 1 étaient franchies, et l'arbitrage sur Unicorn s'est tranché de lui-même : mon décodeur a tenu, il fait tourner du vrai firmware. Le pari s'est confirmé.</p>
+    <p class="sec-intro">Je l'avais réordonnée à l'époque. Les phases 1 à 3 de la révision 1 étaient franchies, et la question de passer à Unicorn ne s'est jamais reposée : mon décodeur fait tourner le vrai firmware.</p>
 
     <div class="stack">
       <div class="phase is-done">
@@ -1451,7 +1451,7 @@ sha256sum flash.bin
   </section>
 
   <footer>
-    <p>Révision 5, compilée le 28 août 2026 à partir de sources publiques et de l'état du dépôt <code>tamagotchi-paradise-rs</code>, branche <code>feat/real-firmware-boot</code>, 75 commits, 16 415 lignes. Le document est cumulatif : les révisions précédentes sont conservées, y compris leurs constats démentis, avec la mention de ce qui les a remplacés. Aucun binaire propriétaire, aucune clé de puce et aucun secret n'y sont reproduits. Les procédures d'extraction décrites s'appliquent à un appareil dont vous êtes propriétaire.</p>
+    <p>Révision 5, compilée le 28 août 2026 à partir de sources publiques et de l'état du dépôt <code>tamagotchi-paradise-rs</code>, branche <code>feat/real-firmware-boot</code>, 16 415 lignes de Rust. Le document est cumulatif : les révisions précédentes sont conservées, y compris leurs constats démentis, avec la mention de ce qui les a remplacés. Aucun binaire propriétaire, aucune clé de puce et aucun secret n'y sont reproduits. Les procédures d'extraction décrites s'appliquent à un appareil dont vous êtes propriétaire.</p>
     <p>Tamagotchi et Tamagotchi Paradise sont des marques de Bandai. Ce document n'est ni affilié ni approuvé par Bandai.</p>
   </footer>
 

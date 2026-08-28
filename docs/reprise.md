@@ -105,7 +105,7 @@ L'historique a ete reecrit le 28 aout 2026. Ni la cle ni les chemins personnels
 n'apparaissent dans un seul commit. Ne pas defaire ce travail : un `git add -A`
 suffit a tout remettre, et il a fallu trois passes pour en sortir.
 
-Trois pieges y ont coute la journee, et ils ne sont pas propres a ce projet.
+Trois pieges m'ont coute la journee.
 
 1. **`git log --all -S` ment juste apres une reecriture.** `filter-branch` range
    les anciennes references sous `refs/original/`, et `--all` les inclut. Il faut
@@ -120,10 +120,10 @@ Trois pieges y ont coute la journee, et ils ne sont pas propres a ce projet.
    une erreur : sed ne dit rien et sort en code 0. Les chemins ont donc survecu a
    deux purges completes qui se declaraient reussies.
 
-**La regle a retenir : ne jamais croire une purge sur ce qu'elle affiche.** La
-seule verification qui vaut est un balayage de tous les blobs atteignables, avec
-un motif ecrit independamment de celui du script de purge. Un motif copie depuis
-le script partage son bug et le confirme.
+Je ne crois plus une purge sur ce qu'elle affiche. Je rebalaie tous les blobs
+atteignables, avec un motif que je reecris a la main. La premiere fois j'avais
+copie le motif depuis le script de purge : les deux avaient le meme bug et se
+confirmaient l'un l'autre.
 
 Le controle, a repasser apres toute manipulation d'historique :
 

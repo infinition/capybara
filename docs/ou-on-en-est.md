@@ -317,9 +317,8 @@ l'ordre :
   une fois par mise en veille et etait appele des millions de fois par seconde.
 
 Les deux derniers ont mis longtemps a se voir parce que `vitesse_probe` ne
-mesurait que `step`, que l'interface n'appelle jamais. Elle mesure maintenant les
-deux boucles, et c'est la lecon a retenir : **mesurer le chemin que le programme
-emprunte vraiment, pas celui qu'il est commode d'instrumenter.**
+mesurait que `step`, que l'interface n'appelle jamais. J'ai passe des mois a
+optimiser en regardant la mauvaise boucle. Elle mesure les deux maintenant.
 
 Ce qui n'a rien donne, pour ne pas le refaire : les chemins rapides en 16 bits,
 la recopie de trame en bloc, `target-cpu` adapte a la machine, et remonter les

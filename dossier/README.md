@@ -41,12 +41,10 @@ releve materiel, `reprise.md` pour reprendre le travail.
 
 ## Le document est cumulatif
 
-Chaque revision ajoute sans retirer, y compris les constats que la suite a
-dementis, avec la mention de ce qui les a remplaces. Un dossier de
-retro-ingenierie vaut autant par ses fausses pistes datees que par son etat
-final. C'est pour ca que la section des dementis de la carte peripheriques
-existe : cinq etiquettes du datasheet se sont revelees fausses, et savoir qu'une
-etiquette officielle peut mentir vaut mieux que de faire disparaitre l'erreur.
+Je n'efface rien quand je me suis trompe. Les vieux constats restent ou ils
+sont, et j'ecris a cote ce qui les a remplaces. C'est pour ca que la section des
+dementis de la carte peripheriques existe : cinq etiquettes du datasheet se sont
+revelees fausses, et j'ai passe des jours a les croire. Autant que ca serve.
 
 ## Ce que le dossier n'inclut pas
 
