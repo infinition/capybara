@@ -31,6 +31,13 @@ pub struct Instantane {
     pub periph: Peripherals,
     pub console: String,
     pub is_running: bool,
+    /// Dump de flash d'ou vient cet etat.
+    ///
+    /// Un instantane ne porte que les pages de flash modifiees : il ne veut
+    /// rien dire sans son firmware. Le retenir permet de le recharger tout seul
+    /// au lieu d'obliger a le faire d'abord a la main.
+    #[serde(default)]
+    pub firmware: String,
 }
 
 impl Machine {
@@ -55,6 +62,7 @@ impl Machine {
             periph: self.periph.clone(),
             console: self.console.clone(),
             is_running: self.is_running,
+            firmware: self.firmware_path.clone().unwrap_or_default(),
         }
     }
 

@@ -81,7 +81,7 @@ impl TamagotchiApp {
             flash_inspector: FlashInspector::new(),
             active_modal: ActiveModal::None,
             disasm_view_addr: 0x6001_1000,
-            budget_ms: 12,
+            budget_ms: 40,
             maintenus: std::collections::HashSet::new(),
             tenus_distants: std::collections::HashSet::new(),
             appuis: std::collections::HashMap::new(),
@@ -232,13 +232,43 @@ impl TamagotchiApp {
                 let cycles = etat.cycles;
                 self.machine.restaurer(&etat);
                 self.appuis.clear();
+                self.maintenus.clear();
+                self.tenus_distants.clear();
                 self.phases_encodeur.clear();
+                self.debit_depart = (self.machine.cpu.cycles, std::time::Instant::now());
                 self.status_msg = Some(format!("Retour a {} pas executes.", cycles));
             }
             None => {
                 self.status_msg = Some("Aucun instantane a restaurer.".to_string());
             }
         }
+    }
+
+    /// Relit un instantane et remet la machine dedans.
+    ///
+    /// Un instantane ne porte que les pages de flash modifiees : il faut son
+    /// firmware sous les pieds. On le recharge quand ce n'est pas deja celui en
+    /// place, sans quoi la machine repartirait sur une flash vide.
+    fn restaurer_fichier(&mut self, chemin: &std::path::Path) -> String {
+        let etat = match crate::emulator::etat::Instantane::lire(chemin) {
+            Ok(e) => e,
+            Err(e) => return format!("Lecture impossible : {}", e),
+        };
+        if !etat.firmware.is_empty() && etat.firmware != self.load_path_input {
+            self.load_firmware(std::path::PathBuf::from(etat.firmware.clone()));
+        }
+        if self.load_path_input.is_empty() {
+            return "Charge d'abord le dump de flash correspondant.".to_string();
+        }
+        self.machine.restaurer(&etat);
+        self.appuis.clear();
+        self.maintenus.clear();
+        self.tenus_distants.clear();
+        self.phases_encodeur.clear();
+        // Le compteur de pas vient de sauter : repartir de la remet le debit
+        // d'accord avec la realite au lieu d'afficher un chiffre absurde.
+        self.debit_depart = (self.machine.cpu.cycles, std::time::Instant::now());
+        format!("Etat restaure, {} pas executes.", etat.cycles)
     }
 
     /// Publie l'image et le diagnostic pour le serveur local.
@@ -380,21 +410,8 @@ impl eframe::App for TamagotchiApp {
                     });
                 }
                 crate::web::Commande::ChargerEtat(chemin) => {
-                    self.status_msg = Some(
-                        match crate::emulator::etat::Instantane::lire(std::path::Path::new(
-                            &chemin,
-                        )) {
-                            Ok(etat) => {
-                                self.machine.restaurer(&etat);
-                                self.appuis.clear();
-                                self.maintenus.clear();
-                                self.tenus_distants.clear();
-                                self.phases_encodeur.clear();
-                                format!("Etat restaure, {} pas executes.", etat.cycles)
-                            }
-                            Err(e) => format!("Lecture impossible : {}", e),
-                        },
-                    );
+                    self.status_msg =
+                        Some(self.restaurer_fichier(std::path::Path::new(&chemin)));
                 }
             }
         }
@@ -521,7 +538,10 @@ impl eframe::App for TamagotchiApp {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("Vitesse :").strong());
                             for (nom, ms) in
-                                [("Pause", 0u64), ("Normale", 12), ("Rapide", 40), ("Turbo", 150)]
+                                // Au dela de quarante millisecondes l'emulation
+                                // ne gagne presque plus rien et la fenetre cesse
+                                // de repondre : il n'y a pas de mode plus rapide.
+                                [("Pause", 0u64), ("Normale", 12), ("Rapide", 40)]
                             {
                                 if ui.selectable_label(self.budget_ms == ms, nom).clicked() {
                                     self.budget_ms = ms;
@@ -556,17 +576,7 @@ impl eframe::App for TamagotchiApp {
                                     .add_filter("Etat de l'emulateur (*.tamastate)", &["tamastate"])
                                     .pick_file()
                                 {
-                                    self.status_msg = Some(
-                                        match crate::emulator::etat::Instantane::lire(&chemin) {
-                                            Ok(etat) => {
-                                                self.machine.restaurer(&etat);
-                                                self.appuis.clear();
-                                                self.phases_encodeur.clear();
-                                                format!("Etat restaure, {} pas executes.", etat.cycles)
-                                            }
-                                            Err(e) => format!("Lecture impossible : {}", e),
-                                        },
-                                    );
+                                    self.status_msg = Some(self.restaurer_fichier(&chemin));
                                 }
                             }
                             ui.label(
