@@ -37,6 +37,30 @@ fn main() {
         .ok()
         .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok());
 
+    // ENTREES="seconde:broche:duree,..." en temps console, comme scene_probe.
+    let mut appuis: Vec<(u64, u32, u64)> = std::env::var("ENTREES")
+        .ok()
+        .map(|v| {
+            v.split(',')
+                .filter_map(|e| {
+                    let c: Vec<&str> = e.split(':').collect();
+                    if c.len() != 3 {
+                        return None;
+                    }
+                    let quand: f64 = c[0].parse().ok()?;
+                    let duree: f64 = c[2].parse().ok()?;
+                    Some((
+                        (quand * SECONDE as f64) as u64,
+                        u32::from_str_radix(c[1].trim_start_matches("0x"), 16).ok()?,
+                        (duree * SECONDE as f64) as u64,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    appuis.sort_by_key(|a| a.0);
+    let mut relachements: Vec<(u64, u32)> = Vec::new();
+
     println!("== SysTick au depart");
     println!("  CSR {:#010x}  RVR {:#010x}  CVR {:#010x}", m.cpu.nvic.syst_csr, m.cpu.nvic.syst_rvr, m.cpu.nvic.syst_cvr);
     println!(
@@ -63,6 +87,19 @@ fn main() {
     let budget = (secondes * SECONDE as f64) as u64;
     let mut pas = 0u64;
     while pas < budget {
+        while appuis.first().is_some_and(|a| a.0 <= pas) {
+            let (_, broche, duree) = appuis.remove(0);
+            m.appuyer(broche);
+            relachements.push((pas + duree, broche));
+        }
+        relachements.retain(|&(quand, broche)| {
+            if quand <= pas {
+                m.relacher(broche);
+                false
+            } else {
+                true
+            }
+        });
         *chaud.entry(m.cpu.regs.pc).or_default() += 1;
         // La console de debug du firmware nomme ses assertions : la capturer
         // evite de deviner pourquoi il s'arrete.

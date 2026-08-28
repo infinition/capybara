@@ -9,6 +9,10 @@ pub struct SpiFlash {
     /// Pages de 4 Ko ecrites depuis le chargement. Le jeu n'en salit qu'une
     /// poignee, celles de sa sauvegarde.
     pub pages_salies: std::collections::BTreeSet<usize>,
+    /// Compteur d'ecritures. Il ne sert pas au modele : il permet a l'interface
+    /// de savoir que la sauvegarde du jeu a bouge, et de la recopier sur le
+    /// disque, sans comparer seize mega-octets a chaque image.
+    pub revision: u64,
 }
 
 impl Default for SpiFlash {
@@ -24,6 +28,7 @@ impl SpiFlash {
             size,
             reference: Vec::new(),
             pages_salies: std::collections::BTreeSet::new(),
+            revision: 0,
         }
     }
 
@@ -59,6 +64,9 @@ impl SpiFlash {
 
     pub fn write_u8(&mut self, offset: usize, val: u8) {
         if offset < self.size {
+            if self.data[offset] != val {
+                self.revision = self.revision.wrapping_add(1);
+            }
             self.data[offset] = val;
             // Suivre la page permet aux instantanes de ne retenir que ce qui a
             // vraiment change, au lieu de recopier seize mega-octets.

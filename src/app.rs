@@ -55,6 +55,16 @@ pub struct TamagotchiApp {
     /// C'est ce que l'interface prend a l'emulation. Sans ce chiffre, on ne
     /// peut que supposer ou passe le temps.
     pub cout_ui: f64,
+    /// Emplacements de sauvegarde existants pour le dump charge.
+    pub emplacements: Vec<String>,
+    /// Emplacement suivi, vide quand la partie ne vit que le temps de la
+    /// session.
+    pub emplacement_choisi: String,
+    /// Nom saisi pour creer un emplacement.
+    pub nouvel_emplacement: String,
+    /// Derniere recopie de la sauvegarde sur le disque. Le jeu ecrit sa flash
+    /// souvent ; on espace les ecritures pour ne pas marteler le disque.
+    pub derniere_ecriture: std::time::Instant,
 }
 
 impl TamagotchiApp {
@@ -93,12 +103,72 @@ impl TamagotchiApp {
             debit: 0.0,
             debit_depart: (0, std::time::Instant::now()),
             cout_ui: 0.0,
+            emplacements: Vec::new(),
+            emplacement_choisi: String::new(),
+            nouvel_emplacement: String::new(),
+            derniere_ecriture: std::time::Instant::now(),
         }
     }
 }
 
 impl TamagotchiApp {
     /// Charge un dump de flash et rend compte de ce qui s'est reellement passe.
+    /// Relit la liste des emplacements de sauvegarde du dump charge.
+    fn rafraichir_emplacements(&mut self) {
+        self.emplacements = match &self.machine.empreinte {
+            Some(e) => crate::emulator::sauvegarde::emplacements(e),
+            None => Vec::new(),
+        };
+    }
+
+    /// Suit un emplacement et y verse la partie qu'il contient.
+    ///
+    /// Un emplacement inconnu est accepte : c'est une partie neuve, qui
+    /// s'ecrira des que le jeu sauvegardera.
+    fn ouvrir_emplacement(&mut self, nom: String) {
+        let Some(empreinte) = self.machine.empreinte.clone() else {
+            return;
+        };
+        let chemin = crate::emulator::sauvegarde::chemin(&empreinte, &nom);
+        match self.machine.ouvrir_sauvegarde(chemin) {
+            Ok(true) => {
+                // La flash porte maintenant la partie : le firmware doit la
+                // relire depuis son demarrage, sinon il continue sur l'etat
+                // vide qu'il avait deja en memoire.
+                self.machine.reset();
+                self.machine.is_running = true;
+                self.historique.vider();
+                self.status_msg = Some(format!("Partie {} chargee", nom));
+            }
+            Ok(false) => {
+                self.status_msg = Some(format!("Nouvelle partie {}", nom));
+            }
+            Err(e) => {
+                self.status_msg = Some(format!("Sauvegarde illisible : {}", e));
+                return;
+            }
+        }
+        self.emplacement_choisi = nom;
+        self.rafraichir_emplacements();
+    }
+
+    /// Recopie la partie sur le disque quand le jeu a ecrit sa flash.
+    ///
+    /// Espacee d'une seconde : le firmware reecrit ses deux pages a chaque
+    /// evenement, et il n'y a rien a gagner a suivre chaque octet.
+    fn tenir_la_sauvegarde(&mut self) {
+        if !self.machine.sauvegarde_a_ecrire() {
+            return;
+        }
+        if self.derniere_ecriture.elapsed() < std::time::Duration::from_secs(1) {
+            return;
+        }
+        self.derniere_ecriture = std::time::Instant::now();
+        if let Err(e) = self.machine.ecrire_sauvegarde() {
+            self.status_msg = Some(format!("Sauvegarde non ecrite : {}", e));
+        }
+    }
+
     fn load_firmware(&mut self, path: std::path::PathBuf) {
         self.load_path_input = path.to_string_lossy().to_string();
         self.machine.console.clear();
@@ -118,6 +188,13 @@ impl TamagotchiApp {
                 self.hex_base_addr = if report.bootable { 0 } else { 0x6001_1000 };
                 self.disasm_view_addr = self.machine.cpu.regs.pc;
                 self.status_msg = Some(self.describe_load(&report));
+                // La console reprend sa partie toute seule, comme un vrai
+                // Tamagotchi qu'on rallume. Sans cela il faudrait penser a
+                // choisir un emplacement avant de jouer.
+                self.rafraichir_emplacements();
+                self.ouvrir_emplacement(
+                    crate::emulator::sauvegarde::EMPLACEMENT_PAR_DEFAUT.to_string(),
+                );
             }
             Err(e) => {
                 self.status_msg = Some(self.i18n.t_args("emu_load_error", &[("error", &e)]));
@@ -381,6 +458,14 @@ impl TamagotchiApp {
 }
 
 impl eframe::App for TamagotchiApp {
+    /// Derniere recopie avant de fermer la fenetre.
+    ///
+    /// L'ecriture periodique est espacee d'une seconde : sans ce dernier
+    /// passage, la derniere sauvegarde du jeu pourrait rester en memoire.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        let _ = self.machine.ecrire_sauvegarde();
+    }
+
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let now = std::time::Instant::now();
         let _dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
@@ -481,6 +566,9 @@ impl eframe::App for TamagotchiApp {
             }
             self.historique.suivre(&self.machine);
         }
+        // La partie suit le jeu sur le disque : eteindre l'ordinateur ne coute
+        // plus rien, la console retrouve son personnage au prochain lancement.
+        self.tenir_la_sauvegarde();
 
         // Ce que l'interface prend a l'emulation : tout ce qui n'est pas la
         // tranche d'execution, moyenne sur les dernieres images.
@@ -578,6 +666,82 @@ impl eframe::App for TamagotchiApp {
                         if let Some(msg) = &self.status_msg {
                             ui.label(egui::RichText::new(msg).small().color(egui::Color32::from_rgb(255, 230, 80)));
                         }
+                    });
+
+                    ui.separator();
+
+                    // Sauvegarde de la console. Elle n'a rien a voir avec les
+                    // instantanes : ici on ne garde que ce que le jeu a ecrit
+                    // dans sa flash, sa vraie memoire, et elle survit a
+                    // l'extinction de l'ordinateur.
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Sauvegarde de la console :").strong());
+                        let suivie = self.machine.sauvegarde_active.is_some();
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_salt("emplacement_sauvegarde")
+                                .selected_text(if self.emplacement_choisi.is_empty() {
+                                    "aucune".to_string()
+                                } else {
+                                    self.emplacement_choisi.clone()
+                                })
+                                .show_ui(ui, |ui| {
+                                    for nom in self.emplacements.clone() {
+                                        if ui
+                                            .selectable_label(self.emplacement_choisi == nom, &nom)
+                                            .clicked()
+                                        {
+                                            self.ouvrir_emplacement(nom.clone());
+                                        }
+                                    }
+                                });
+                            if ui.button("Nouvelle partie").clicked() {
+                                // On cesse de suivre le fichier et on repart du
+                                // dump nu : la partie enregistree reste intacte
+                                // sur le disque tant qu'on n'en ouvre pas une.
+                                let chemin = self.load_path_input.clone();
+                                if !chemin.is_empty() {
+                                    self.load_firmware(std::path::PathBuf::from(chemin));
+                                    self.machine.fermer_sauvegarde();
+                                    self.emplacement_choisi.clear();
+                                    self.status_msg = Some(
+                                        "Partie neuve, non enregistree tant qu'aucun emplacement n'est choisi"
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Nouvel emplacement :");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.nouvel_emplacement)
+                                    .desired_width(120.0),
+                            );
+                            if ui.button("Creer").clicked() {
+                                let nom: String = self
+                                    .nouvel_emplacement
+                                    .trim()
+                                    .chars()
+                                    .filter(|c| {
+                                        c.is_ascii_alphanumeric() || *c == '-' || *c == '_'
+                                    })
+                                    .collect();
+                                if !nom.is_empty() {
+                                    self.ouvrir_emplacement(nom);
+                                    self.nouvel_emplacement.clear();
+                                }
+                            }
+                        });
+                        ui.label(
+                            egui::RichText::new(if suivie {
+                                match &self.machine.sauvegarde_active {
+                                    Some(c) => format!("Enregistree dans {}", c.display()),
+                                    None => String::new(),
+                                }
+                            } else {
+                                "Partie non enregistree".to_string()
+                            })
+                            .small(),
+                        );
                     });
 
                     ui.separator();

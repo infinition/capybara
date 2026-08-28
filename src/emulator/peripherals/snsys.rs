@@ -118,6 +118,23 @@ impl SnSysRegisters {
         }
     }
 
+    /// Rend tous les registres poses, pour les faire voyager avec une
+    /// sauvegarde.
+    ///
+    /// Cette zone est alimentee en permanence sur la puce : elle garde son
+    /// contenu quand le coeur s'eteint. Une console rangee la retrouve intacte,
+    /// et c'est ce qui lui permet de savoir d'ou vient son reveil.
+    pub fn registres(&self) -> Vec<(u32, u32)> {
+        self.regs.iter().map(|(&k, &v)| (k, v)).collect()
+    }
+
+    /// Repose des registres lus dans une sauvegarde.
+    pub fn poser_registres(&mut self, paires: &[(u32, u32)]) {
+        for &(offset, valeur) in paires {
+            self.regs.insert(offset, valeur);
+        }
+    }
+
     /// Marque le reveil : le temoin d'armement retombe, les deux bits de sonnerie
     /// se posent, et le coeur est a rallumer.
     ///

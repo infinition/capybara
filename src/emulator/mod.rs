@@ -3,6 +3,7 @@ pub mod cpu;
 pub mod etat;
 pub mod loader;
 pub mod mmu;
+pub mod sauvegarde;
 pub mod peripherals;
 pub mod sonix;
 
@@ -44,6 +45,13 @@ pub struct Machine {
     pub device_key: Option<u32>,
     pub last_report: Option<LoadReport>,
     pub last_stop: Option<StopReason>,
+    /// Empreinte du dump charge, qui range ses sauvegardes a part.
+    pub empreinte: Option<String>,
+    /// Fichier de sauvegarde suivi. Sans lui, la partie ne vit que le temps de
+    /// la session, comme avant.
+    pub sauvegarde_active: Option<std::path::PathBuf>,
+    /// Revision de flash deja recopiee sur le disque.
+    pub revision_ecrite: u64,
 }
 
 impl Default for Machine {
@@ -74,7 +82,47 @@ impl Machine {
             device_key: None,
             last_report: None,
             last_stop: None,
+            empreinte: None,
+            sauvegarde_active: None,
+            revision_ecrite: 0,
         }
+    }
+
+    /// Vrai quand le jeu a ecrit dans sa flash depuis la derniere copie sur le
+    /// disque. C'est le seul signal a surveiller pour tenir la sauvegarde a
+    /// jour sans comparer seize mega-octets a chaque image.
+    pub fn sauvegarde_a_ecrire(&self) -> bool {
+        self.sauvegarde_active.is_some() && self.bus.flash.revision != self.revision_ecrite
+    }
+
+    /// Ouvre un emplacement de sauvegarde et y verse son contenu.
+    ///
+    /// A appeler juste apres le chargement du dump. Un emplacement qui n'existe
+    /// pas encore est accepte : c'est une partie neuve, qui s'ecrira des que le
+    /// jeu sauvegardera.
+    pub fn ouvrir_sauvegarde(&mut self, chemin: std::path::PathBuf) -> Result<bool, String> {
+        let existe = chemin.exists();
+        if existe {
+            sauvegarde::Sauvegarde::lire(&chemin)?.appliquer(self);
+        }
+        self.revision_ecrite = self.bus.flash.revision;
+        self.sauvegarde_active = Some(chemin);
+        Ok(existe)
+    }
+
+    /// Ferme l'emplacement suivi, sans rien effacer sur le disque.
+    pub fn fermer_sauvegarde(&mut self) {
+        self.sauvegarde_active = None;
+    }
+
+    /// Recopie les pages ecrites par le jeu dans le fichier suivi.
+    pub fn ecrire_sauvegarde(&mut self) -> Result<(), String> {
+        let Some(chemin) = self.sauvegarde_active.clone() else {
+            return Ok(());
+        };
+        sauvegarde::Sauvegarde::depuis(self).ecrire(&chemin)?;
+        self.revision_ecrite = self.bus.flash.revision;
+        Ok(())
     }
 
     pub fn reset(&mut self) {
@@ -299,6 +347,12 @@ impl Machine {
 
         // L'image chargee sert de fond aux instantanes.
         self.bus.flash.figer_reference();
+        // L'empreinte range les sauvegardes par dump : les cinq editions n'ont
+        // ni les memes ressources ni la meme disposition, leurs parties ne se
+        // melangent pas.
+        self.empreinte = Some(sauvegarde::empreinte(p, &self.bus.flash.reference));
+        self.sauvegarde_active = None;
+        self.revision_ecrite = self.bus.flash.revision;
 
         self.reset();
         self.is_running = report.bootable;

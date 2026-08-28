@@ -1420,3 +1420,81 @@ fn les_entrees_du_port_2_sont_hautes_au_repos() {
     periph.port2.relacher(0);
     assert_eq!(lire(&mut bus, &mut periph, 0), 1);
 }
+
+// Sauvegardes persistantes : ce que la console garde quand l'ordinateur
+// s'eteint. A ne pas confondre avec les instantanes, qui figent toute la
+// machine pour la mise au point.
+mod sauvegarde_persistante {
+    use tamagotchi_paradise_rs::emulator::sauvegarde::Sauvegarde;
+    use tamagotchi_paradise_rs::emulator::Machine;
+
+    /// Les pages ecrites par le jeu font l'aller retour sans perte.
+    #[test]
+    fn les_pages_survivent_a_l_encodage() {
+        let mut m = Machine::new();
+        m.bus.flash.figer_reference();
+        m.bus.flash.write_u8(0xEFE000, 0x42);
+        m.bus.flash.write_u8(0xEFF00F, 0x99);
+        let avant = Sauvegarde::depuis(&m);
+        assert_eq!(avant.pages.len(), 2);
+
+        let apres = Sauvegarde::decoder(&avant.encoder()).expect("relecture");
+        assert_eq!(apres.pages.len(), 2);
+        for (page, contenu) in &avant.pages {
+            assert_eq!(apres.pages.get(page), Some(contenu));
+        }
+    }
+
+    /// Une sauvegarde reposee remet les octets du jeu dans la flash.
+    #[test]
+    fn une_sauvegarde_se_repose_dans_la_flash() {
+        let mut source = Machine::new();
+        source.bus.flash.figer_reference();
+        source.bus.flash.write_u8(0xEFE004, 0x5A);
+        let partie = Sauvegarde::decoder(&Sauvegarde::depuis(&source).encoder()).unwrap();
+
+        let mut cible = Machine::new();
+        cible.bus.flash.figer_reference();
+        assert_ne!(cible.bus.flash.read_u8(0xEFE004), 0x5A);
+        partie.appliquer(&mut cible);
+        assert_eq!(cible.bus.flash.read_u8(0xEFE004), 0x5A);
+        // La page compte comme salie, sinon un instantane pris ensuite la
+        // laisserait de cote.
+        assert!(cible.bus.flash.pages_salies.contains(&(0xEFE004 / 0x1000)));
+    }
+
+    /// L'horloge de la console voyage avec la partie, et avance du temps
+    /// reellement passe. Sans cela un Tamagotchi range ne vieillirait pas.
+    #[test]
+    fn l_horloge_repart_ou_elle_en_etait() {
+        let mut source = Machine::new();
+        source.bus.flash.figer_reference();
+        source.periph.snsys.secondes = 12_345;
+        let partie = Sauvegarde::decoder(&Sauvegarde::depuis(&source).encoder()).unwrap();
+        assert_eq!(partie.compteur, 12_345);
+
+        let mut cible = Machine::new();
+        cible.bus.flash.figer_reference();
+        partie.appliquer(&mut cible);
+        assert!(cible.periph.snsys.secondes >= 12_345);
+    }
+
+    /// Un fichier qui n'en est pas un se refuse au lieu de tout casser.
+    #[test]
+    fn un_fichier_etranger_est_refuse() {
+        assert!(Sauvegarde::decoder(b"pas une sauvegarde").is_err());
+        assert!(Sauvegarde::decoder(&[]).is_err());
+    }
+
+    /// Le compteur d'ecritures ne bouge que sur un changement reel : c'est lui
+    /// qui declenche la recopie sur le disque.
+    #[test]
+    fn la_revision_suit_les_vraies_ecritures() {
+        let mut m = Machine::new();
+        m.bus.flash.write_u8(0x1000, 0x33);
+        let apres_ecriture = m.bus.flash.revision;
+        assert!(apres_ecriture > 0);
+        m.bus.flash.write_u8(0x1000, 0x33);
+        assert_eq!(m.bus.flash.revision, apres_ecriture);
+    }
+}
