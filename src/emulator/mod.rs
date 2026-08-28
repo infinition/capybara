@@ -136,7 +136,9 @@ impl Machine {
     }
 
     pub fn step(&mut self) -> StepResult {
-        if self.reveil_materiel() {
+        // Meme raison que dans run_frame : le drapeau est teste ici, l'appel
+        // n'a lieu que le jour ou il y a vraiment un reveil a appliquer.
+        if self.periph.snsys.reveil_demande && self.reveil_materiel() {
             return StepResult::Ok(1);
         }
         self.cpu.step(&mut self.bus, &mut self.periph)
@@ -173,8 +175,9 @@ impl Machine {
         // cote, elle appelle step sans passer par ici.
         let poses = !self.breakpoints.is_empty();
 
+        let par_trame = self.instructions_per_frame;
         let mut executed = 0;
-        while executed < self.instructions_per_frame {
+        while executed < par_trame {
             let pc = self.cpu.regs.pc;
             if poses && self.breakpoints.contains(&pc) {
                 self.is_running = false;
