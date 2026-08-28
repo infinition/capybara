@@ -36,9 +36,47 @@ fn main() {
     // premier transfert n'affiche souvent qu'un effacement.
     let arret: Option<u64> =
         std::env::var("ECRAN_DEPART").ok().and_then(|v| v.parse().ok());
+    // ENTREES="pas:broche:duree,..." rejoue des appuis, en pas d'execution.
+    // La broche porte l'identifiant du firmware : port dans les bits hauts,
+    // broche dans les quatre bits bas. Exemple : 3000000000:9:2000000 appuie
+    // sur le bouton A.
+    let mut appuis: Vec<(u64, u32, u64)> = std::env::var("ENTREES")
+        .ok()
+        .map(|v| {
+            v.split(',')
+                .filter_map(|e| {
+                    let c: Vec<&str> = e.split(':').collect();
+                    if c.len() != 3 {
+                        return None;
+                    }
+                    Some((
+                        c[0].parse().ok()?,
+                        u32::from_str_radix(c[1].trim_start_matches("0x"), 16).ok()?,
+                        c[2].parse().ok()?,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    appuis.sort_by_key(|a| a.0);
+    let mut relachements: Vec<(u64, u32)> = Vec::new();
+
     let mut pas = 0u64;
     let mut departs = 0u64;
     while pas < budget {
+        while appuis.first().is_some_and(|a| a.0 <= pas) {
+            let (_, broche, duree) = appuis.remove(0);
+            m.appuyer(broche);
+            relachements.push((pas + duree, broche));
+        }
+        relachements.retain(|&(quand, broche)| {
+            if quand <= pas {
+                m.relacher(broche);
+                false
+            } else {
+                true
+            }
+        });
         if m.cpu.regs.pc == DEPART_CANAL {
             departs += 1;
             if Some(departs) == arret {

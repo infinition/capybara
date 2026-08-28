@@ -1188,6 +1188,43 @@ fn une_exception_prise_dans_un_bloc_it_ne_saute_pas_la_premiere_instruction() {
 }
 
 #[test]
+fn un_appui_tire_la_broche_du_bouton_vers_le_bas() {
+    let mut machine = Machine::new();
+
+    // Les entrees sont a resistance de tirage : hautes au repos, basses sous
+    // l'appui. Le firmware designe ses broches par port dans les bits hauts et
+    // broche dans les quatre bits bas.
+    let lire = |m: &Machine, id: u32| -> u32 {
+        let port = match id >> 4 {
+            0 => &m.periph.port0,
+            1 => &m.periph.port1,
+            _ => &m.periph.port2,
+        };
+        (port.read_reg(0) >> (id & 0xF)) & 1
+    };
+
+    for bouton in [
+        Machine::BOUTON_MOLETTE,
+        Machine::BOUTON_A,
+        Machine::BOUTON_B,
+        Machine::BOUTON_C,
+        Machine::ENCODEUR_1,
+        Machine::ENCODEUR_2,
+    ] {
+        assert_eq!(lire(&machine, bouton), 1, "broche {:#x} haute au repos", bouton);
+        machine.appuyer(bouton);
+        assert_eq!(lire(&machine, bouton), 0, "broche {:#x} basse sous l'appui", bouton);
+        machine.relacher(bouton);
+        assert_eq!(lire(&machine, bouton), 1, "broche {:#x} remonte au relachement", bouton);
+    }
+
+    // Un appui ne doit pas deborder sur les broches voisines.
+    machine.appuyer(Machine::BOUTON_A);
+    assert_eq!(lire(&machine, Machine::BOUTON_C), 1);
+    assert_eq!(lire(&machine, Machine::BOUTON_B), 1);
+}
+
+#[test]
 fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();

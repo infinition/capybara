@@ -172,6 +172,45 @@ impl Machine {
         }
     }
 
+    /// Boutons de la console, avec l'identifiant que le firmware leur donne :
+    /// port dans les bits hauts, broche dans les quatre bits bas.
+    pub const BOUTON_MOLETTE: u32 = 0x08;
+    pub const BOUTON_A: u32 = 0x09;
+    pub const BOUTON_C: u32 = 0x0A;
+    pub const BOUTON_B: u32 = 0x0B;
+    pub const ENCODEUR_1: u32 = 0x20;
+    pub const ENCODEUR_2: u32 = 0x21;
+
+    /// Port correspondant a un identifiant de broche, s'il est modelise.
+    fn port_de(&mut self, id: u32) -> Option<&mut crate::emulator::peripherals::GpioPort> {
+        match id >> 4 {
+            0 => Some(&mut self.periph.port0),
+            1 => Some(&mut self.periph.port1),
+            2 => Some(&mut self.periph.port2),
+            _ => None,
+        }
+    }
+
+    /// Tire une broche vers le bas, ce que fait un appui.
+    ///
+    /// Les entrees sont a resistance de tirage : au repos elles se lisent
+    /// hautes, un appui les tire bas. C'est la convention que le firmware
+    /// attend, verifiee sur les broches 0x20 et 0x21 de l'encodeur.
+    pub fn appuyer(&mut self, id: u32) {
+        let broche = id & 0xF;
+        if let Some(port) = self.port_de(id) {
+            port.appuyer(broche);
+        }
+    }
+
+    /// Relache une broche, qui remonte par sa resistance de tirage.
+    pub fn relacher(&mut self, id: u32) {
+        let broche = id & 0xF;
+        if let Some(port) = self.port_de(id) {
+            port.relacher(broche);
+        }
+    }
+
     pub fn load_firmware_file<P: AsRef<Path>>(&mut self, path: P) -> Result<LoadReport, String> {
         let p = path.as_ref();
         let report = FirmwareLoader::load_flash_dump(&mut self.bus, p, self.device_key)?;
