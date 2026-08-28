@@ -82,7 +82,13 @@ impl Registers {
             0..=12 => self.r[reg as usize] = val,
             13 => self.set_sp(val),
             14 => self.lr = val,
-            15 => self.pc = val,
+            // Ecrire dans R15 est un branchement avec echange de jeu
+            // d'instructions. Le bit 0 y designe le jeu, il ne fait pas partie
+            // de l'adresse, et le coeur est Thumb seul. Sans l'effacer, un
+            // LDR, un MOV ou un POP vers le PC laisse une adresse impaire : la
+            // lecture d'instruction se decale alors d'un octet, et l'execution
+            // part dans du code qui se lit encore mais ne veut plus rien dire.
+            15 => self.pc = val & !1,
             _ => {}
         }
     }
