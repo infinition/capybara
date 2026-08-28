@@ -1206,7 +1206,11 @@ impl TamagotchiApp {
             if ui.button("Poser un point").clicked() {
                 self.poser_un_point();
             }
-            if ui.button("Importer...").clicked() {
+            if ui
+                .button("Importer...")
+                .on_hover_text("Ajoute un fichier .tamastate a la liste ci dessous")
+                .clicked()
+            {
                 self.importer_un_point();
             }
             if ui.button("Exporter l'etat").clicked() {
@@ -2212,36 +2216,17 @@ impl eframe::App for TamagotchiApp {
                                 }
                             }
                         });
-                        ui.horizontal(|ui| {
-                            if ui.button("Sauver l'etat...").clicked() {
-                                if let Some(chemin) = rfd::FileDialog::new()
-                                    .add_filter("Etat de l'emulateur (*.tamastate)", &["tamastate"])
-                                    .set_file_name("tamagotchi.tamastate")
-                                    .save_file()
-                                {
-                                    let etat = self.machine.instantane();
-                                    self.status_msg = Some(match etat.ecrire(&chemin) {
-                                        Ok(()) => format!("Etat ecrit dans {}", chemin.display()),
-                                        Err(e) => format!("Ecriture impossible : {}", e),
-                                    });
-                                }
-                            }
-                            if ui.button("Charger un etat...").clicked() {
-                                if let Some(chemin) = rfd::FileDialog::new()
-                                    .add_filter("Etat de l'emulateur (*.tamastate)", &["tamastate"])
-                                    .pick_file()
-                                {
-                                    self.status_msg = Some(self.restaurer_fichier(&chemin));
-                                }
-                            }
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{} instantanes automatiques",
-                                    self.historique.len()
-                                ))
-                                .small(),
-                            );
-                        });
+                        // La sauvegarde et le chargement d'un etat vivaient aussi
+                        // ici. Ils faisaient double emploi avec les points de
+                        // reprise, qui les portent tous les deux et gardent en
+                        // plus ce qui est importe.
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} instantanes automatiques",
+                                self.historique.len()
+                            ))
+                            .small(),
+                        );
                         match self.port_web {
                             Some(port) => {
                                 ui.horizontal(|ui| {
