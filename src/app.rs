@@ -124,6 +124,9 @@ pub struct TamagotchiApp {
     pub note_depuis: u64,
     /// Vrai tant que le firmware jouait a l'image precedente.
     pub son_jouait: bool,
+    /// Derniere recherche du tableau des voix, pour ne pas la refaire a chaque
+    /// image quand elle echoue.
+    derniere_recherche_voix: std::time::Instant,
     /// Note heritee de la melodie precedente, et cycle jusqu'auquel s'en mefier.
     ///
     /// Le tableau de voix garde sa derniere valeur au silence. Quand le
@@ -196,6 +199,7 @@ impl TamagotchiApp {
             note_courante: 0.0,
             note_depuis: 0,
             son_jouait: false,
+            derniere_recherche_voix: std::time::Instant::now(),
             note_perimee: 0.0,
             perimee_jusqu: 0,
             notes: Vec::new(),
@@ -659,12 +663,20 @@ impl TamagotchiApp {
     /// c'est que le firmware la joue vraiment.
     fn note_jouee(&mut self) -> f32 {
         let joue = self.machine.son_en_cours();
-        if joue && !self.son_jouait {
-            // Le tableau des voix est reloue a chaque debut de son : le
-            // chercher une seule fois suffisait tant qu'il ne bougeait pas, ce
-            // qui n'est pas garanti. Un balayage de la memoire vive par son
-            // joue ne coute rien.
+        // Le tableau des voix est cherche au debut de chaque son, et repris
+        // tant qu'il n'a rien donne. Une seule tentative ne suffit pas : au
+        // premier son la table peut n'etre pas encore allouee, et sur Jade
+        // Forest le drapeau de son reste leve si longtemps que le debut de son
+        // suivant, seule occasion de reessayer, n'arrivait jamais. La reprise
+        // est espacee d'une demi seconde, le balayage lisant toute la memoire
+        // vive.
+        if joue
+            && (!self.son_jouait
+                || (self.machine.voix.is_empty()
+                    && self.derniere_recherche_voix.elapsed().as_secs_f32() > 0.5))
+        {
             self.machine.localiser_les_voix();
+            self.derniere_recherche_voix = std::time::Instant::now();
         }
         if joue && !self.son_jouait {
             self.note_perimee = self.machine.note_courante();
@@ -833,6 +845,54 @@ impl TamagotchiApp {
         }
         if let Some(indice) = a_oublier {
             self.reprises.oublier(indice);
+        }
+    }
+
+    /// Menu de choix de console, pour changer d'edition sans repasser par
+    /// l'accueil.
+    ///
+    /// Les dumps proposes sont ceux du dossier de donnees. Un dump importe
+    /// d'ailleurs y est recopie a l'import, il apparait donc ici ensuite.
+    fn menu_des_consoles(&mut self, ui: &mut egui::Ui) {
+        let connus = crate::emulator::sauvegarde::firmwares_connus();
+        let courant = std::path::Path::new(&self.load_path_input)
+            .file_stem()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "aucune".to_string());
+        let mut voulue = None;
+        ui.menu_button(format!("Console : {}", courant), |ui| {
+            if connus.is_empty() {
+                ui.label(
+                    egui::RichText::new("Aucun dump dans le dossier de donnees.").small(),
+                );
+            }
+            for chemin in &connus {
+                let nom = chemin
+                    .file_stem()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let choisi = self.load_path_input == chemin.to_string_lossy().to_string();
+                if ui.selectable_label(choisi, &nom).clicked() {
+                    if !choisi {
+                        voulue = Some(chemin.clone());
+                    }
+                    ui.close_menu();
+                }
+            }
+            ui.separator();
+            if ui.button("Importer un dump...").clicked() {
+                if let Some(chemin) = rfd::FileDialog::new()
+                    .add_filter("Dump de flash", &["bin", "rom", "dump", "raw"])
+                    .set_title("Choisir un dump de flash Tamagotchi")
+                    .pick_file()
+                {
+                    voulue = Some(crate::emulator::sauvegarde::adopter_firmware(&chemin));
+                }
+                ui.close_menu();
+            }
+        });
+        if let Some(chemin) = voulue {
+            self.load_firmware(chemin);
         }
     }
 
@@ -1052,7 +1112,24 @@ impl TamagotchiApp {
 
                 // Clic droit sur la coque : le menu de la fenetre.
                 let mut mode_voulu = None;
+                let mut console_voulue = None;
                 fond.context_menu(|ui| {
+                    ui.menu_button("Console", |ui| {
+                        for chemin in crate::emulator::sauvegarde::firmwares_connus() {
+                            let nom = chemin
+                                .file_stem()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            let courant =
+                                self.load_path_input == chemin.to_string_lossy().to_string();
+                            if ui.selectable_label(courant, &nom).clicked() {
+                                if !courant {
+                                    console_voulue = Some(chemin.clone());
+                                }
+                                ui.close_menu();
+                            }
+                        }
+                    });
                     if ui.button("Revenir en arriere...").clicked() {
                         // La liste vit dans le panneau lateral : on y va.
                         mode_voulu = Some(Mode::Inspection);
@@ -1071,6 +1148,9 @@ impl TamagotchiApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
+                if let Some(chemin) = console_voulue {
+                    self.load_firmware(chemin);
+                }
                 if let Some(m) = mode_voulu {
                     self.mode = m;
                 }
@@ -1308,6 +1388,7 @@ impl eframe::App for TamagotchiApp {
                 if ui.button("Accueil").clicked() {
                     self.mode = Mode::Accueil;
                 }
+                self.menu_des_consoles(ui);
                 if ui.button(if self.show_debugger { "Masquer l'inspection" } else { "Afficher l'inspection" }).clicked() {
                     self.show_debugger = !self.show_debugger;
                 }

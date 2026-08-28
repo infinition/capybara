@@ -72,6 +72,9 @@ impl Machine {
     /// l'instantane reviennent a l'image de reference : sans cela une
     /// sauvegarde faite apres l'instantane survivrait a la restauration.
     pub fn restaurer(&mut self, etat: &Instantane) {
+        // La memoire vive change entierement : les adresses de voix relevees
+        // avant ne designent plus rien de sur.
+        self.voix.clear();
         // L'union des deux ensembles, pas seulement les pages salies par la
         // machine courante. Une machine qui vient d'etre chargee n'a rien sali :
         // ne parcourir que ses pages revenait a ignorer toutes celles de

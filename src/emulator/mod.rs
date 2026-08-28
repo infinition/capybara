@@ -564,6 +564,9 @@ impl Machine {
         self.sauvegarde_active = None;
         self.revision_ecrite = self.bus.flash.revision;
 
+        // Le tableau des voix est propre a une edition : celui de la
+        // precedente ne veut plus rien dire ici.
+        self.voix.clear();
         self.reset();
         self.is_running = report.bootable;
         // L'afficheur n'est plus recopie depuis la SRAM : il recoit les trames
