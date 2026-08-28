@@ -84,10 +84,25 @@ pub struct TamagotchiApp {
     pub reprises: crate::emulator::reprises::Journal,
     /// Vue de restauration ouverte.
     pub voir_reprises: bool,
+    /// Papier glisse sous la fenetre transparente de la console courante.
+    pub fond: Option<crate::gui::fond::Fond>,
+    /// Texture du papier, et rapport largeur sur hauteur de l'image d'origine.
+    fond_texture: Option<(egui::TextureHandle, f32)>,
+    /// Le papier doit etre relu a la prochaine image.
+    ///
+    /// Il faut un contexte egui pour en faire une texture, et le chargement
+    /// d'un dump peut arriver hors d'une image, au demarrage notamment.
+    papier_a_relire: bool,
     /// Etat publie au serveur local et commandes qui en reviennent.
     pub partage: std::sync::Arc<std::sync::Mutex<crate::web::Partage>>,
     /// Port du serveur local, quand il a pu demarrer.
     pub port_web: Option<u16>,
+    /// Temoin qui arrete le serveur local.
+    serveur_actif: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Taille de la fenetre du mode jeu, en fraction de sa taille de base.
+    pub zoom_jeu: f32,
+    /// Fenetre du mode jeu maintenue au dessus des autres.
+    pub toujours_devant: bool,
     /// Debit atteint, en pas par seconde. C'est le seul chiffre qui dit si
     /// l'interface etouffe l'emulation.
     pub debit: f64,
@@ -186,8 +201,14 @@ impl TamagotchiApp {
             historique: crate::emulator::etat::Historique::default(),
             reprises: crate::emulator::reprises::Journal::default(),
             voir_reprises: false,
+            fond: None,
+            fond_texture: None,
+            papier_a_relire: true,
             partage,
             port_web,
+            serveur_actif: None,
+            zoom_jeu: 1.0,
+            toujours_devant: false,
             debit: 0.0,
             debit_depart: (0, std::time::Instant::now()),
             cout_ui: 0.0,
@@ -263,9 +284,12 @@ impl TamagotchiApp {
         self.emplacement_choisi = nom;
         self.rafraichir_emplacements();
         self.retenir_la_partie();
-        if let Some(empreinte) = &self.machine.empreinte {
-            self.reprises
-                .ouvrir(crate::emulator::sauvegarde::dossier_reprises(empreinte));
+        if let Some(empreinte) = self.machine.empreinte.clone() {
+            let dossier = crate::emulator::sauvegarde::dossier_reprises(
+                &empreinte,
+                &self.emplacement_choisi,
+            );
+            self.reprises.ouvrir(dossier);
         }
     }
 
@@ -292,6 +316,8 @@ impl TamagotchiApp {
                 volume: self.audio.volume,
                 hauteur: self.audio.hauteur,
                 coque: self.shell_color.nom().to_string(),
+                zoom_jeu: self.zoom_jeu,
+                toujours_devant: self.toujours_devant,
             },
         );
     }
@@ -309,6 +335,8 @@ impl TamagotchiApp {
         self.audio.enabled = partie.son;
         self.audio.volume = partie.volume.clamp(0.0, 1.0);
         self.audio.hauteur = if partie.hauteur > 0.0 { partie.hauteur } else { 1.0 };
+        self.zoom_jeu = if partie.zoom_jeu > 0.0 { partie.zoom_jeu.clamp(0.5, 3.0) } else { 1.0 };
+        self.toujours_devant = partie.toujours_devant;
 
         let chemin = std::path::PathBuf::from(&partie.dump);
         if !chemin.is_file() {
@@ -388,6 +416,8 @@ impl TamagotchiApp {
                 self.ouvrir_emplacement(
                     crate::emulator::sauvegarde::EMPLACEMENT_PAR_DEFAUT.to_string(),
                 );
+                // Le papier suit la console : il est relu a chaque changement.
+                self.papier_a_relire = true;
             }
             Err(e) => {
                 self.status_msg = Some(self.i18n.t_args("emu_load_error", &[("error", &e)]));
@@ -737,6 +767,17 @@ impl TamagotchiApp {
 
     /// Dessine la coque et envoie ses commandes sur les broches.
     fn dessiner_la_console(&mut self, ctx: &Context, ui: &mut egui::Ui, zone: egui::Rect) {
+        // Le papier glisse sous la fenetre transparente, quand il y en a un.
+        let papier = match (&self.fond, &self.fond_texture) {
+            (Some(fond), Some((texture, rapport))) => Some(crate::ui::lcd_panel::Papier {
+                texture,
+                rapport: *rapport,
+                zoom: fond.zoom,
+                dx: fond.dx,
+                dy: fond.dy,
+            }),
+            _ => None,
+        };
         let commandes = LcdPanel::render(
             ui,
             zone,
@@ -744,6 +785,7 @@ impl TamagotchiApp {
             self.ecran.as_ref(),
             self.shell_color,
             self.angle_molette,
+            papier.as_ref(),
         );
 
         // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
@@ -777,6 +819,150 @@ impl TamagotchiApp {
             self.angle_molette = 0.0;
         } else {
             ctx.request_repaint();
+        }
+    }
+
+    /// Dossier ou vit le papier de la console courante.
+    ///
+    /// Il suit la console et non la partie : sur la vraie machine le papier est
+    /// glisse dans la coque, il ne change pas quand le Tamagotchi change.
+    fn dossier_du_papier(&self) -> Option<std::path::PathBuf> {
+        let empreinte = self.machine.empreinte.as_ref()?;
+        Some(crate::emulator::sauvegarde::dossier_du_dump(empreinte))
+    }
+
+    /// Relit le papier de la console courante et en refait la texture.
+    fn recharger_le_papier(&mut self, ctx: &Context) {
+        self.fond = None;
+        self.fond_texture = None;
+        let Some(dossier) = self.dossier_du_papier() else {
+            return;
+        };
+        let Some(fond) = crate::gui::fond::Fond::lire(&dossier) else {
+            return;
+        };
+        match crate::gui::fond::charger_image(&dossier.join(&fond.fichier)) {
+            Ok((image, rapport)) => {
+                let texture =
+                    ctx.load_texture("papier_coque", image, egui::TextureOptions::LINEAR);
+                self.fond_texture = Some((texture, rapport));
+                self.fond = Some(fond);
+            }
+            Err(e) => {
+                self.status_msg = Some(format!("Papier illisible : {}", e));
+            }
+        }
+    }
+
+    /// Reglage du papier glisse sous la fenetre transparente.
+    fn dessiner_le_papier(&mut self, ui: &mut egui::Ui, ctx: &Context) {
+        ui.label(egui::RichText::new("Papier de la coque").strong());
+        let Some(dossier) = self.dossier_du_papier() else {
+            ui.label(egui::RichText::new("Charge une console d'abord.").small());
+            return;
+        };
+        ui.label(
+            egui::RichText::new(
+                "L'image se glisse sous la fenetre transparente, comme le papier \
+                 imprime de la vraie console.",
+            )
+            .small()
+            .color(egui::Color32::GRAY),
+        );
+
+        ui.horizontal(|ui| {
+            if ui.button("Choisir une image...").clicked() {
+                if let Some(chemin) = rfd::FileDialog::new()
+                    .add_filter("Image", &["png", "jpg", "jpeg", "bmp", "gif", "webp"])
+                    .set_title("Choisir un papier pour la coque")
+                    .pick_file()
+                {
+                    match crate::gui::fond::adopter_image(&chemin, &dossier) {
+                        Ok(nom) => {
+                            let fond = crate::gui::fond::Fond {
+                                fichier: nom,
+                                ..Default::default()
+                            };
+                            fond.ecrire(&dossier);
+                            self.recharger_le_papier(ctx);
+                        }
+                        Err(e) => {
+                            self.status_msg = Some(format!("Image refusee : {}", e));
+                        }
+                    }
+                }
+            }
+            if self.fond.is_some() && ui.button("Retirer").clicked() {
+                let fichier = self
+                    .fond
+                    .as_ref()
+                    .map(|f| f.fichier.clone())
+                    .unwrap_or_default();
+                crate::gui::fond::Fond::effacer(&dossier, &fichier);
+                self.fond = None;
+                self.fond_texture = None;
+            }
+        });
+
+        let Some(fond) = &mut self.fond else {
+            return;
+        };
+        let mut change = false;
+        change |= ui
+            .add(egui::Slider::new(&mut fond.zoom, 0.2..=3.0).text("zoom"))
+            .changed();
+        change |= ui
+            .add(egui::Slider::new(&mut fond.dx, -1.0..=1.0).text("gauche / droite"))
+            .changed();
+        change |= ui
+            .add(egui::Slider::new(&mut fond.dy, -1.0..=1.0).text("haut / bas"))
+            .changed();
+        if ui.button("Recentrer").clicked() {
+            fond.zoom = 1.0;
+            fond.dx = 0.0;
+            fond.dy = 0.0;
+            change = true;
+        }
+        if change {
+            fond.ecrire(&dossier);
+        }
+    }
+
+    /// Premier nom de partie libre, `partie-2`, `partie-3`, et ainsi de suite.
+    ///
+    /// Un menu contextuel n'est pas l'endroit ou saisir un nom : on en trouve
+    /// un tout seul, et il se renomme depuis le panneau lateral.
+    fn nom_de_partie_libre(&self) -> String {
+        for numero in 2..1000 {
+            let nom = format!("partie-{}", numero);
+            if !self.emplacements.iter().any(|e| *e == nom) {
+                return nom;
+            }
+        }
+        "partie".to_string()
+    }
+
+    /// Pose un point de reprise tout de suite.
+    fn poser_un_point(&mut self) {
+        if self.reprises.prendre_maintenant(&self.machine) {
+            self.status_msg = Some("Point de reprise pose.".to_string());
+        } else {
+            self.status_msg = Some("Ouvre une partie avant de poser un point.".to_string());
+        }
+    }
+
+    /// Adopte un instantane venu d'ailleurs.
+    fn importer_un_point(&mut self) {
+        let Some(chemin) = rfd::FileDialog::new()
+            .add_filter("Instantane", &["tamastate"])
+            .set_title("Importer un instantane")
+            .pick_file()
+        else {
+            return;
+        };
+        match self.reprises.adopter(&chemin) {
+            Ok(()) => self.status_msg = Some("Instantane importe.".to_string()),
+            Err(e) => self.status_msg = Some(format!("Instantane refuse : {}", e)),
         }
     }
 
@@ -814,6 +1000,14 @@ impl TamagotchiApp {
             ui.label(egui::RichText::new("Ouvre une partie pour en garder.").small());
             return;
         }
+        ui.horizontal(|ui| {
+            if ui.button("Poser un point").clicked() {
+                self.poser_un_point();
+            }
+            if ui.button("Importer...").clicked() {
+                self.importer_un_point();
+            }
+        });
         if self.reprises.points().is_empty() {
             ui.label(
                 egui::RichText::new("Le premier point est pris apres une minute de jeu.")
@@ -924,9 +1118,15 @@ impl TamagotchiApp {
                 // decoupee sur le bureau. La fenetre garde la proportion de
                 // l'oeuf, un peu plus haute que large.
                 ctx.send_viewport_cmd(Cmd::Decorations(false));
+                ctx.send_viewport_cmd(Cmd::WindowLevel(if self.toujours_devant {
+                    egui::viewport::WindowLevel::AlwaysOnTop
+                } else {
+                    egui::viewport::WindowLevel::Normal
+                }));
                 // Forme de la console : 6,5 sur 7,5, plus le debord de la
                 // molette. La fenetre est donc presque carree.
-                ctx.send_viewport_cmd(Cmd::InnerSize(egui::vec2(430.0, 450.0)));
+                let z = self.zoom_jeu.clamp(0.5, 3.0);
+                ctx.send_viewport_cmd(Cmd::InnerSize(egui::vec2(430.0 * z, 450.0 * z)));
             }
             Mode::Inspection => {
                 ctx.send_viewport_cmd(Cmd::Decorations(true));
@@ -1123,41 +1323,180 @@ impl TamagotchiApp {
                 // Clic droit sur la coque : le menu de la fenetre.
                 let mut mode_voulu = None;
                 let mut console_voulue = None;
+                let mut zoom_voulu = None;
+                let mut point_voulu = None;
+                let mut poser_un_point = false;
+                let mut importer_un_point = false;
+                let mut partie_voulue = None;
+                let mut basculer_le_son = false;
+                let mut basculer_le_dessus = false;
                 fond.context_menu(|ui| {
-                    ui.menu_button("Console", |ui| {
-                        for chemin in crate::emulator::sauvegarde::firmwares_connus() {
-                            let nom = chemin
-                                .file_stem()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            let courant =
-                                self.load_path_input == chemin.to_string_lossy().to_string();
-                            if ui.selectable_label(courant, &nom).clicked() {
-                                if !courant {
-                                    console_voulue = Some(chemin.clone());
+                    // Des sections qui se deplient sur place, et non des sous
+                    // menus. La fenetre du mode jeu fait quatre cents pixels de
+                    // large : un sous menu n'y tient pas a droite, egui le
+                    // renvoie a gauche, et il recouvre le menu qui l'a ouvert.
+                    ui.set_min_width(210.0);
+                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                        egui::CollapsingHeader::new("Partie").show(ui, |ui| {
+                            if self.machine.empreinte.is_none() {
+                                ui.label(egui::RichText::new("Aucune console chargee.").small());
+                            }
+                            for nom in self.emplacements.clone() {
+                                let courant = self.emplacement_choisi == nom;
+                                if ui.selectable_label(courant, &nom).clicked() {
+                                    if !courant {
+                                        partie_voulue = Some(nom);
+                                    }
+                                    ui.close_menu();
                                 }
+                            }
+                            if ui.button("Nouvelle partie").clicked() {
+                                partie_voulue = Some(self.nom_de_partie_libre());
                                 ui.close_menu();
                             }
+                        });
+
+                        egui::CollapsingHeader::new("Console").show(ui, |ui| {
+                            for chemin in crate::emulator::sauvegarde::firmwares_connus() {
+                                let nom = chemin
+                                    .file_stem()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_default();
+                                let courant =
+                                    self.load_path_input == chemin.to_string_lossy().to_string();
+                                if ui.selectable_label(courant, &nom).clicked() {
+                                    if !courant {
+                                        console_voulue = Some(chemin.clone());
+                                    }
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+
+                        egui::CollapsingHeader::new("Revenir en arriere").show(ui, |ui| {
+                            if self.reprises.points().is_empty() {
+                                ui.label(
+                                    egui::RichText::new("Aucun point pour l'instant.").small(),
+                                );
+                            }
+                            // Du plus recent au plus ancien, et pas plus de dix :
+                            // au dela la liste deviendrait illisible ici, et le
+                            // panneau d'inspection les montre tous.
+                            for (indice, point) in
+                                self.reprises.points().iter().enumerate().rev().take(10)
+                            {
+                                let etiquette = format!(
+                                    "{}   {}",
+                                    point.quand.format("%H:%M"),
+                                    point.age_lisible()
+                                );
+                                if ui.button(etiquette).clicked() {
+                                    point_voulu = Some(indice);
+                                    ui.close_menu();
+                                }
+                            }
+                            ui.separator();
+                            if ui.button("Poser un point maintenant").clicked() {
+                                poser_un_point = true;
+                                ui.close_menu();
+                            }
+                            if ui.button("Importer un instantane...").clicked() {
+                                importer_un_point = true;
+                                ui.close_menu();
+                            }
+                            if ui.button("Tous les points...").clicked() {
+                                mode_voulu = Some(Mode::Inspection);
+                                ui.close_menu();
+                            }
+                        });
+
+                        egui::CollapsingHeader::new("Taille").show(ui, |ui| {
+                            if ui.button("Agrandir de 25 %").clicked() {
+                                zoom_voulu = Some((self.zoom_jeu * 1.25).min(3.0));
+                                ui.close_menu();
+                            }
+                            if ui.button("Reduire de 25 %").clicked() {
+                                zoom_voulu = Some((self.zoom_jeu / 1.25).max(0.5));
+                                ui.close_menu();
+                            }
+                            if ui.button("Taille d'origine").clicked() {
+                                zoom_voulu = Some(1.0);
+                                ui.close_menu();
+                            }
+                        });
+
+                        ui.separator();
+
+                        if ui
+                            .button(if self.audio.enabled {
+                                "Couper le son"
+                            } else {
+                                "Remettre le son"
+                            })
+                            .clicked()
+                        {
+                            basculer_le_son = true;
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button(if self.toujours_devant {
+                                "Ne plus rester au dessus"
+                            } else {
+                                "Rester au dessus"
+                            })
+                            .clicked()
+                        {
+                            basculer_le_dessus = true;
+                            ui.close_menu();
+                        }
+
+                        ui.separator();
+
+                        if ui.button("Inspection").clicked() {
+                            mode_voulu = Some(Mode::Inspection);
+                            ui.close_menu();
+                        }
+                        if ui.button("Accueil").clicked() {
+                            mode_voulu = Some(Mode::Accueil);
+                            ui.close_menu();
+                        }
+                        if ui.button("Fermer").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
-                    if ui.button("Revenir en arriere...").clicked() {
-                        // La liste vit dans le panneau lateral : on y va.
-                        mode_voulu = Some(Mode::Inspection);
-                        ui.close_menu();
-                    }
-                    if ui.button("Inspection").clicked() {
-                        mode_voulu = Some(Mode::Inspection);
-                        ui.close_menu();
-                    }
-                    if ui.button("Accueil").clicked() {
-                        mode_voulu = Some(Mode::Accueil);
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    if ui.button("Fermer").clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
                 });
+                if let Some(nom) = partie_voulue {
+                    self.ouvrir_emplacement(nom);
+                }
+                if basculer_le_dessus {
+                    self.toujours_devant = !self.toujours_devant;
+                    // Le niveau est pose au changement de mode : on force la
+                    // reprise pour qu'il soit applique tout de suite.
+                    self.mode_applique = None;
+                }
+                if basculer_le_son {
+                    self.audio.enabled = !self.audio.enabled;
+                    if !self.audio.enabled {
+                        self.audio.silence_buzzer();
+                    }
+                    self.retenir_la_partie();
+                }
+                if let Some(indice) = point_voulu {
+                    self.revenir_au_point(indice);
+                }
+                if poser_un_point {
+                    self.poser_un_point();
+                }
+                if importer_un_point {
+                    self.importer_un_point();
+                }
+                if let Some(z) = zoom_voulu {
+                    self.zoom_jeu = z;
+                    self.retenir_la_partie();
+                    // La taille est posee au changement de mode : on force la
+                    // reprise pour qu'elle soit appliquee tout de suite.
+                    self.mode_applique = None;
+                }
                 if let Some(chemin) = console_voulue {
                     self.load_firmware(chemin);
                 }
@@ -1372,6 +1711,10 @@ impl eframe::App for TamagotchiApp {
             }
         });
 
+        if self.papier_a_relire {
+            self.papier_a_relire = false;
+            self.recharger_le_papier(ctx);
+        }
         self.appliquer_le_mode(ctx);
         match self.mode {
             Mode::Accueil => {
@@ -1618,25 +1961,43 @@ impl eframe::App for TamagotchiApp {
                         });
                         match self.port_web {
                             Some(port) => {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "Suivi dans le navigateur : http://127.0.0.1:{}/",
-                                        port
-                                    ))
-                                    .small()
-                                    .color(egui::Color32::from_rgb(140, 220, 160)),
-                                );
+                                ui.horizontal(|ui| {
+                                    let adresse = format!("http://127.0.0.1:{}/", port);
+                                    ui.hyperlink_to(
+                                        egui::RichText::new(&adresse)
+                                            .small()
+                                            .color(egui::Color32::from_rgb(140, 220, 160)),
+                                        &adresse,
+                                    );
+                                    if ui.small_button("Arreter").clicked() {
+                                        if let Some(temoin) = self.serveur_actif.take() {
+                                            temoin.store(
+                                                false,
+                                                std::sync::atomic::Ordering::Relaxed,
+                                            );
+                                        }
+                                        self.port_web = None;
+                                    }
+                                });
                             }
                             None => {
                                 // Eteint par defaut : il ne sert qu'a suivre
                                 // l'emulation depuis un navigateur, et il coute
                                 // une copie d'ecran a chaque image.
                                 if ui.button("Demarrer le serveur local").clicked() {
-                                    self.port_web = crate::web::demarrer(
+                                    match crate::web::demarrer(
                                         std::sync::Arc::clone(&self.partage),
                                         7340,
-                                    )
-                                    .ok();
+                                    ) {
+                                        Ok((port, temoin)) => {
+                                            self.port_web = Some(port);
+                                            self.serveur_actif = Some(temoin);
+                                        }
+                                        Err(e) => {
+                                            self.status_msg =
+                                                Some(format!("Serveur local : {}", e));
+                                        }
+                                    }
                                 }
                                 ui.label(
                                     egui::RichText::new(
@@ -1676,6 +2037,11 @@ impl eframe::App for TamagotchiApp {
                     ui.separator();
                     ui.group(|ui| {
                         self.dessiner_les_reprises(ui);
+                    });
+
+                    ui.separator();
+                    ui.group(|ui| {
+                        self.dessiner_le_papier(ui, ctx);
                     });
 
                     // Les panneaux d'inspection coutent plus cher a dessiner que

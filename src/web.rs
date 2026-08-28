@@ -8,6 +8,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Commande envoyee par la page, a rejouer sur les vraies broches.
@@ -332,17 +333,38 @@ fn servir(mut flux: TcpStream, partage: &Arc<Mutex<Partage>>) {
     repondre(&mut flux, "text/html; charset=utf-8", PAGE);
 }
 
-/// Demarre l'ecoute sur la boucle locale. Rend le port retenu.
-pub fn demarrer(partage: Arc<Mutex<Partage>>, port: u16) -> Result<u16, String> {
+/// Demarre l'ecoute sur la boucle locale. Rend le port retenu et le temoin qui
+/// permet de l'arreter.
+///
+/// L'ecoute est non bloquante et le temoin relu entre deux tentatives : sans
+/// cela le fil resterait pris dans `accept` et le serveur ne s'arreterait qu'a
+/// la fermeture du logiciel.
+pub fn demarrer(
+    partage: Arc<Mutex<Partage>>,
+    port: u16,
+) -> Result<(u16, Arc<AtomicBool>), String> {
     let ecoute = TcpListener::bind(("127.0.0.1", port)).map_err(|e| e.to_string())?;
     let port = ecoute.local_addr().map_err(|e| e.to_string())?.port();
+    ecoute.set_nonblocking(true).map_err(|e| e.to_string())?;
+    let actif = Arc::new(AtomicBool::new(true));
+    let temoin = Arc::clone(&actif);
     std::thread::spawn(move || {
-        for flux in ecoute.incoming().flatten() {
-            let partage = Arc::clone(&partage);
-            // Un fil par requete : la page en fait quatre par seconde, ca suffit
-            // largement et ca evite qu'une connexion lente bloque les autres.
-            std::thread::spawn(move || servir(flux, &partage));
+        while temoin.load(Ordering::Relaxed) {
+            match ecoute.accept() {
+                Ok((flux, _)) => {
+                    let partage = Arc::clone(&partage);
+                    let _ = flux.set_nonblocking(false);
+                    // Un fil par requete : la page en fait quatre par seconde,
+                    // ca suffit largement et ca evite qu'une connexion lente
+                    // bloque les autres.
+                    std::thread::spawn(move || servir(flux, &partage));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(_) => break,
+            }
         }
     });
-    Ok(port)
+    Ok((port, actif))
 }

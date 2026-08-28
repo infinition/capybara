@@ -24,6 +24,15 @@ directories = "5.0"
 byteorder = "1.5"
 rfd = "0.15"
 log = "0.4"
+# Decodage des images de fond glissees sous la fenetre transparente. Seuls les
+# formats qu'on rencontre vraiment sont actives, le reste alourdirait pour rien.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "bmp",
+    "gif",
+    "webp",
+] }
 
 # Le coeur est un interpreteur : il passe son temps dans une poignee de
 # fonctions qui s'appellent des millions de fois par seconde. L'optimisation

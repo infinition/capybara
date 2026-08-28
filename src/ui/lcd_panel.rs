@@ -93,6 +93,50 @@ fn silhouette_fenetre(cadre: Rect) -> Vec<Vec<Pos2>> {
     vec![corps, joues, pointe]
 }
 
+/// Papier glisse sous la fenetre transparente, tel que le panneau le recoit.
+pub struct Papier<'a> {
+    pub texture: &'a TextureHandle,
+    /// Largeur sur hauteur de l'image d'origine, pour ne pas la deformer.
+    pub rapport: f32,
+    pub zoom: f32,
+    pub dx: f32,
+    pub dy: f32,
+}
+
+/// Peint un morceau de la decoupe avec le papier, en maillage texture.
+///
+/// egui ne sait pas rogner sur un polygone : on ne peut pas poser une image et
+/// la couper a la forme. On fabrique donc le maillage a la main, en eventail
+/// depuis le premier sommet, et on calcule les coordonnees de texture depuis la
+/// position dans le cadre. L'image garde ses proportions, la plus petite
+/// dimension remplissant la decoupe, comme une photo cadree pour remplir.
+fn peindre_papier(morceau: &[Pos2], cadre: Rect, papier: &Papier<'_>) -> Shape {
+    let mut maillage = egui::Mesh::with_texture(papier.texture.id());
+    let centre = cadre.center();
+    let zoom = papier.zoom.max(0.05);
+    // Le cadre de reference est le carre circonscrit : la decoupe deborde un
+    // peu du cadre en bas, le papier doit deborder autant.
+    let etendue = cadre.width().max(cadre.height()) * 1.2;
+    // On etale la dimension la plus large de l'image pour la rendre carree, ce
+    // qui evite de l'ecraser.
+    let (ex, ey) = if papier.rapport >= 1.0 {
+        (etendue * papier.rapport, etendue)
+    } else {
+        (etendue, etendue / papier.rapport)
+    };
+    for point in morceau {
+        let u = (point.x - centre.x) / (ex * zoom) + 0.5 - papier.dx;
+        let v = (point.y - centre.y) / (ey * zoom) + 0.5 - papier.dy;
+        maillage.colored_vertex(*point, Color32::WHITE);
+        let dernier = maillage.vertices.len() - 1;
+        maillage.vertices[dernier].uv = pos2(u, v);
+    }
+    for i in 1..morceau.len().saturating_sub(1) {
+        maillage.add_triangle(0, i as u32, i as u32 + 1);
+    }
+    Shape::mesh(maillage)
+}
+
 impl LcdPanel {
     /// Dessine la console et rend l'etat de ses commandes.
     ///
@@ -109,6 +153,7 @@ impl LcdPanel {
         ecran: Option<&TextureHandle>,
         shell_color: ShellColor,
         angle_molette: f32,
+        papier: Option<&Papier<'_>>,
     ) -> Commandes {
         let couleurs = shell_color.couleurs();
         let (corps_col, calotte_col, ombre_col, bouton_col) =
@@ -237,7 +282,14 @@ impl LcdPanel {
         // voient pas, et egui ne sait remplir que du convexe.
         let cadre = ecran_rect.expand(cote * 0.30);
         for morceau in silhouette_fenetre(cadre) {
-            ui.painter().add(Shape::convex_polygon(morceau, motif_col, Stroke::NONE));
+            match papier {
+                Some(papier) => {
+                    ui.painter().add(peindre_papier(&morceau, cadre, papier));
+                }
+                None => {
+                    ui.painter().add(Shape::convex_polygon(morceau, motif_col, Stroke::NONE));
+                }
+            }
         }
 
         // Le mot de marque, au dessus de l'ecran, dans la couleur d'accent.

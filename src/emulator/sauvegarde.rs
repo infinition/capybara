@@ -440,6 +440,12 @@ pub struct DernierePartie {
     /// Coque choisie a la main, quand elle ne suit pas l'edition.
     #[serde(default)]
     pub coque: String,
+    /// Taille de la fenetre du mode jeu, en fraction de sa taille de base.
+    #[serde(default = "un")]
+    pub zoom_jeu: f32,
+    /// Fenetre du mode jeu maintenue au dessus des autres.
+    #[serde(default)]
+    pub toujours_devant: bool,
 }
 
 fn vrai() -> bool {
@@ -464,6 +470,8 @@ impl Default for DernierePartie {
             volume: 0.5,
             hauteur: 1.0,
             coque: String::new(),
+            zoom_jeu: 1.0,
+            toujours_devant: false,
         }
     }
 }
@@ -517,12 +525,13 @@ pub fn dossier_du_dump(empreinte: &str) -> PathBuf {
     dossier_racine().join(empreinte)
 }
 
-/// Dossier des points de reprise d'un dump.
+/// Dossier des points de reprise d'un emplacement de sauvegarde.
 ///
-/// Il vit a cote des sauvegardes de la meme console : chaque edition a le sien,
-/// et les points d'une console ne se melangent pas a ceux d'une autre.
-pub fn dossier_reprises(empreinte: &str) -> PathBuf {
-    dossier_du_dump(empreinte).join("reprises")
+/// Ils suivent la partie et non la console : deux parties menees sur le meme
+/// dump ont chacune leur passe, et revenir en arriere sur l'une ne propose
+/// jamais les points de l'autre.
+pub fn dossier_reprises(empreinte: &str, emplacement: &str) -> PathBuf {
+    dossier_du_dump(empreinte).join("reprises").join(emplacement)
 }
 
 /// Chemin d'un emplacement de sauvegarde.

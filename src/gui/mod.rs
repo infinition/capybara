@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod fond;
+
 pub mod screen;
 pub mod shell;
 pub mod sprites;

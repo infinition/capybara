@@ -8,8 +8,10 @@
 //! Un Tamagotchi mort se rattrape donc a l'heure pres, meme apres avoir eteint
 //! l'ordinateur.
 //!
-//! Le dossier est celui de l'empreinte du dump : chaque edition a le sien, et
-//! les points d'une console ne se melangent pas a ceux d'une autre.
+//! Le dossier est celui de l'emplacement de sauvegarde : les points suivent la
+//! partie et non la console. Deux parties menees sur le meme dump ont chacune
+//! leur passe, et revenir en arriere sur l'une ne propose jamais les points de
+//! l'autre.
 
 use std::path::{Path, PathBuf};
 
@@ -159,6 +161,48 @@ impl Journal {
         self.points.push(PointDeReprise { quand, cycles: etat.cycles, fichier });
         self.elaguer(&dossier);
         self.ecrire_index(&dossier);
+    }
+
+    /// Prend un point tout de suite, sans attendre la cadence.
+    ///
+    /// C'est le geste qu'on fait avant une betise : juste avant de tenter
+    /// quelque chose, on pose un repere.
+    pub fn prendre_maintenant(&mut self, machine: &Machine) -> bool {
+        let Some(dossier) = self.dossier.clone() else {
+            return false;
+        };
+        let quand = Local::now();
+        let fichier = format!("{}.tamastate", quand.format("%Y%m%d-%H%M%S"));
+        let etat = machine.instantane();
+        if etat.ecrire(&dossier.join(&fichier)).is_err() {
+            return false;
+        }
+        self.points.push(PointDeReprise { quand, cycles: etat.cycles, fichier });
+        self.derniere_prise = Some(std::time::Instant::now());
+        self.ecrire_index(&dossier);
+        true
+    }
+
+    /// Recopie un instantane venu d'ailleurs dans le journal.
+    ///
+    /// Il est relu avant d'etre adopte : un fichier illisible ne doit pas
+    /// entrer dans la liste, on ne s'en apercevrait qu'au moment de s'en
+    /// servir. Son heure est celle du fichier, a defaut celle du jour.
+    pub fn adopter(&mut self, source: &Path) -> Result<(), String> {
+        let Some(dossier) = self.dossier.clone() else {
+            return Err("aucune partie ouverte".to_string());
+        };
+        let etat = Instantane::lire(source)?;
+        let quand: DateTime<Local> = std::fs::metadata(source)
+            .and_then(|m| m.modified())
+            .map(DateTime::from)
+            .unwrap_or_else(|_| Local::now());
+        let fichier = format!("importe-{}.tamastate", quand.format("%Y%m%d-%H%M%S"));
+        std::fs::copy(source, dossier.join(&fichier)).map_err(|e| e.to_string())?;
+        self.points.push(PointDeReprise { quand, cycles: etat.cycles, fichier });
+        self.points.sort_by_key(|p| p.quand);
+        self.ecrire_index(&dossier);
+        Ok(())
     }
 
     /// Relit le point demande.
