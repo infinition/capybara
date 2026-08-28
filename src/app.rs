@@ -23,11 +23,18 @@ pub struct TamagotchiApp {
     pub disasm_view_addr: u32,
     /// Temps accorde a l'emulation a chaque image de l'interface.
     pub budget_ms: u64,
-    /// Broches maintenues basses, avec le nombre d'images restantes.
+    /// Broches tenues basses tant que la commande dure. C'est ce qui porte
+    /// l'appui long, celui qui ouvre le menu principal du jeu.
+    pub maintenus: std::collections::HashSet<u32>,
+    /// Broches tenues depuis le navigateur, qui annonce un debut et une fin
+    /// plutot que de repeter son maintien a chaque image.
+    pub tenus_distants: std::collections::HashSet<u32>,
+    /// Broches en impulsion, avec le compte de pas ou elles remontent.
     ///
-    /// Un appui doit durer plus qu'une image : le firmware scrute ses boutons a
-    /// sa propre cadence, et un appui d'une seule image lui echappe.
-    pub appuis: std::collections::HashMap<u32, u32>,
+    /// La duree se compte en pas emules, pas en images : l'emulateur tourne a
+    /// une fraction de la vitesse de la console, et un appui mesure en images
+    /// durerait bien trop peu de temps a ses yeux.
+    pub appuis: std::collections::HashMap<u32, u64>,
     /// Phases de l'encodeur restant a jouer, une par image.
     pub phases_encodeur: std::collections::VecDeque<(bool, bool)>,
     /// Texture de l'ecran, refaite seulement quand une trame arrive.
@@ -43,6 +50,11 @@ pub struct TamagotchiApp {
     pub debit: f64,
     /// Point de depart de la mesure de debit en cours.
     pub debit_depart: (u64, std::time::Instant),
+    /// Temps passe hors emulation a la derniere image, en millisecondes.
+    ///
+    /// C'est ce que l'interface prend a l'emulation. Sans ce chiffre, on ne
+    /// peut que supposer ou passe le temps.
+    pub cout_ui: f64,
 }
 
 impl TamagotchiApp {
@@ -70,6 +82,8 @@ impl TamagotchiApp {
             active_modal: ActiveModal::None,
             disasm_view_addr: 0x6001_1000,
             budget_ms: 12,
+            maintenus: std::collections::HashSet::new(),
+            tenus_distants: std::collections::HashSet::new(),
             appuis: std::collections::HashMap::new(),
             phases_encodeur: std::collections::VecDeque::new(),
             ecran: None,
@@ -78,6 +92,7 @@ impl TamagotchiApp {
             port_web,
             debit: 0.0,
             debit_depart: (0, std::time::Instant::now()),
+            cout_ui: 0.0,
         }
     }
 }
@@ -89,6 +104,8 @@ impl TamagotchiApp {
         self.machine.console.clear();
         self.appuis.clear();
         self.phases_encodeur.clear();
+        self.maintenus.clear();
+        self.tenus_distants.clear();
         self.historique.vider();
         match self.machine.load_firmware_file(&path) {
             Ok(report) => {
@@ -128,11 +145,25 @@ impl TamagotchiApp {
 }
 
 impl TamagotchiApp {
-    /// Maintient une broche basse pendant quelques images.
+    /// Duree d'une impulsion, en pas emules.
+    ///
+    /// Le SysTick est arme a 95999, soit une milliseconde a 96 MHz : cent
+    /// millisecondes de temps console font environ dix millions de pas. C'est
+    /// assez pour que le firmware voie l'appui, et assez court pour qu'il ne le
+    /// prenne pas pour un appui long.
+    const IMPULSION: u64 = 10_000_000;
+
+    /// Marque une broche comme tenue basse pour cette image.
+    fn maintenir(&mut self, broche: u32) {
+        self.maintenus.insert(broche);
+    }
+
+    /// Declenche une impulsion breve sur une broche.
     fn presser(&mut self, broche: u32) {
-        // Six images couvrent largement la periode a laquelle le firmware
-        // relit ses boutons, sans rendre l'appui collant a l'usage.
-        self.appuis.insert(broche, 6);
+        let fin = self.machine.cpu.cycles + Self::IMPULSION;
+        // Un appui deja en cours n'est jamais raccourci.
+        let entree = self.appuis.entry(broche).or_insert(fin);
+        *entree = (*entree).max(fin);
     }
 
     /// Programme un cran d'encodeur, en quadrature.
@@ -152,21 +183,34 @@ impl TamagotchiApp {
         }
     }
 
+    /// Toutes les broches de commande de la console.
+    const COMMANDES: [u32; 4] = [
+        Machine::BOUTON_MOLETTE,
+        Machine::BOUTON_A,
+        Machine::BOUTON_C,
+        Machine::BOUTON_B,
+    ];
+
     /// Applique l'etat des entrees pour l'image en cours.
+    ///
+    /// Une broche est basse tant qu'elle est tenue, ou tant que son impulsion
+    /// n'est pas ecoulee. Les deux se cumulent : relacher le pointeur pendant
+    /// une impulsion ne coupe pas l'appui avant terme.
     fn appliquer_entrees(&mut self) {
-        let broches: Vec<u32> = self.appuis.keys().copied().collect();
-        for broche in broches {
-            match self.appuis.get_mut(&broche) {
-                Some(restant) if *restant > 0 => {
-                    self.machine.appuyer(broche);
-                    *restant -= 1;
-                }
-                _ => {
-                    self.machine.relacher(broche);
-                    self.appuis.remove(&broche);
-                }
+        let maintenant = self.machine.cpu.cycles;
+        self.appuis.retain(|_, fin| *fin > maintenant);
+        for broche in Self::COMMANDES {
+            let bas = self.maintenus.contains(&broche) || self.appuis.contains_key(&broche);
+            if bas {
+                self.machine.appuyer(broche);
+            } else {
+                self.machine.relacher(broche);
             }
         }
+        // Le clavier est lu avant cet appel, la coque et le navigateur apres :
+        // vider ici laisse les trois alimenter la tranche suivante, et un
+        // bouton relache cesse bien de tenir sa broche.
+        self.maintenus.clear();
         if let Some((voie1, voie2)) = self.phases_encodeur.pop_front() {
             if voie1 {
                 self.machine.relacher(Machine::ENCODEUR_1);
@@ -227,6 +271,7 @@ impl TamagotchiApp {
             "== diagnostic emulateur Tamagotchi Paradise\n\
              firmware      {}\n\
              pas executes  {}   debit {:.1} millions par seconde\n\
+             cout interface {:.1} ms par image\n\
              PC            {:#010x}   mode {}   PRIMASK {}\n\
              trames ecran  {}   instantanes {}\n\
              etat du jeu   courant {}   transition demandee {}\n\
@@ -238,6 +283,7 @@ impl TamagotchiApp {
             self.load_path_input,
             self.machine.cpu.cycles,
             self.debit / 1e6,
+            self.cout_ui,
             self.machine.cpu.regs.pc,
             mode,
             self.machine.cpu.regs.primask,
@@ -272,28 +318,23 @@ impl eframe::App for TamagotchiApp {
         // Auto repaint for 60 FPS emulator loop
         ctx.request_repaint();
 
-        // 1. Entrees : les broches sont maintenues basses plusieurs images, sans
-        //    quoi le firmware, qui scrute a sa propre cadence, rate l'appui.
-        let key_a = ctx.input(|i| i.key_down(Key::A) || i.key_down(Key::ArrowLeft));
-        let key_b = ctx.input(|i| i.key_down(Key::B) || i.key_down(Key::ArrowDown));
-        let key_c = ctx.input(|i| i.key_down(Key::C) || i.key_down(Key::ArrowRight));
-        let key_ok = ctx.input(|i| i.key_down(Key::Space) || i.key_down(Key::Enter));
+        // 1. Entrees. Une touche tenue tient la broche basse aussi longtemps
+        //    qu'elle reste enfoncee : c'est ce que le jeu attend pour son appui
+        //    long, celui qui ouvre le menu principal.
         let key_f10 = ctx.input(|i| i.key_pressed(Key::F10));
         let molette = ctx.input(|i| {
             (i.key_pressed(Key::ArrowUp) as i32) - (i.key_pressed(Key::PageDown) as i32)
         });
-
-        if key_a {
-            self.presser(Machine::BOUTON_A);
-        }
-        if key_b {
-            self.presser(Machine::BOUTON_B);
-        }
-        if key_c {
-            self.presser(Machine::BOUTON_C);
-        }
-        if key_ok {
-            self.presser(Machine::BOUTON_MOLETTE);
+        let touches = [
+            (Machine::BOUTON_A, [Key::A, Key::ArrowLeft]),
+            (Machine::BOUTON_B, [Key::B, Key::ArrowDown]),
+            (Machine::BOUTON_C, [Key::C, Key::ArrowRight]),
+            (Machine::BOUTON_MOLETTE, [Key::Space, Key::Enter]),
+        ];
+        for (broche, keys) in touches {
+            if ctx.input(|i| keys.iter().any(|k| i.key_down(*k))) {
+                self.maintenir(broche);
+            }
         }
         if molette != 0 {
             self.tourner_molette(molette);
@@ -315,16 +356,54 @@ impl eframe::App for TamagotchiApp {
         };
         for commande in recues {
             match commande {
-                crate::web::Commande::BoutonA => self.presser(Machine::BOUTON_A),
-                crate::web::Commande::BoutonB => self.presser(Machine::BOUTON_B),
-                crate::web::Commande::BoutonC => self.presser(Machine::BOUTON_C),
-                crate::web::Commande::Molette => self.presser(Machine::BOUTON_MOLETTE),
+                crate::web::Commande::Presser(broche) => self.presser(broche),
+                // Le navigateur ne peut pas repeter son maintien a chaque image :
+                // il annonce le debut et la fin, et c'est nous qui tenons entre
+                // les deux.
+                crate::web::Commande::Tenir(broche, true) => {
+                    self.tenus_distants.insert(broche);
+                }
+                crate::web::Commande::Tenir(broche, false) => {
+                    self.tenus_distants.remove(&broche);
+                }
                 crate::web::Commande::Tourner(sens) => self.tourner_molette(sens),
                 crate::web::Commande::Reculer => self.reculer(),
+                crate::web::Commande::Charger(chemin) => {
+                    self.load_firmware(std::path::PathBuf::from(chemin));
+                }
+                crate::web::Commande::Vitesse(ms) => self.budget_ms = ms,
+                crate::web::Commande::SauverEtat(chemin) => {
+                    let etat = self.machine.instantane();
+                    self.status_msg = Some(match etat.ecrire(std::path::Path::new(&chemin)) {
+                        Ok(()) => format!("Etat ecrit dans {}", chemin),
+                        Err(e) => format!("Ecriture impossible : {}", e),
+                    });
+                }
+                crate::web::Commande::ChargerEtat(chemin) => {
+                    self.status_msg = Some(
+                        match crate::emulator::etat::Instantane::lire(std::path::Path::new(
+                            &chemin,
+                        )) {
+                            Ok(etat) => {
+                                self.machine.restaurer(&etat);
+                                self.appuis.clear();
+                                self.maintenus.clear();
+                                self.tenus_distants.clear();
+                                self.phases_encodeur.clear();
+                                format!("Etat restaure, {} pas executes.", etat.cycles)
+                            }
+                            Err(e) => format!("Lecture impossible : {}", e),
+                        },
+                    );
+                }
             }
+        }
+        for broche in self.tenus_distants.clone() {
+            self.maintenir(broche);
         }
 
         self.appliquer_entrees();
+        let debut_emulation = std::time::Instant::now();
         if self.machine.is_running && self.budget_ms > 0 {
             let debut = std::time::Instant::now();
             let limite = std::time::Duration::from_millis(self.budget_ms);
@@ -335,6 +414,12 @@ impl eframe::App for TamagotchiApp {
             }
             self.historique.suivre(&self.machine);
         }
+
+        // Ce que l'interface prend a l'emulation : tout ce qui n'est pas la
+        // tranche d'execution, moyenne sur les dernieres images.
+        let emulation_ms = debut_emulation.elapsed().as_secs_f64() * 1000.0;
+        let image_ms = _dt as f64 * 1000.0;
+        self.cout_ui = self.cout_ui * 0.9 + (image_ms - emulation_ms).max(0.0) * 0.1;
 
         // Debit reel, mesure sur une demi-seconde.
         let ecoule = self.debit_depart.1.elapsed().as_secs_f64();
@@ -652,17 +737,20 @@ impl eframe::App for TamagotchiApp {
             // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
             // P0.11, C en P0.10, appui de molette en P0.8, encodeur sur P2.0 et
             // P2.1.
-            if commandes.bouton_a {
-                self.presser(Machine::BOUTON_A);
-            }
-            if commandes.bouton_b {
-                self.presser(Machine::BOUTON_B);
-            }
-            if commandes.bouton_c {
-                self.presser(Machine::BOUTON_C);
-            }
-            if commandes.molette_appuyee {
-                self.presser(Machine::BOUTON_MOLETTE);
+            for (broche, etat) in [
+                (Machine::BOUTON_A, commandes.bouton_a),
+                (Machine::BOUTON_B, commandes.bouton_b),
+                (Machine::BOUTON_C, commandes.bouton_c),
+                (Machine::BOUTON_MOLETTE, commandes.molette),
+            ] {
+                // Le pointeur enfonce tient la broche, un clic bref declenche
+                // une impulsion assez longue pour que le firmware la voie.
+                if etat.maintenu {
+                    self.maintenir(broche);
+                }
+                if etat.clique {
+                    self.presser(broche);
+                }
             }
             if commandes.molette_tournee != 0 {
                 self.tourner_molette(commandes.molette_tournee);

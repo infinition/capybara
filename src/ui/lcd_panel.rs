@@ -5,13 +5,25 @@ use crate::gui::ShellColor;
 
 pub struct LcdPanel;
 
+/// Etat d'un bouton pour une image.
+///
+/// Les deux cas sont distincts : `maintenu` dit que le pointeur reste enfonce,
+/// et c'est ce qui permet l'appui long que le jeu attend pour ouvrir son menu.
+/// `clique` ne signale qu'un appui bref, qui doit tout de meme durer assez pour
+/// que le firmware le voie.
+#[derive(Default, Clone, Copy)]
+pub struct EtatBouton {
+    pub maintenu: bool,
+    pub clique: bool,
+}
+
 /// Etat des commandes rendu par le panneau pour une image.
 #[derive(Default, Clone, Copy)]
 pub struct Commandes {
-    pub bouton_a: bool,
-    pub bouton_b: bool,
-    pub bouton_c: bool,
-    pub molette_appuyee: bool,
+    pub bouton_a: EtatBouton,
+    pub bouton_b: EtatBouton,
+    pub bouton_c: EtatBouton,
+    pub molette: EtatBouton,
     pub molette_tournee: i32,
 }
 
@@ -90,11 +102,16 @@ impl LcdPanel {
             .min(coque.max.y - rayon - 16.0);
         let ecart = (largeur * 0.24).min(72.0);
 
-        let mut bouton = |ui: &mut Ui, centre, etiquette: &str| -> bool {
+        let bouton = |ui: &mut Ui, centre, etiquette: &str| -> EtatBouton {
             let zone = Rect::from_center_size(centre, vec2(rayon * 2.0, rayon * 2.0));
-            let reponse = ui.allocate_rect(zone, Sense::click());
-            let enfonce = reponse.is_pointer_button_down_on();
-            let couleur = if enfonce { shadow_col } else { accent_col };
+            let reponse = ui.allocate_rect(zone, Sense::click_and_drag());
+            // `is_pointer_button_down_on` reste vrai tant que le pointeur est
+            // enfonce sur le bouton : c'est lui qui porte l'appui long.
+            let etat = EtatBouton {
+                maintenu: reponse.is_pointer_button_down_on(),
+                clique: reponse.clicked(),
+            };
+            let couleur = if etat.maintenu { shadow_col } else { accent_col };
             let peintre = ui.painter();
             peintre.circle_filled(centre, rayon, couleur);
             peintre.circle_stroke(centre, rayon, Stroke::new(2.0_f32, shadow_col));
@@ -105,11 +122,11 @@ impl LcdPanel {
                 egui::FontId::monospace(13.0),
                 Color32::BLACK,
             );
-            enfonce || reponse.clicked()
+            etat
         };
 
         commandes.bouton_a = bouton(ui, pos2(coque.center().x - ecart, ligne), "A");
-        commandes.molette_appuyee = bouton(ui, pos2(coque.center().x, ligne + 14.0), "OK");
+        commandes.molette = bouton(ui, pos2(coque.center().x, ligne + 14.0), "OK");
         commandes.bouton_c = bouton(ui, pos2(coque.center().x + ecart, ligne), "C");
         commandes.bouton_b = bouton(
             ui,

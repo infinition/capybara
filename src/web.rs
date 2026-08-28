@@ -11,14 +11,59 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
 /// Commande envoyee par la page, a rejouer sur les vraies broches.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Commande {
-    BoutonA,
-    BoutonB,
-    BoutonC,
-    Molette,
+    /// Appui bref sur une broche, designee comme le firmware la designe.
+    Presser(u32),
+    /// Debut ou fin d'un appui tenu. C'est ce qui porte l'appui long, celui
+    /// que le jeu attend pour ouvrir son menu principal.
+    Tenir(u32, bool),
     Tourner(i32),
     Reculer,
+    /// Chemin d'un dump de flash a charger.
+    Charger(String),
+    /// Temps accorde a l'emulation par image, en millisecondes.
+    Vitesse(u64),
+    /// Ecrire l'etat courant dans un fichier.
+    SauverEtat(String),
+    /// Repartir d'un etat enregistre.
+    ChargerEtat(String),
+}
+
+/// Decode les sequences pour cent d'une adresse.
+///
+/// Les chemins Windows portent des deux points, des barres obliques inverses et
+/// des espaces : la page les encode, il faut les rendre tels quels.
+fn decoder(s: &str) -> String {
+    let octets = s.as_bytes();
+    let mut sortie = Vec::with_capacity(octets.len());
+    let mut i = 0;
+    while i < octets.len() {
+        match octets[i] {
+            b'%' if i + 2 < octets.len() => {
+                let paire = std::str::from_utf8(&octets[i + 1..i + 3]).unwrap_or("");
+                match u8::from_str_radix(paire, 16) {
+                    Ok(v) => {
+                        sortie.push(v);
+                        i += 3;
+                    }
+                    Err(_) => {
+                        sortie.push(octets[i]);
+                        i += 1;
+                    }
+                }
+            }
+            b'+' => {
+                sortie.push(b' ');
+                i += 1;
+            }
+            c => {
+                sortie.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&sortie).into_owned()
 }
 
 /// Ce que l'emulateur publie et ce qu'il recoit.
@@ -51,13 +96,35 @@ font-size:12px;line-height:1.45;white-space:pre-wrap;max-width:640px;overflow:au
 <div>
 <canvas id="ecran" width="128" height="128" style="width:384px;height:384px"></canvas>
 <div style="margin-top:10px">
-<button onclick="cmd('a')">A</button>
-<button onclick="cmd('ok')">OK</button>
-<button onclick="cmd('c')">C</button>
-<button onclick="cmd('b')">B</button>
-<button onclick="cmd('haut')">Molette +</button>
-<button onclick="cmd('bas')">Molette -</button>
+<button data-b="a">A</button>
+<button data-b="ok">OK</button>
+<button data-b="c">C</button>
+<button data-b="b">B</button>
+<button onclick="cmd('tourner_arriere')">Molette +</button>
+<button onclick="cmd('tourner_avant')">Molette -</button>
 <button onclick="cmd('reculer')">Revenir en arriere</button>
+</div>
+<p style="font-size:12px;color:#9aa4bd;max-width:384px">
+Garde le bouton enfonce pour un appui long : c'est ce qui ouvre le menu
+principal du jeu. Au clavier, tiens la touche.
+</p>
+<div style="margin-top:6px">
+<div style="margin-bottom:6px">Vitesse
+<button onclick="reglage('vitesse','ms',0)">Pause</button>
+<button onclick="reglage('vitesse','ms',12)">Normale</button>
+<button onclick="reglage('vitesse','ms',40)">Rapide</button>
+</div>
+<div style="margin-bottom:6px">
+<input id="chemin" style="width:330px;padding:7px;border-radius:6px;border:1px solid #3d4761;
+background:#181c26;color:#dfe3ee" placeholder="C:\chemin\vers\firmware.bin">
+<button onclick="reglage('firmware','chemin',ch())">Charger le .bin</button>
+</div>
+<div>
+<input id="etat" style="width:330px;padding:7px;border-radius:6px;border:1px solid #3d4761;
+background:#181c26;color:#dfe3ee" placeholder="C:\chemin\vers\partie.tamastate">
+<button onclick="reglage('sauver','chemin',et())">Sauver l'etat</button>
+<button onclick="reglage('restaurer','chemin',et())">Charger l'etat</button>
+</div>
 </div>
 </div>
 <pre id="diag">chargement...</pre>
@@ -65,7 +132,25 @@ font-size:12px;line-height:1.45;white-space:pre-wrap;max-width:640px;overflow:au
 <script>
 const toile = document.getElementById('ecran').getContext('2d');
 const image = toile.createImageData(128, 128);
-function cmd(n){ fetch('/bouton?nom=' + n); }
+function cmd(n, action){
+  fetch('/bouton?nom=' + n + (action ? '&action=' + action : ''));
+}
+function reglage(quoi, cle, valeur){
+  fetch('/reglage?quoi=' + quoi + '&' + cle + '=' + encodeURIComponent(valeur));
+}
+const ch = () => document.getElementById('chemin').value;
+const et = () => document.getElementById('etat').value;
+// Un bouton tenu envoie un debut puis une fin : c'est l'appui long.
+for(const b of document.querySelectorAll('button[data-b]')){
+  const nom = b.dataset.b;
+  const bas = e => { e.preventDefault(); cmd(nom, 'bas'); };
+  const haut = () => cmd(nom, 'haut');
+  b.addEventListener('mousedown', bas);
+  b.addEventListener('touchstart', bas, {passive:false});
+  for(const ev of ['mouseup','mouseleave','touchend','touchcancel']){
+    b.addEventListener(ev, haut);
+  }
+}
 async function boucle(){
   try{
     const r = await fetch('/etat.json', {cache:'no-store'});
@@ -86,9 +171,17 @@ async function boucle(){
   setTimeout(boucle, 250);
 }
 boucle();
+const touches = {a:'a', A:'a', b:'b', B:'b', c:'c', C:'c', ' ':'ok', Enter:'ok'};
+const tenues = new Set();
 document.addEventListener('keydown', ev => {
-  const t = {a:'a', b:'b', c:'c', ' ':'ok', Enter:'ok', ArrowUp:'haut', ArrowDown:'bas'};
-  if(t[ev.key]){ ev.preventDefault(); cmd(t[ev.key]); }
+  if(ev.key === 'ArrowUp'){ ev.preventDefault(); cmd('tourner_arriere'); return; }
+  if(ev.key === 'ArrowDown'){ ev.preventDefault(); cmd('tourner_avant'); return; }
+  const n = touches[ev.key];
+  if(n && !tenues.has(n)){ ev.preventDefault(); tenues.add(n); cmd(n, 'bas'); }
+});
+document.addEventListener('keyup', ev => {
+  const n = touches[ev.key];
+  if(n && tenues.delete(n)){ cmd(n, 'haut'); }
 });
 </script></body></html>"#;
 
@@ -143,17 +236,59 @@ fn servir(mut flux: TcpStream, partage: &Arc<Mutex<Partage>>) {
         return;
     }
 
-    if chemin.starts_with("/bouton") {
-        let nom = chemin.split("nom=").nth(1).unwrap_or("").trim_end_matches(|c: char| c.is_whitespace());
-        let commande = match nom {
-            "a" => Some(Commande::BoutonA),
-            "b" => Some(Commande::BoutonB),
-            "c" => Some(Commande::BoutonC),
-            "ok" => Some(Commande::Molette),
-            "haut" => Some(Commande::Tourner(-1)),
-            "bas" => Some(Commande::Tourner(1)),
-            "reculer" => Some(Commande::Reculer),
+    // Chargement, vitesse et instantanes, pour piloter depuis la page.
+    if chemin.starts_with("/reglage") {
+        let valeur = |cle: &str| -> Option<String> {
+            chemin
+                .split(&format!("{}=", cle))
+                .nth(1)
+                .map(|reste| decoder(reste.split(['&', ' ']).next().unwrap_or("")))
+        };
+        let commande = match valeur("quoi").as_deref() {
+            Some("firmware") => valeur("chemin").map(Commande::Charger),
+            Some("vitesse") => valeur("ms").and_then(|v| v.parse().ok()).map(Commande::Vitesse),
+            Some("sauver") => valeur("chemin").map(Commande::SauverEtat),
+            Some("restaurer") => valeur("chemin").map(Commande::ChargerEtat),
             _ => None,
+        };
+        if let Some(c) = commande {
+            partage.lock().unwrap().commandes.push(c);
+        }
+        repondre(&mut flux, "text/plain", "ok");
+        return;
+    }
+
+    if chemin.starts_with("/bouton") {
+        let parametre = |cle: &str| -> Option<String> {
+            chemin.split(&format!("{}=", cle)).nth(1).map(|reste| {
+                reste
+                    .split(['&', ' '])
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            })
+        };
+        let nom = parametre("nom").unwrap_or_default();
+        let action = parametre("action").unwrap_or_else(|| "clic".to_string());
+        // Identifiants du firmware : molette 0x08, A 0x09, C 0x0A, B 0x0B.
+        let broche = match nom.as_str() {
+            "a" => Some(0x09),
+            "b" => Some(0x0B),
+            "c" => Some(0x0A),
+            "ok" => Some(0x08),
+            _ => None,
+        };
+        let commande = match (broche, action.as_str()) {
+            (Some(b), "bas") => Some(Commande::Tenir(b, true)),
+            (Some(b), "haut") => Some(Commande::Tenir(b, false)),
+            (Some(b), _) => Some(Commande::Presser(b)),
+            (None, _) => match nom.as_str() {
+                "tourner_avant" => Some(Commande::Tourner(1)),
+                "tourner_arriere" => Some(Commande::Tourner(-1)),
+                "reculer" => Some(Commande::Reculer),
+                _ => None,
+            },
         };
         if let Some(c) = commande {
             partage.lock().unwrap().commandes.push(c);
