@@ -12,6 +12,30 @@ use crate::hw_bridge::FlashInspector;
 use crate::i18n::{I18n, Language};
 use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
+/// Entete repliable du menu du clic droit, une seule section ouverte a la fois.
+///
+/// egui a bien un entete repliable, mais il garde son etat dans sa memoire :
+/// referme le menu, rouvre le, la section est encore depliee. Celui ci suit
+/// l'etat que l'application tient, et qu'elle remet a zero a la fermeture.
+fn section<R>(
+    ui: &mut egui::Ui,
+    ouverte: &mut Option<u8>,
+    numero: u8,
+    titre: &str,
+    contenu: impl FnOnce(&mut egui::Ui) -> R,
+) {
+    let depliee = *ouverte == Some(numero);
+    let fleche = if depliee { "v" } else { ">" };
+    if ui.button(format!("{}  {}", fleche, titre)).clicked() {
+        *ouverte = if depliee { None } else { Some(numero) };
+    }
+    if depliee {
+        ui.indent(("section", numero), |ui| {
+            contenu(ui);
+        });
+    }
+}
+
 /// Ouvre le choix d'une image.
 fn choisir_une_image() -> Option<std::path::PathBuf> {
     rfd::FileDialog::new()
@@ -148,6 +172,12 @@ pub struct TamagotchiApp {
     pub reprises: crate::emulator::reprises::Journal,
     /// Onglet ouvert dans le panneau lateral.
     pub onglet: Onglet,
+    /// Section depliee du menu du clic droit, une seule a la fois.
+    ///
+    /// Elle est tenue ici et non par egui : l'etat d'un entete repliable
+    /// d'egui survit a la fermeture du menu, et on le retrouvait ouvert au
+    /// clic droit suivant. Elle est refermee des que le menu se ferme.
+    section_menu: Option<u8>,
     /// Vue de restauration ouverte.
     pub voir_reprises: bool,
     /// Habillage de la console courante : papier, titre et vitre.
@@ -275,6 +305,7 @@ impl TamagotchiApp {
             historique: crate::emulator::etat::Historique::default(),
             reprises: crate::emulator::reprises::Journal::default(),
             onglet: Onglet::Console,
+            section_menu: None,
             voir_reprises: false,
             fond: crate::gui::fond::Habillage::default(),
             fond_texture: None,
@@ -1712,31 +1743,15 @@ impl TamagotchiApp {
                 self.rafraichir_la_texture(ctx);
                 self.dessiner_la_console(ctx, ui, zone);
 
-                // Un seul bouton, minuscule, pose sur le bas de la coque : le
-                // reste des commandes passe par le clic droit, comme partout
-                // ailleurs sur le bureau. Sans barre de titre il faut bien que
-                // la fermeture vive quelque part, et un menu vaut mieux qu'un
-                // bouton de plus sur un objet qu'on veut voir nu.
-                let cote = 15.0;
-                let pastille = egui::Rect::from_center_size(
-                    egui::pos2(zone.center().x, zone.max.y - cote * 1.6),
-                    egui::vec2(cote, cote),
-                );
-                if ui
-                    .put(
-                        pastille,
-                        egui::Button::new(egui::RichText::new("i").size(9.0))
-                            .rounding(cote * 0.5)
-                            .fill(egui::Color32::from_black_alpha(40)),
-                    )
-                    .on_hover_text("Inspection")
-                    .clicked()
-                {
-                    self.mode = Mode::Inspection;
-                }
-
                 // Clic droit sur la coque : le menu de la fenetre.
                 let mut mode_voulu = None;
+                // Le menu est referme : la prochaine ouverture repart repliee.
+                if !ctx.memory(|m| m.any_popup_open()) {
+                    self.section_menu = None;
+                }
+                // Sortie du champ pour la duree du menu : la fermeture qui
+                // suit ne peut pas emprunter `self` deux fois.
+                let mut section_ouverte = self.section_menu;
                 let mut console_voulue = None;
                 let mut zoom_voulu = None;
                 let mut point_voulu = None;
@@ -1754,7 +1769,7 @@ impl TamagotchiApp {
                     // renvoie a gauche, et il recouvre le menu qui l'a ouvert.
                     ui.set_min_width(210.0);
                     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                        egui::CollapsingHeader::new("Partie").show(ui, |ui| {
+                        section(ui, &mut section_ouverte, 0, "Partie", |ui| {
                             if self.machine.empreinte.is_none() {
                                 ui.label(egui::RichText::new("Aucune console chargee.").small());
                             }
@@ -1785,7 +1800,7 @@ impl TamagotchiApp {
                             }
                         });
 
-                        egui::CollapsingHeader::new("Console").show(ui, |ui| {
+                        section(ui, &mut section_ouverte, 1, "Console", |ui| {
                             for chemin in crate::emulator::sauvegarde::firmwares_connus() {
                                 let nom = chemin
                                     .file_stem()
@@ -1802,7 +1817,7 @@ impl TamagotchiApp {
                             }
                         });
 
-                        egui::CollapsingHeader::new("Ramener la console a...").show(ui, |ui| {
+                        section(ui, &mut section_ouverte, 2, "Ramener la console a...", |ui| {
                             if self.reprises.points().is_empty() {
                                 ui.label(
                                     egui::RichText::new("Aucun point pour l'instant.").small(),
@@ -1843,7 +1858,7 @@ impl TamagotchiApp {
                             }
                         });
 
-                        egui::CollapsingHeader::new("Taille").show(ui, |ui| {
+                        section(ui, &mut section_ouverte, 3, "Taille", |ui| {
                             if ui.button("Agrandir de 25 %").clicked() {
                                 zoom_voulu = Some((self.zoom_jeu * 1.25).min(3.0));
                                 ui.close_menu();
@@ -1901,6 +1916,7 @@ impl TamagotchiApp {
                 if ouvrir_la_saisie {
                     self.saisie_sauvegarde = Some(String::new());
                 }
+                self.section_menu = section_ouverte;
                 if let Some(nom) = partie_voulue {
                     self.ouvrir_emplacement(nom);
                 }
