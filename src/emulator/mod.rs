@@ -83,7 +83,29 @@ impl Machine {
     }
 
     pub fn step(&mut self) -> StepResult {
+        if self.reveil_materiel() {
+            return StepResult::Ok(1);
+        }
         self.cpu.step(&mut self.bus, &mut self.periph)
+    }
+
+    /// Applique le reveil materiel quand il y en a un a appliquer.
+    ///
+    /// La veille profonde n'a pas de sortie logicielle : le firmware programme
+    /// son echeance en `0x45000230`, s'endort, et c'est le bloc d'horloge qui
+    /// rallume le coeur. Le firmware retrouve ensuite la raison du reveil dans
+    /// le statut `0x45000234`, qu'on a pose en meme temps.
+    fn reveil_materiel(&mut self) -> bool {
+        if !self.periph.snsys.reveil_demande {
+            return false;
+        }
+        self.periph.snsys.reveil_demande = false;
+        if !self.en_veille_profonde() {
+            return false;
+        }
+        self.reset();
+        self.is_running = true;
+        true
     }
 
     pub fn run_frame(&mut self) -> StepResult {
@@ -111,6 +133,10 @@ impl Machine {
                 }
             }
 
+            if self.reveil_materiel() {
+                executed += 1;
+                continue;
+            }
             match self.cpu.step(&mut self.bus, &mut self.periph) {
                 StepResult::Ok(_) => executed += 1,
                 StepResult::Breakpoint => {
@@ -243,8 +269,8 @@ impl Machine {
     /// la partie reprend la ou elle en etait.
     pub fn appuyer(&mut self, id: u32) {
         if self.en_veille_profonde() {
-            self.reset();
-            self.is_running = true;
+            self.periph.snsys.declencher_reveil();
+            self.reveil_materiel();
             return;
         }
         let broche = id & 0xF;

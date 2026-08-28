@@ -29,6 +29,10 @@ pub struct SnSysRegisters {
     /// Cycles accumules depuis la derniere seconde entiere.
     #[serde(default)]
     reste: u64,
+    /// Pose quand l'echeance d'alarme vient d'etre atteinte. C'est le reveil
+    /// materiel, qui sur la puce remet le coeur a zero.
+    #[serde(default)]
+    pub reveil_demande: bool,
 }
 
 impl SnSysRegisters {
@@ -74,12 +78,65 @@ impl SnSysRegisters {
         self.regs.insert(offset, val);
     }
 
-    /// Avance le compteur de secondes du nombre de cycles ecoules.
+    /// Comparateur d'alarme. Le firmware y pose l'echeance de son prochain
+    /// reveil avant de s'endormir, en `0x00002196`, et la compare au compteur
+    /// en `0x00005CAC`.
+    pub const ALARME: u32 = 0x230;
+
+    /// Statut de l'alarme. Le firmware y lit les bits 9 et 11 en `0x00005CD2`
+    /// pour savoir si c'est elle qui a reveille la console, puis les efface en
+    /// `0x00005CE4`.
+    pub const STATUT_ALARME: u32 = 0x234;
+    /// Bits que le materiel pose quand l'echeance est atteinte.
+    pub const ALARME_ECHUE: u32 = 0xA00;
+    /// Temoin d'alarme armee, pose par le firmware en `0x00002468` juste apres
+    /// avoir ecrit l'echeance. Le materiel l'efface en sonnant, et le firmware
+    /// exige de le trouver efface en `0x00005CC2` pour croire au reveil.
+    pub const ALARME_ARMEE: u32 = 0x100;
+
+    /// Avance le compteur de secondes du nombre de cycles ecoules, et pose le
+    /// statut d'alarme quand l'echeance est atteinte.
+    ///
+    /// Sans elle, la console programme son reveil en `0x00002196` puis s'endort
+    /// pour toujours, et le personnage ne vieillit plus.
     pub fn tick(&mut self, cycles: u32) {
+        let avant = self.secondes;
         self.reste += cycles as u64;
         while self.reste >= CYCLES_PAR_SECONDE {
             self.reste -= CYCLES_PAR_SECONDE;
             self.secondes = self.secondes.wrapping_add(1);
         }
+        if self.secondes == avant {
+            return;
+        }
+        // Le firmware pose `echeance - 1` dans le comparateur, en `0x0000218C`,
+        // et teste `comparateur < compteur` en `0x00005CAC`. L'alarme ne sonne
+        // donc qu'une fois le comparateur depasse, pas atteint.
+        let echeance = self.regs.get(&Self::ALARME).copied().unwrap_or(0);
+        if echeance != 0 && avant <= echeance && self.secondes > echeance {
+            self.declencher_reveil();
+        }
+    }
+
+    /// Marque le reveil : le temoin d'armement retombe, les deux bits de sonnerie
+    /// se posent, et le coeur est a rallumer.
+    ///
+    /// L'appui sur un bouton passe par la meme porte. Le materiel a
+    /// vraisemblablement un temoin distinct pour la broche de reveil, qu'on n'a
+    /// pas identifie ; mais le firmware n'a qu'un seul chemin de reprise apres
+    /// veille profonde, celui de `0x00005CDA`, et il y recalcule la date depuis
+    /// le compteur. Rien n'y est fausse.
+    pub fn declencher_reveil(&mut self) {
+        // Le firmware exige d'abord, en `0x00005CAC`, que le compteur ait
+        // depasse le comparateur. Un reveil par bouton arrive avant l'echeance
+        // prevue : on ramene donc celle ci a l'instant, ce qui revient a dire
+        // que le reveil a bien eu lieu maintenant.
+        let echeance = self.regs.entry(Self::ALARME).or_default();
+        if *echeance >= self.secondes {
+            *echeance = self.secondes.saturating_sub(1);
+        }
+        let statut = self.regs.entry(Self::STATUT_ALARME).or_default();
+        *statut = (*statut & !Self::ALARME_ARMEE) | Self::ALARME_ECHUE;
+        self.reveil_demande = true;
     }
 }

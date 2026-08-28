@@ -154,7 +154,8 @@ impl Cpu {
                 }
                 // Le compteur de secondes de la zone systeme. C'est la seule
                 // source de temps du calendrier du jeu : sans lui la date reste
-                // sur celle qui a ete reglee, et rien ne vieillit.
+                // sur celle qui a ete reglee, et rien ne vieillit. Son alarme
+                // est ce qui sort la console de sa veille profonde.
                 periph.snsys.tick(c);
                 StepResult::Ok(c)
             }
