@@ -10,8 +10,9 @@ horloge qui avance, oeuf qui eclot, nourrissage, QR code secret, veille et
 reveil, sauvegardes persistantes qui survivent a l'extinction de l'ordinateur et
 vieillissement en temps reel, coque fidele suivant l'edition, son de la console.
 
-L'ecran fait 128 x 128 en RGB565. La cle de dechiffrement est `<CLE>`,
-commune aux cinq editions.
+L'ecran fait 128 x 128 en RGB565. La cle de dechiffrement est commune aux cinq
+editions ; elle vient de `SONIX_DEVICE_KEY` et n'est nulle part dans le depot.
+Voir `reprise.md`.
 
 **Il n'y a plus de defaut visible a l'ecran.** La vitesse a longtemps ete le
 dernier : l'emulation plafonnait a 0,78 fois le temps de la console, la planete

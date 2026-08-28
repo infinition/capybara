@@ -220,7 +220,7 @@ footer p{max-width:70ch}
   </dl>
 
   <div class="note win" style="margin-top:26px">
-    <p><strong>Révision 5. L'émulateur joue, et il tient le rythme.</strong> Mise en route complète, boutons et molette, horloge qui avance, œuf qui éclot, nourrissage, QR code secret, veille et réveil, sauvegardes persistantes qui survivent à l'extinction du PC, vieillissement en temps réel, coque fidèle suivant l'édition, et le son que la console compose. 71 commits, 16 118 lignes de Rust, 22 sondes, 73 tests. La vitesse était le dernier défaut visible ; elle est passée à 1,17 fois le temps de la console, et le gouverneur la retient désormais à 1,00. Ce qui reste ouvert ne se voit pas à l'écran.</p>
+    <p><strong>Révision 5. L'émulateur joue, et il tient le rythme.</strong> Mise en route complète, boutons et molette, horloge qui avance, œuf qui éclot, nourrissage, QR code secret, veille et réveil, sauvegardes persistantes qui survivent à l'extinction du PC, vieillissement en temps réel, coque fidèle suivant l'édition, et le son que la console compose. 75 commits, 16 415 lignes de Rust, 22 sondes, 73 tests. La vitesse était le dernier défaut visible ; elle est passée à 1,17 fois le temps de la console, et le gouverneur la retient désormais à 1,00. Ce qui reste ouvert ne se voit pas à l'écran.</p>
     <p>Cette révision <strong>ajoute sans retirer</strong>. Les constats des révisions précédentes sont conservés tels quels, y compris ceux que la suite a démentis, avec la mention de ce qui les a remplacés. Un dossier de rétro-ingénierie vaut autant par ses fausses pistes datées que par son état final.</p>
     <p>Six sections sont apparues depuis la révision 3, à mesure que le firmware révélait des morceaux dont je ne soupçonnais pas l'existence : les démentis de la carte périphériques, le catalogue des défauts de cœur, le temps et la veille, le moteur audio, les sauvegardes, et la vitesse.</p>
   </div>
@@ -261,13 +261,13 @@ footer p{max-width:70ch}
   <!-- ===== JOURNAL ===== -->
   <section id="journal">
     <div class="sec-head"><span class="sec-code">LOG</span><h2>Journal des avancées</h2></div>
-    <p class="sec-intro">Tout est sur la branche <code>feat/real-firmware-boot</code>. Je liste du plus récent au plus ancien. À ce jour, 71 commits, 16 118 lignes de Rust, 22 sondes et 73 tests.</p>
+    <p class="sec-intro">Tout est sur la branche <code>feat/real-firmware-boot</code>. Je liste du plus récent au plus ancien. À ce jour, 75 commits, 16 415 lignes de Rust, 22 sondes et 73 tests.</p>
 
     <h3>Depuis la révision 4</h3>
     <p>Une seule journée, le 28 août 2026, mais elle ferme les deux derniers points ouverts.</p>
     <div class="log">
       <div class="log-row"><code>Vitesse</code><div><b>L'émulation passe devant la console</b><span>1,07 fois le temps réel sur <code>step</code>, 1,17 sur <code>run_frame</code>. Deux tests posés dans le chemin chaud, dont un hachage complet par instruction pour une table de points d'arrêt vide. La sonde ne les voyait pas : elle mesurait la boucle que l'interface n'appelle pas.</span></div></div>
-      <div class="log-row"><code>Sécurité</code><div><b>La clé sort de l'historique</b><span>71 commits réécrits, zéro occurrence restante, 94 fichiers suivis, rien de perdu. Les tests lisent maintenant deux variables d'environnement et restent verts avec comme sans. Le détail, et le piège de <code>refs/original</code>, en section AUD.</span></div></div>
+      <div class="log-row"><code>Sécurité</code><div><b>La clé sort de l'historique</b><span>Trois passes, dont deux qui ont échoué en silence. 75 commits réécrits, zéro occurrence restante, 99 fichiers suivis, rien de perdu, tests verts. Les trois pièges sont en section AUD, et ils valent au-delà de ce projet.</span></div></div>
     </div>
 
     <h3>Depuis la révision 3</h3>
@@ -1255,7 +1255,7 @@ sha256sum flash.bin
     </div>
 
     <h3>Hygiène du dépôt, et la purge de l'historique</h3>
-    <p>Pendant longtemps la deviceKey était en clair dans <code>tests/emulator_tests.rs</code>, avec un chemin absolu personnel vers le dump juste au-dessus. Ce n'étaient pas des bugs, mais le genre de détail qui coûte cher le jour où le dépôt part sur GitHub : la valeur serait partie avec, dans les 71 commits, et un <code>git rm</code> ultérieur n'y aurait rien changé.</p>
+    <p>Pendant longtemps la deviceKey était en clair dans <code>tests/emulator_tests.rs</code>, avec un chemin absolu personnel vers le dump juste au-dessus. Ce n'étaient pas des bugs, mais le genre de détail qui coûte cher le jour où le dépôt part sur GitHub : la valeur serait partie avec, dans tout l'historique, et un <code>git rm</code> ultérieur n'y aurait rien changé.</p>
 
     <p>C'est réglé, le 28 août 2026, et voici comment, parce que la manœuvre est plus délicate qu'elle en a l'air.</p>
 
@@ -1264,14 +1264,27 @@ sha256sum flash.bin
       <li><strong>Vérifier qu'aucun remote n'existe.</strong> Le dépôt n'avait jamais été poussé. C'est ce qui rend la réécriture sûre : personne d'autre n'a les anciens hachages.</li>
       <li><strong>Assainir l'arbre de travail avant de toucher à l'historique.</strong> Les tests lisent maintenant <code>SONIX_DEVICE_KEY</code> et <code>SONIX_DUMPS</code>, et restent neutres quand ces variables manquent, ce qu'ils faisaient déjà pour les dumps. La clé vit dans <code>cle-device.txt</code>, non suivi.</li>
       <li><strong>Prouver que le garde-fou marche dans les deux sens.</strong> 73 tests passent sans les variables, en 0,19 s, les tests sur dump se sautant proprement. Les mêmes 73 passent avec, en 2,25 s, les tests sur dump s'exécutant réellement. Sans cette double vérification on ne sait pas si les tests passent ou s'ils ne font plus rien.</li>
-      <li><strong>Réécrire.</strong> <code>git filter-branch --tree-filter</code> sur <code>--all</code>, avec un script qui ne touche que les fichiers texte contenant effectivement la chaîne, et qui remplace la clé par <code>&lt;CLE&gt;</code> et les chemins personnels par les variables.</li>
+      <li><strong>Réécrire.</strong> <code>git filter-branch --tree-filter</code> sur <code>--all</code>, avec un script qui remplace la clé par <code>&lt;CLE&gt;</code> et les chemins personnels par les variables. C'est ici que les choses se sont mal passées, deux fois, et les trois pièges ci-dessous disent pourquoi.</li>
     </ol>
 
+    <p>Il a fallu trois passes. Les deux premières ont échoué, et en silence, ce qui est la partie intéressante.</p>
+
     <div class="note">
-      <p><strong>Le piège qui fait croire à un échec.</strong> Juste après la réécriture, <code>git log --all -S"&lt;la clé&gt;"</code> renvoyait encore six commits. La purge avait pourtant marché : <code>filter-branch</code> range les anciennes références sous <code>refs/original/</code>, et <code>--all</code> les inclut. Un balayage de tous les blobs du dépôt, lui, ne trouvait déjà plus rien. Il faut supprimer <code>refs/original/</code>, faire expirer le reflog et passer <code>git gc --prune=now</code> pour que la mesure dise la vérité. Après quoi le compte tombe à zéro sur les deux écritures de la clé.</p>
+      <p><strong>Piège 1, celui qui fait croire à un échec alors que tout va bien.</strong> Juste après la réécriture, <code>git log --all -S"&lt;la clé&gt;"</code> renvoyait encore six commits. La purge avait pourtant marché : <code>filter-branch</code> range les anciennes références sous <code>refs/original/</code>, et <code>--all</code> les inclut. Un balayage de tous les blobs, lui, ne trouvait déjà plus rien. Il faut supprimer <code>refs/original/</code>, faire expirer le reflog et passer <code>git gc --prune=now</code> pour que la mesure dise la vérité.</p>
     </div>
 
-    <p>Résultat : 71 commits, 94 fichiers suivis, rien de perdu, et la clé nulle part. Le seul <code>infinition</code> qui subsiste est l'identifiant d'organisation de l'application, dans <code>ProjectDirs::from("com", "infinition", …)</code>, qui n'est pas un chemin personnel mais le nom du dossier de configuration.</p>
+    <div class="note">
+      <p><strong>Piège 2, celui qui fait croire à un succès alors que rien n'a bougé.</strong> Le script de purge ne balayait qu'une liste d'extensions, <code>.md .rs .toml .json .txt .html .yml</code>. Un <code>mesurer.ps1</code> écrit le lendemain portait la clé et deux chemins absolus : <code>.ps1</code> n'était pas dans la liste, le fichier n'a jamais été ouvert, et la purge s'est déclarée satisfaite. La version qui a marché ne filtre plus sur l'extension du tout : elle ouvre tout et laisse <code>grep -I</code> écarter le binaire.</p>
+    </div>
+
+    <div class="note">
+      <p><strong>Piège 3, le plus fourbe, parce qu'il est muet.</strong> Les chemins personnels ont résisté à deux purges complètes. La raison tient dans une expression : <code>s|C:\\Users\\infinition\\Downloads|…|</code> ne remplace rien dans ce sed, alors que <code>s|C:[\\/]Users[\\/]infinition[\\/]Downloads|…|</code> remplace. Une substitution qui ne matche pas n'est pas une erreur pour sed : il ne dit rien, sort en code 0, et <code>filter-branch</code> réécrit consciencieusement les commits à l'identique. La clé, elle, partait bien à chaque fois, ce qui rendait la purge crédible.</p>
+      <p><strong>La leçon générale :</strong> ne jamais croire une purge sur ce qu'elle affiche. La seule vérification qui vaut est un balayage de tous les blobs atteignables, reflog expiré et <code>gc</code> passé, avec un motif écrit indépendamment de celui du script de purge. Si le motif de vérification est copié depuis le script, les deux partagent le même bug et se confirment l'un l'autre.</p>
+    </div>
+
+    <p>Résultat après la troisième passe : 75 commits, 99 fichiers suivis, rien de perdu, les tests verts, et zéro occurrence de la clé comme des chemins sur les six écritures possibles. Le seul <code>infinition</code> qui subsiste est l'identifiant d'organisation de l'application, dans <code>ProjectDirs::from("com", "infinition", …)</code>, qui n'est pas un chemin personnel mais le nom du dossier de configuration.</p>
+
+    <p>Le fichier de clé local est recréé après coup, hors suivi. <code>.gitignore</code> ne portait toujours pas sa règle au moment de la première purge, et un <code>git add -A</code> l'avait repris dans un commit ultérieur. La règle y est maintenant, avec les dumps, les instantanés et les sauvegardes.</p>
 
     <div class="note">
       <p><strong>Sur le README.</strong> Il a longtemps annoncé « Full support for Thumb-16 and Thumb-2 » et un « Hardware LCD controller ». La première affirmation était fausse, la seconde décrivait un composant qui n'existe pas sur ce matériel. C'était le genre de détail qui ne coûte rien à corriger et qui, laissé en place, finit par vous faire vous faire confiance à tort sur votre propre travail. Réécrit le 28 août 2026, aligné sur le code.</p>
@@ -1438,7 +1451,7 @@ sha256sum flash.bin
   </section>
 
   <footer>
-    <p>Révision 5, compilée le 28 août 2026 à partir de sources publiques et de l'état du dépôt <code>tamagotchi-paradise-rs</code>, branche <code>feat/real-firmware-boot</code>, 71 commits, 16 118 lignes. Le document est cumulatif : les révisions précédentes sont conservées, y compris leurs constats démentis, avec la mention de ce qui les a remplacés. Aucun binaire propriétaire, aucune clé de puce et aucun secret n'y sont reproduits. Les procédures d'extraction décrites s'appliquent à un appareil dont vous êtes propriétaire.</p>
+    <p>Révision 5, compilée le 28 août 2026 à partir de sources publiques et de l'état du dépôt <code>tamagotchi-paradise-rs</code>, branche <code>feat/real-firmware-boot</code>, 75 commits, 16 415 lignes. Le document est cumulatif : les révisions précédentes sont conservées, y compris leurs constats démentis, avec la mention de ce qui les a remplacés. Aucun binaire propriétaire, aucune clé de puce et aucun secret n'y sont reproduits. Les procédures d'extraction décrites s'appliquent à un appareil dont vous êtes propriétaire.</p>
     <p>Tamagotchi et Tamagotchi Paradise sont des marques de Bandai. Ce document n'est ni affilié ni approuvé par Bandai.</p>
   </footer>
 

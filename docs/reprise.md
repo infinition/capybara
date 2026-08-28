@@ -99,7 +99,61 @@ rentables : `scene_probe` avec `RESET`, `SORTIE_ETAT` et `TRACE_PAS`,
 adresse ou une modification de memoire, `vitesse_probe` pour la vitesse,
 `son_probe` pour le son, `partie_probe` pour les sauvegardes.
 
+## La cle, et pourquoi le depot est publiable
+
+L'historique a ete reecrit le 28 aout 2026. Ni la cle ni les chemins personnels
+n'apparaissent dans un seul commit. Ne pas defaire ce travail : un `git add -A`
+suffit a tout remettre, et il a fallu trois passes pour en sortir.
+
+Trois pieges y ont coute la journee, et ils ne sont pas propres a ce projet.
+
+1. **`git log --all -S` ment juste apres une reecriture.** `filter-branch` range
+   les anciennes references sous `refs/original/`, et `--all` les inclut. Il faut
+   les supprimer, faire expirer le reflog et passer `git gc --prune=now` avant que
+   la mesure veuille dire quelque chose.
+2. **Un script de purge qui filtre sur une liste d'extensions rate ce qui n'y est
+   pas.** `mesurer.ps1` portait la cle et deux chemins absolus ; `.ps1` n'etait pas
+   dans la liste, le fichier n'a jamais ete ouvert, et la purge s'est declaree
+   satisfaite. Balayer tous les fichiers et laisser `grep -I` ecarter le binaire.
+3. **`s|C:\\Users\\...|` ne matche rien dans ce sed.** La forme qui marche est
+   `s|C:[\\/]Users[\\/]...|` avec `-E`. Une substitution qui ne matche pas n'est pas
+   une erreur : sed ne dit rien et sort en code 0. Les chemins ont donc survecu a
+   deux purges completes qui se declaraient reussies.
+
+**La regle a retenir : ne jamais croire une purge sur ce qu'elle affiche.** La
+seule verification qui vaut est un balayage de tous les blobs atteignables, avec
+un motif ecrit independamment de celui du script de purge. Un motif copie depuis
+le script partage son bug et le confirme.
+
+Le controle, a repasser apres toute manipulation d'historique :
+
+```bash
+git for-each-ref --format='%(refname)' refs/original | xargs -n 1 git update-ref -d
+git reflog expire --expire=now --all && git gc --prune=now
+git rev-list --objects --all | git cat-file --batch-check='%(objecttype) %(objectname)' \
+  | awk '$1=="blob"{print $2}' \
+  | while read o; do git cat-file blob $o | grep -qI "<motif>" && echo "FUITE $o"; done
+```
+
 ## Materiel de travail
 
-Les dumps sont dans `$SONIX_DUMPS`, les instantanes sur le
-Bureau. La cle est `<CLE>`, commune aux cinq editions.
+Rien de tout cela n'est dans le depot, et rien n'y entrera. Trois variables
+designent le materiel :
+
+```bash
+export SONIX_DEVICE_KEY=0x........   # la cle, commune aux cinq editions
+export SONIX_DUMPS=<dossier des .bin>
+export SONIX_ETAT=<chemin d'un .tamastate>
+```
+
+Sur le poste de travail, leurs valeurs sont dans `cle-device.txt` a la racine,
+non suivi par git.
+
+La cle est gravee dans les fusibles de la puce, ne figure dans aucun dump, et se
+lit en SWD sur l'appareil. Elle est identique sur les cinq editions : c'est une
+constante de modele, pas un secret par exemplaire.
+
+Sans ces variables, les tests qui dependent d'un dump se sautent et la suite
+reste verte. **Verifier les deux cas apres toute modification de ce mecanisme**,
+sinon on ne sait pas si les tests passent ou s'ils ne font plus rien. Reference :
+73 tests en 0,19 s sans les variables, les memes 73 en 2,25 s avec.
