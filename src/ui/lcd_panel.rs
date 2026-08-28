@@ -137,6 +137,53 @@ fn peindre_papier(morceau: &[Pos2], cadre: Rect, papier: &Papier<'_>) -> Shape {
     Shape::mesh(maillage)
 }
 
+/// Dessine la dalle avec des coins arrondis.
+///
+/// `Painter::image` ne pose qu'un rectangle franc. On fabrique donc le maillage
+/// a la main, en eventail depuis le centre, les coordonnees de texture venant
+/// de la position dans le rectangle.
+fn dalle_arrondie(rect: Rect, rayon: f32, texture: egui::TextureId) -> Shape {
+    let rayon = rayon.min(rect.width() * 0.5).min(rect.height() * 0.5);
+    let mut contour = Vec::with_capacity(4 * 7);
+    let coins = [
+        (pos2(rect.max.x - rayon, rect.max.y - rayon), 0.0_f32),
+        (pos2(rect.min.x + rayon, rect.max.y - rayon), 90.0),
+        (pos2(rect.min.x + rayon, rect.min.y + rayon), 180.0),
+        (pos2(rect.max.x - rayon, rect.min.y + rayon), 270.0),
+    ];
+    for (centre, depart) in coins {
+        for pas in 0..=6 {
+            let angle = (depart + 90.0 * pas as f32 / 6.0).to_radians();
+            contour.push(pos2(
+                centre.x + rayon * angle.cos(),
+                centre.y + rayon * angle.sin(),
+            ));
+        }
+    }
+
+    let mut maillage = egui::Mesh::with_texture(texture);
+    let uv = |p: Pos2| {
+        pos2(
+            (p.x - rect.min.x) / rect.width(),
+            (p.y - rect.min.y) / rect.height(),
+        )
+    };
+    let centre = rect.center();
+    maillage.colored_vertex(centre, Color32::WHITE);
+    let dernier = maillage.vertices.len() - 1;
+    maillage.vertices[dernier].uv = uv(centre);
+    for point in &contour {
+        maillage.colored_vertex(*point, Color32::WHITE);
+        let dernier = maillage.vertices.len() - 1;
+        maillage.vertices[dernier].uv = uv(*point);
+    }
+    let nombre = contour.len() as u32;
+    for i in 0..nombre {
+        maillage.add_triangle(0, 1 + i, 1 + (i + 1) % nombre);
+    }
+    Shape::mesh(maillage)
+}
+
 impl LcdPanel {
     /// Dessine la console et rend l'etat de ses commandes.
     ///
@@ -154,6 +201,7 @@ impl LcdPanel {
         shell_color: ShellColor,
         angle_molette: f32,
         papier: Option<&Papier<'_>>,
+        habillage: &crate::gui::fond::Habillage,
     ) -> Commandes {
         let couleurs = shell_color.couleurs();
         let (corps_col, calotte_col, ombre_col, bouton_col) =
@@ -292,23 +340,44 @@ impl LcdPanel {
             }
         }
 
-        // Le mot de marque, au dessus de l'ecran, dans la couleur d'accent.
-        ui.painter().text(
-            pos2(centre.x, cadre.min.y + cote * 0.10),
-            egui::Align2::CENTER_CENTER,
-            "TAMAGOTCHI",
-            egui::FontId::proportional((cote * 0.10).clamp(7.0, 13.0)),
-            accent_col,
-        );
+        // Le mot imprime au dessus de l'ecran. Sans couleur choisie il prend
+        // celle d'accent de la coque, comme sur la console.
+        if habillage.titre_visible && !habillage.titre.trim().is_empty() {
+            let couleur = habillage
+                .titre_couleur
+                .map(|[r, v, b]| Color32::from_rgb(r, v, b))
+                .unwrap_or(accent_col);
+            let taille = (cote * 0.10 * habillage.titre_taille.clamp(0.3, 3.0))
+                .clamp(5.0, 40.0);
+            ui.painter().text(
+                pos2(centre.x, cadre.min.y + taille * 1.05),
+                egui::Align2::CENTER_CENTER,
+                habillage.titre.trim(),
+                egui::FontId::proportional(taille),
+                couleur,
+            );
+        }
 
-        // La vitre, un liseré clair autour de la dalle. C'est le seul bord
-        // franc de cette zone sur la vraie console.
-        ui.painter().rect_filled(
-            ecran_rect.expand(cote * 0.05),
-            cote * 0.02,
-            Color32::from_rgb(248, 249, 251),
-        );
+        // La vitre, un liseré clair autour de la dalle, le seul bord franc de
+        // cette zone sur la vraie console. Sans elle, c'est la dalle qui prend
+        // l'arrondi : autrement le rectangle nu tomberait dans la decoupe.
+        let arrondi = if habillage.vitre_visible {
+            let epaisseur = cote * habillage.vitre_epaisseur.clamp(0.0, 0.10);
+            let [r, v, b] = habillage.vitre_couleur;
+            ui.painter().rect_filled(
+                ecran_rect.expand(epaisseur),
+                epaisseur.max(cote * 0.012),
+                Color32::from_rgb(r, v, b),
+            );
+            0.0
+        } else {
+            cote * 0.055
+        };
         match ecran {
+            Some(texture) if arrondi > 0.0 => {
+                ui.painter()
+                    .add(dalle_arrondie(ecran_rect, arrondi, texture.id()));
+            }
             Some(texture) => {
                 ui.painter().image(
                     texture.id(),
@@ -318,10 +387,14 @@ impl LcdPanel {
                 );
             }
             None => {
-                ui.painter().rect_filled(ecran_rect, 0.0, Color32::BLACK);
+                ui.painter().rect_filled(ecran_rect, arrondi, Color32::BLACK);
             }
         }
-        ui.painter().rect_stroke(ecran_rect, 0.0, Stroke::new(1.5, Color32::from_rgb(60, 60, 66)));
+        ui.painter().rect_stroke(
+            ecran_rect,
+            arrondi,
+            Stroke::new(1.5, Color32::from_rgb(60, 60, 66)),
+        );
 
         // Clic sur l'ecran : gauche vaut A, droit vaut B, molette vaut l'appui
         // de molette. C'est le geste attendu quand on joue a la souris, sans

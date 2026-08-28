@@ -1,31 +1,95 @@
-//! Papiers de personnalisation glisses sous la fenetre transparente.
+//! Habillage de la coque : papier glisse sous la fenetre transparente, mot de
+//! marque, et vitre autour de l'ecran.
 //!
-//! La console a un cache plastique clair autour de l'ecran, et Bandai livre
-//! avec chaque edition des papiers imprimes qu'on glisse dessous pour changer
-//! son apparence. C'est prevu par le fabricant, pas un detournement.
+//! La console a un cache plastique clair autour de l'ecran, et Bandai livre avec
+//! chaque edition des papiers imprimes qu'on glisse dessous pour changer son
+//! apparence. C'est prevu par le fabricant, pas un detournement. Ici une image
+//! quelconque tient ce role, avec son cadrage.
 //!
-//! Ici, une image quelconque tient ce role. Elle est recopiee dans le dossier
-//! de la console, avec son cadrage : un zoom et un decalage, ce qui suffit a
-//! placer n'importe quelle image dans la decoupe. Le reglage suit la console et
-//! non la partie, comme le papier suit la coque et non le Tamagotchi.
+//! Le mot imprime au dessus de l'ecran et le liseré clair qui entoure la dalle
+//! se reglent de la meme facon. L'ensemble suit la console et non la partie,
+//! comme le papier suit la coque et non le Tamagotchi.
+//!
+//! Le fichier garde son ancien nom, `fond.json`, pour ne pas perdre les
+//! reglages deja poses.
 
 use std::path::{Path, PathBuf};
 
-/// Cadrage d'un papier sous la fenetre.
+/// Habillage d'une console.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct Fond {
-    /// Nom du fichier image, dans le dossier de la console.
+pub struct Habillage {
+    /// Nom du fichier image, dans le dossier de la console. Vide s'il n'y en a
+    /// pas : le reste de l'habillage vaut quand meme.
+    #[serde(default)]
     pub fichier: String,
-    /// Agrandissement. Un remplit la decoupe au plus juste.
+    /// Agrandissement du papier. Un remplit la decoupe au plus juste.
+    #[serde(default = "un")]
     pub zoom: f32,
-    /// Decalage, en fraction de la decoupe.
+    /// Decalage du papier, en fraction de la decoupe.
+    #[serde(default)]
     pub dx: f32,
+    #[serde(default)]
     pub dy: f32,
+
+    /// Mot imprime au dessus de l'ecran.
+    #[serde(default = "vrai")]
+    pub titre_visible: bool,
+    #[serde(default = "titre_par_defaut")]
+    pub titre: String,
+    /// Facteur de taille. Un vaut la taille de la console.
+    #[serde(default = "un")]
+    pub titre_taille: f32,
+    /// Couleur du mot. Absente, il prend la couleur d'accent de la coque.
+    #[serde(default)]
+    pub titre_couleur: Option<[u8; 3]>,
+
+    /// Liseré clair autour de la dalle. Sur la console c'est le bord de la
+    /// vitre, tres fin.
+    #[serde(default = "vrai")]
+    pub vitre_visible: bool,
+    /// Epaisseur, en fraction du cote de l'ecran.
+    #[serde(default = "epaisseur_par_defaut")]
+    pub vitre_epaisseur: f32,
+    #[serde(default = "couleur_vitre_par_defaut")]
+    pub vitre_couleur: [u8; 3],
 }
 
-impl Default for Fond {
+fn un() -> f32 {
+    1.0
+}
+
+fn vrai() -> bool {
+    true
+}
+
+fn titre_par_defaut() -> String {
+    "TAMAGOTCHI".to_string()
+}
+
+/// Le liseré de la vraie console est mince : un cinquantieme du cote.
+fn epaisseur_par_defaut() -> f32 {
+    0.018
+}
+
+fn couleur_vitre_par_defaut() -> [u8; 3] {
+    [248, 249, 251]
+}
+
+impl Default for Habillage {
     fn default() -> Self {
-        Self { fichier: String::new(), zoom: 1.0, dx: 0.0, dy: 0.0 }
+        Self {
+            fichier: String::new(),
+            zoom: 1.0,
+            dx: 0.0,
+            dy: 0.0,
+            titre_visible: true,
+            titre: titre_par_defaut(),
+            titre_taille: 1.0,
+            titre_couleur: None,
+            vitre_visible: true,
+            vitre_epaisseur: epaisseur_par_defaut(),
+            vitre_couleur: couleur_vitre_par_defaut(),
+        }
     }
 }
 
@@ -34,14 +98,20 @@ fn chemin_reglage(dossier: &Path) -> PathBuf {
     dossier.join("fond.json")
 }
 
-impl Fond {
-    pub fn lire(dossier: &Path) -> Option<Self> {
-        let texte = std::fs::read_to_string(chemin_reglage(dossier)).ok()?;
-        let fond: Fond = serde_json::from_str(&texte).ok()?;
-        if fond.fichier.is_empty() || !dossier.join(&fond.fichier).is_file() {
-            return None;
+impl Habillage {
+    /// Relit l'habillage d'une console. Rend celui par defaut s'il n'y en a pas.
+    ///
+    /// Une image qui a disparu du dossier est oubliee, le reste de l'habillage
+    /// reste : on ne perd pas un titre parce qu'un fichier a bouge.
+    pub fn lire(dossier: &Path) -> Self {
+        let mut habillage: Habillage = std::fs::read_to_string(chemin_reglage(dossier))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+        if !habillage.fichier.is_empty() && !dossier.join(&habillage.fichier).is_file() {
+            habillage.fichier.clear();
         }
-        Some(fond)
+        habillage
     }
 
     pub fn ecrire(&self, dossier: &Path) {
@@ -51,12 +121,16 @@ impl Fond {
         }
     }
 
-    /// Efface le reglage et l'image recopiee.
-    pub fn effacer(dossier: &Path, fichier: &str) {
-        let _ = std::fs::remove_file(chemin_reglage(dossier));
-        if !fichier.is_empty() {
-            let _ = std::fs::remove_file(dossier.join(fichier));
+    /// Retire le papier, en gardant le reste de l'habillage.
+    pub fn retirer_le_papier(&mut self, dossier: &Path) {
+        if !self.fichier.is_empty() {
+            let _ = std::fs::remove_file(dossier.join(&self.fichier));
         }
+        self.fichier.clear();
+        self.zoom = 1.0;
+        self.dx = 0.0;
+        self.dy = 0.0;
+        self.ecrire(dossier);
     }
 }
 
@@ -72,7 +146,7 @@ pub fn adopter_image(source: &Path, dossier: &Path) -> Result<String, String> {
         .to_ascii_lowercase();
     let nom = format!("fond.{}", extension);
     std::fs::create_dir_all(dossier).map_err(|e| e.to_string())?;
-    // Les anciens fonds d'un autre format n'ont plus lieu d'etre.
+    // Les anciens papiers d'un autre format n'ont plus lieu d'etre.
     for autre in ["png", "jpg", "jpeg", "bmp", "gif", "webp"] {
         if autre != extension {
             let _ = std::fs::remove_file(dossier.join(format!("fond.{}", autre)));

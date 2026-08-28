@@ -101,8 +101,8 @@ pub struct TamagotchiApp {
     pub reprises: crate::emulator::reprises::Journal,
     /// Vue de restauration ouverte.
     pub voir_reprises: bool,
-    /// Papier glisse sous la fenetre transparente de la console courante.
-    pub fond: Option<crate::gui::fond::Fond>,
+    /// Habillage de la console courante : papier, titre et vitre.
+    pub fond: crate::gui::fond::Habillage,
     /// Texture du papier, et rapport largeur sur hauteur de l'image d'origine.
     fond_texture: Option<(egui::TextureHandle, f32)>,
     /// Nom en cours de saisie pour une nouvelle sauvegarde.
@@ -224,7 +224,7 @@ impl TamagotchiApp {
             historique: crate::emulator::etat::Historique::default(),
             reprises: crate::emulator::reprises::Journal::default(),
             voir_reprises: false,
-            fond: None,
+            fond: crate::gui::fond::Habillage::default(),
             fond_texture: None,
             papier_a_relire: true,
             saisie_sauvegarde: None,
@@ -792,16 +792,15 @@ impl TamagotchiApp {
     /// Dessine la coque et envoie ses commandes sur les broches.
     fn dessiner_la_console(&mut self, ctx: &Context, ui: &mut egui::Ui, zone: egui::Rect) {
         // Le papier glisse sous la fenetre transparente, quand il y en a un.
-        let papier = match (&self.fond, &self.fond_texture) {
-            (Some(fond), Some((texture, rapport))) => Some(crate::ui::lcd_panel::Papier {
+        let papier = self.fond_texture.as_ref().map(|(texture, rapport)| {
+            crate::ui::lcd_panel::Papier {
                 texture,
                 rapport: *rapport,
-                zoom: fond.zoom,
-                dx: fond.dx,
-                dy: fond.dy,
-            }),
-            _ => None,
-        };
+                zoom: self.fond.zoom,
+                dx: self.fond.dx,
+                dy: self.fond.dy,
+            }
+        });
         let commandes = LcdPanel::render(
             ui,
             zone,
@@ -810,6 +809,7 @@ impl TamagotchiApp {
             self.shell_color,
             self.angle_molette,
             papier.as_ref(),
+            &self.fond,
         );
 
         // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
@@ -857,45 +857,50 @@ impl TamagotchiApp {
 
     /// Relit le papier de la console courante et en refait la texture.
     fn recharger_le_papier(&mut self, ctx: &Context) {
-        self.fond = None;
+        self.fond = crate::gui::fond::Habillage::default();
         self.fond_texture = None;
         let Some(dossier) = self.dossier_du_papier() else {
             return;
         };
-        let Some(fond) = crate::gui::fond::Fond::lire(&dossier) else {
+        self.fond = crate::gui::fond::Habillage::lire(&dossier);
+        if self.fond.fichier.is_empty() {
             return;
-        };
-        match crate::gui::fond::charger_image(&dossier.join(&fond.fichier)) {
+        }
+        match crate::gui::fond::charger_image(&dossier.join(&self.fond.fichier)) {
             Ok((image, rapport)) => {
                 let texture =
                     ctx.load_texture("papier_coque", image, egui::TextureOptions::LINEAR);
                 self.fond_texture = Some((texture, rapport));
-                self.fond = Some(fond);
             }
             Err(e) => {
                 self.status_msg = Some(format!("Papier illisible : {}", e));
+                self.fond.fichier.clear();
             }
         }
     }
 
-    /// Reglage du papier glisse sous la fenetre transparente.
-    fn dessiner_le_papier(&mut self, ui: &mut egui::Ui, ctx: &Context) {
-        ui.label(egui::RichText::new("Papier de la coque").strong());
+    /// Habillage de la coque : papier, mot imprime et vitre.
+    ///
+    /// Tout y est retenu par console, comme le papier de la vraie machine suit
+    /// la coque et non le Tamagotchi.
+    fn dessiner_l_habillage(&mut self, ui: &mut egui::Ui, ctx: &Context) {
+        ui.label(egui::RichText::new("Habillage de la coque").strong());
         let Some(dossier) = self.dossier_du_papier() else {
             ui.label(egui::RichText::new("Charge une console d'abord.").small());
             return;
         };
-        ui.label(
-            egui::RichText::new(
-                "L'image se glisse sous la fenetre transparente, comme le papier \
-                 imprime de la vraie console.",
-            )
-            .small()
-            .color(egui::Color32::GRAY),
-        );
+        let mut change = false;
 
+        // --- le papier glisse sous la fenetre transparente
         ui.horizontal(|ui| {
-            if ui.button("Choisir une image...").clicked() {
+            if ui
+                .button("Choisir un papier...")
+                .on_hover_text(
+                    "L'image se glisse sous la fenetre transparente, comme le papier \
+                     imprime de la vraie console.",
+                )
+                .clicked()
+            {
                 if let Some(chemin) = rfd::FileDialog::new()
                     .add_filter("Image", &["png", "jpg", "jpeg", "bmp", "gif", "webp"])
                     .set_title("Choisir un papier pour la coque")
@@ -903,11 +908,11 @@ impl TamagotchiApp {
                 {
                     match crate::gui::fond::adopter_image(&chemin, &dossier) {
                         Ok(nom) => {
-                            let fond = crate::gui::fond::Fond {
-                                fichier: nom,
-                                ..Default::default()
-                            };
-                            fond.ecrire(&dossier);
+                            self.fond.fichier = nom;
+                            self.fond.zoom = 1.0;
+                            self.fond.dx = 0.0;
+                            self.fond.dy = 0.0;
+                            self.fond.ecrire(&dossier);
                             self.recharger_le_papier(ctx);
                         }
                         Err(e) => {
@@ -916,39 +921,93 @@ impl TamagotchiApp {
                     }
                 }
             }
-            if self.fond.is_some() && ui.button("Retirer").clicked() {
-                let fichier = self
-                    .fond
-                    .as_ref()
-                    .map(|f| f.fichier.clone())
-                    .unwrap_or_default();
-                crate::gui::fond::Fond::effacer(&dossier, &fichier);
-                self.fond = None;
+            if !self.fond.fichier.is_empty() && ui.button("Retirer").clicked() {
+                self.fond.retirer_le_papier(&dossier);
                 self.fond_texture = None;
             }
         });
 
-        let Some(fond) = &mut self.fond else {
-            return;
-        };
-        let mut change = false;
-        change |= ui
-            .add(egui::Slider::new(&mut fond.zoom, 0.2..=3.0).text("zoom"))
-            .changed();
-        change |= ui
-            .add(egui::Slider::new(&mut fond.dx, -1.0..=1.0).text("gauche / droite"))
-            .changed();
-        change |= ui
-            .add(egui::Slider::new(&mut fond.dy, -1.0..=1.0).text("haut / bas"))
-            .changed();
-        if ui.button("Recentrer").clicked() {
-            fond.zoom = 1.0;
-            fond.dx = 0.0;
-            fond.dy = 0.0;
-            change = true;
+        if !self.fond.fichier.is_empty() {
+            change |= ui
+                .add(egui::Slider::new(&mut self.fond.zoom, 0.2..=3.0).text("zoom"))
+                .changed();
+            change |= ui
+                .add(egui::Slider::new(&mut self.fond.dx, -1.0..=1.0).text("gauche / droite"))
+                .changed();
+            change |= ui
+                .add(egui::Slider::new(&mut self.fond.dy, -1.0..=1.0).text("haut / bas"))
+                .changed();
+            if ui.button("Recentrer le papier").clicked() {
+                self.fond.zoom = 1.0;
+                self.fond.dx = 0.0;
+                self.fond.dy = 0.0;
+                change = true;
+            }
         }
+
+        ui.separator();
+
+        // --- le mot imprime au dessus de l'ecran
+        change |= ui
+            .checkbox(&mut self.fond.titre_visible, "Mot imprime")
+            .changed();
+        if self.fond.titre_visible {
+            change |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.fond.titre)
+                        .hint_text("TAMAGOTCHI")
+                        .desired_width(180.0),
+                )
+                .changed();
+            change |= ui
+                .add(egui::Slider::new(&mut self.fond.titre_taille, 0.3..=3.0).text("taille"))
+                .changed();
+            ui.horizontal(|ui| {
+                // Sans couleur choisie, le mot prend celle d'accent de la coque.
+                let mut choisie = self.fond.titre_couleur.is_some();
+                if ui.checkbox(&mut choisie, "couleur").changed() {
+                    self.fond.titre_couleur = if choisie {
+                        let a = self.shell_color.couleurs().accent;
+                        Some([a.r(), a.g(), a.b()])
+                    } else {
+                        None
+                    };
+                    change = true;
+                }
+                if let Some(rvb) = &mut self.fond.titre_couleur {
+                    change |= ui.color_edit_button_srgb(rvb).changed();
+                } else {
+                    ui.label(egui::RichText::new("celle de la coque").small());
+                }
+            });
+        }
+
+        ui.separator();
+
+        // --- la vitre autour de la dalle
+        change |= ui
+            .checkbox(&mut self.fond.vitre_visible, "Vitre autour de l'ecran")
+            .changed();
+        if self.fond.vitre_visible {
+            change |= ui
+                .add(
+                    egui::Slider::new(&mut self.fond.vitre_epaisseur, 0.0..=0.10)
+                        .text("epaisseur"),
+                )
+                .changed();
+            change |= ui
+                .color_edit_button_srgb(&mut self.fond.vitre_couleur)
+                .changed();
+        } else {
+            ui.label(
+                egui::RichText::new("Sans vitre, c'est la dalle qui prend l'arrondi.")
+                    .small()
+                    .color(egui::Color32::GRAY),
+            );
+        }
+
         if change {
-            fond.ecrire(&dossier);
+            self.fond.ecrire(&dossier);
         }
     }
 
@@ -1728,12 +1787,30 @@ impl eframe::App for TamagotchiApp {
         // 1. Entrees. Une touche tenue tient la broche basse aussi longtemps
         //    qu'elle reste enfoncee : c'est ce que le jeu attend pour son appui
         //    long, celui qui ouvre le menu principal.
-        let key_f10 = ctx.input(|i| i.key_pressed(Key::F10));
+        //
+        // La console ne doit rien entendre pendant qu'un menu ou un champ de
+        // saisie est ouvert : taper un nom de partie appuyait sur A et sur C,
+        // et derouler le menu du clic droit faisait tourner la molette.
+        let interface_occupee = ctx.wants_keyboard_input()
+            || self.saisie_sauvegarde.is_some()
+            || ctx.memory(|m| m.any_popup_open())
+            || ctx.is_pointer_over_area();
+        if interface_occupee {
+            // Les broches tenues sont relachees : sans cela un bouton reste
+            // enfonce au moment ou le menu s'ouvre le resterait pour toujours.
+            self.maintenus.clear();
+            self.appliquer_entrees();
+        }
+        let key_f10 = !interface_occupee && ctx.input(|i| i.key_pressed(Key::F10));
         // Fleche haut tourne vers la droite, fleche bas vers la gauche, comme
         // la molette de la console.
-        let molette = ctx.input(|i| {
-            (i.key_pressed(Key::ArrowUp) as i32) - (i.key_pressed(Key::ArrowDown) as i32)
-        });
+        let molette = if interface_occupee {
+            0
+        } else {
+            ctx.input(|i| {
+                (i.key_pressed(Key::ArrowUp) as i32) - (i.key_pressed(Key::ArrowDown) as i32)
+            })
+        };
         // Chaque touche tient sa broche tant qu'elle est enfoncee, et plusieurs
         // touches tenues ensemble donnent les combinaisons de la console :
         // molette maintenue plus B pour le menu special, A plus C pour la
@@ -1745,7 +1822,7 @@ impl eframe::App for TamagotchiApp {
             (Machine::BOUTON_MOLETTE, [Key::Enter, Key::S, Key::Num0]),
         ];
         for (broche, keys) in touches {
-            if ctx.input(|i| keys.iter().any(|k| i.key_down(*k))) {
+            if !interface_occupee && ctx.input(|i| keys.iter().any(|k| i.key_down(*k))) {
                 self.maintenir(broche);
             }
         }
@@ -2247,7 +2324,7 @@ impl eframe::App for TamagotchiApp {
 
                     ui.separator();
                     ui.group(|ui| {
-                        self.dessiner_le_papier(ui, ctx);
+                        self.dessiner_l_habillage(ui, ctx);
                     });
 
                     // Les panneaux d'inspection coutent plus cher a dessiner que
