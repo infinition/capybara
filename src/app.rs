@@ -472,6 +472,7 @@ impl eframe::App for TamagotchiApp {
             let mut btn_b_pressed = false;
             let mut btn_c_pressed = false;
             let mut dial_delta = 0;
+            let mut dial_press = false;
 
             LcdPanel::render(
                 ui,
@@ -496,6 +497,11 @@ impl eframe::App for TamagotchiApp {
                 |d| {
                     dial_delta = d;
                 },
+                |p| {
+                    if p {
+                        dial_press = true;
+                    }
+                },
             );
 
             // Les commandes vont sur les vraies broches de la console : bouton A
@@ -509,6 +515,9 @@ impl eframe::App for TamagotchiApp {
             }
             if btn_c_pressed {
                 self.presser(Machine::BOUTON_C);
+            }
+            if dial_press {
+                self.presser(Machine::BOUTON_MOLETTE);
             }
             if dial_delta != 0 {
                 self.tourner_molette(dial_delta);

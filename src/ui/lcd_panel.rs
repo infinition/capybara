@@ -15,6 +15,7 @@ impl LcdPanel {
         on_btn_b: impl FnOnce(bool),
         on_btn_c: impl FnOnce(bool),
         on_dial_delta: impl FnOnce(i32),
+        on_dial_press: impl FnOnce(bool),
     ) {
         let (body_col, shadow_col, accent_col) = shell_color.palette();
 
@@ -136,6 +137,23 @@ impl LcdPanel {
         ui.painter().rect_filled(dial_rect, 6.0, Color32::from_rgb(220, 225, 235));
         ui.painter().rect_stroke(dial_rect, 6.0, Stroke::new(2.5_f32, shadow_col));
 
+        // La molette se presse autant qu'elle se tourne : c'est cet appui, en
+        // P0.8, qui valide dans les menus du jeu.
+        let ok_pos = pos2(dial_x - 4.0, dial_y + 62.0);
+        let ok_rect = Rect::from_center_size(ok_pos, vec2(btn_radius * 2.2, btn_radius * 2.2));
+        let resp_ok = ui.allocate_rect(ok_rect, Sense::click());
+        let ok_col = if resp_ok.is_pointer_button_down_on() { shadow_col } else { accent_col };
+        ui.painter().circle_filled(ok_pos, btn_radius * 1.1, ok_col);
+        ui.painter().circle_stroke(ok_pos, btn_radius * 1.1, Stroke::new(2.0_f32, shadow_col));
+        ui.painter().text(
+            ok_pos,
+            egui::Align2::CENTER_CENTER,
+            "OK",
+            egui::FontId::monospace(12.0),
+            Color32::BLACK,
+        );
+
         on_dial_delta(delta);
+        on_dial_press(resp_ok.is_pointer_button_down_on() || resp_ok.clicked());
     }
 }
