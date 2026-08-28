@@ -158,9 +158,24 @@ impl TamagotchiApp {
         self.maintenus.insert(broche);
     }
 
+    /// Cycles du coeur pour une seconde de temps console.
+    ///
+    /// Le SysTick est arme a 95999 pour une milliseconde, ce qui place le coeur
+    /// a 96 MHz.
+    const SECONDE_CONSOLE: u64 = 96_000_000;
+
     /// Declenche une impulsion breve sur une broche.
     fn presser(&mut self, broche: u32) {
-        let fin = self.machine.cpu.cycles + Self::IMPULSION;
+        self.presser_duree(broche, Self::IMPULSION);
+    }
+
+    /// Tient une broche basse pendant une duree donnee, en pas emules.
+    ///
+    /// C'est ce qu'il faut pour un appui long reproductible : l'emulateur ne
+    /// tournant pas a la vitesse de la console, tenir trois secondes a la main
+    /// ne fait pas trois secondes a ses yeux.
+    fn presser_duree(&mut self, broche: u32, duree: u64) {
+        let fin = self.machine.cpu.cycles + duree;
         // Un appui deja en cours n'est jamais raccourci.
         let entree = self.appuis.entry(broche).or_insert(fin);
         *entree = (*entree).max(fin);
@@ -305,6 +320,7 @@ impl TamagotchiApp {
              PC            {:#010x}   mode {}   PRIMASK {}\n\
              trames ecran  {}   instantanes {}\n\
              etat du jeu   courant {}   transition demandee {}\n\
+             boutons       {}\n\
              IRQ 0..31     activees {:#010x}  en attente {:#010x}\n\
              IRQ 32..63    activees {:#010x}  en attente {:#010x}\n\
              dernier transfert vers l'ecran : {}\n\
@@ -321,6 +337,31 @@ impl TamagotchiApp {
             self.historique.len(),
             etat(0x1800_1BF4),
             etat(0x1800_1BF6),
+            {
+                // Niveau reel de chaque broche de commande, avec sa direction.
+                // Une entree se lit haute au repos ; si elle est declaree en
+                // sortie, l'appui n'a plus aucun effet.
+                let d = |id: u32| -> String {
+                    let port = match id >> 4 {
+                        0 => &self.machine.periph.port0,
+                        1 => &self.machine.periph.port1,
+                        _ => &self.machine.periph.port2,
+                    };
+                    let broche = id & 0xF;
+                    let niveau = (port.read_reg(0) >> broche) & 1;
+                    let sortie = (port.direction >> broche) & 1;
+                    format!("{}{}", niveau, if sortie == 1 { "s" } else { "e" })
+                };
+                format!(
+                    "molette {} A {} C {} B {} encodeur {} {}",
+                    d(Machine::BOUTON_MOLETTE),
+                    d(Machine::BOUTON_A),
+                    d(Machine::BOUTON_C),
+                    d(Machine::BOUTON_B),
+                    d(Machine::ENCODEUR_1),
+                    d(Machine::ENCODEUR_2)
+                )
+            },
             n.iser[0],
             n.ispr[0],
             n.iser[1],
@@ -395,6 +436,9 @@ impl eframe::App for TamagotchiApp {
                 }
                 crate::web::Commande::Tenir(broche, false) => {
                     self.tenus_distants.remove(&broche);
+                }
+                crate::web::Commande::Long(broche, secondes) => {
+                    self.presser_duree(broche, Self::SECONDE_CONSOLE * secondes as u64);
                 }
                 crate::web::Commande::Tourner(sens) => self.tourner_molette(sens),
                 crate::web::Commande::Reculer => self.reculer(),

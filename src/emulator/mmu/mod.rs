@@ -324,6 +324,14 @@ impl Default for MemoryBus {
 
 impl MemoryBus {
     pub fn read_u8(&mut self, addr: u32, periph: &mut Peripherals, nvic: &Nvic) -> u8 {
+        // Memoire vive et PRAM d'abord : ce sont les deux zones que le code lit
+        // sans arret, et aucune des deux ne peut tomber dans un alias bit-band.
+        if (map::SRAM_BASE..=map::SRAM_END).contains(&addr) {
+            return self.sram.read_u8((addr - map::SRAM_BASE) as usize);
+        }
+        if addr <= map::PRAM_END {
+            return self.pram.read_u8(addr as usize);
+        }
         // Alias bit-band : le mot lu vaut 0 ou 1 selon l'etat du bit vise.
         if let Some((target, bit)) = map::bitband_target(addr & !3) {
             if addr & 3 != 0 {
@@ -422,6 +430,22 @@ impl MemoryBus {
     }
 
     pub fn read_u16(&mut self, addr: u32, periph: &mut Peripherals, nvic: &Nvic) -> u16 {
+        // Chemin rapide de la recuperation d'instruction. Le code ne vit qu'en
+        // PRAM et dans la fenetre XIP, et le coeur y lit un demi-mot avant
+        // chaque instruction, deux pour les longues. Repasser par le decodage
+        // complet du bus, avec ses tests de bit-band et ses deux lectures
+        // d'octet, coutait plus cher que tout le reste de l'execution.
+        if addr < map::PRAM_END {
+            let i = addr as usize;
+            if i + 1 < self.pram.data.len() {
+                return u16::from_le_bytes([self.pram.data[i], self.pram.data[i + 1]]);
+            }
+        } else if (map::ICACHE_BASE..map::ICACHE_END).contains(&addr) {
+            let o = periph.xip.flash_offset(addr - map::ICACHE_BASE);
+            if o + 1 < self.flash.data.len() {
+                return u16::from_le_bytes([self.flash.data[o], self.flash.data[o + 1]]);
+            }
+        }
         if map::bitband_target(addr).is_some() {
             return self.read_u32(addr & !3, periph, nvic) as u16;
         }

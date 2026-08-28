@@ -77,6 +77,29 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
+    // ENTREES="pas:broche:duree,..." rejoue des appuis, en pas comptes depuis
+    // le depart ou la restauration.
+    let mut appuis: Vec<(u64, u32, u64)> = std::env::var("ENTREES")
+        .ok()
+        .map(|v| {
+            v.split(',')
+                .filter_map(|e| {
+                    let c: Vec<&str> = e.split(':').collect();
+                    if c.len() != 3 {
+                        return None;
+                    }
+                    Some((
+                        c[0].parse().ok()?,
+                        u32::from_str_radix(c[1].trim_start_matches("0x"), 16).ok()?,
+                        c[2].parse().ok()?,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    appuis.sort_by_key(|a| a.0);
+    let mut relachements: Vec<(u64, u32)> = Vec::new();
+
     let mut seen = 0u64;
     let mut steps = 0u64;
     let mut reached = false;
@@ -93,6 +116,19 @@ fn main() {
         .unwrap_or(0);
     let mut trace: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
     while steps < budget {
+        while appuis.first().is_some_and(|a| a.0 <= steps) {
+            let (_, broche, duree) = appuis.remove(0);
+            m.appuyer(broche);
+            relachements.push((steps + duree, broche));
+        }
+        relachements.retain(|&(quand, broche)| {
+            if quand <= steps {
+                m.relacher(broche);
+                false
+            } else {
+                true
+            }
+        });
         if let (Some(a), Some(avant)) = (surveille, precedent) {
             let maintenant = lire_surveille(&m, a);
             if maintenant != avant {

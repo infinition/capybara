@@ -41,6 +41,19 @@ fn main() {
     if std::env::var("PILE_USEE").is_err() {
         m.remplacer_la_pile();
     }
+    // ETAT=chemin.tamastate repart d'un instantane pris dans l'interface, ce qui
+    // evite de rejouer toute la mise en route du jeu.
+    if let Ok(chemin) = std::env::var("ETAT") {
+        match tamagotchi_paradise_rs::emulator::etat::Instantane::lire(
+            std::path::Path::new(&chemin),
+        ) {
+            Ok(etat) => {
+                println!("== reparti de l'instantane {} ({} pas)", chemin, etat.cycles);
+                m.restaurer(&etat);
+            }
+            Err(e) => println!("instantane illisible : {}", e),
+        }
+    }
 
     m.bus.mmio_trace.log_page = report_page;
     // MMIO_FORCE="adresse:valeur,adresse:valeur" impose des lectures sur des

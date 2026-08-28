@@ -64,6 +64,7 @@ fn main() {
     // Etats du jeu traverses, dans l'ordre : c'est ce qui dit si l'on avance.
     let mut parcours: Vec<u32> = vec![lire_h(&m, 0x1800_1BF4)];
 
+    let mut broches: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
     let mut hist: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
     let trames_depart = m.periph.display.trames;
     let mut pas = 0u64;
@@ -87,6 +88,11 @@ fn main() {
                 parcours.push(courant);
             }
         }
+        // Quelles broches le firmware lit vraiment, et combien de fois. C'est
+        // la seule facon de savoir si un bouton est seulement scrute.
+        if m.cpu.regs.pc == 0x0000_2714 {
+            *broches.entry(m.cpu.regs.get_reg(0)).or_default() += 1u64;
+        }
         *hist.entry(m.cpu.regs.pc).or_default() += 1;
         if !matches!(m.step(), StepResult::Ok(_)) {
             println!("  arret a {:#010x}", m.cpu.regs.pc);
@@ -108,6 +114,14 @@ fn main() {
         lire_h(&m, 0x1800_1BF6)
     );
     println!("  PC            {:#010x}", m.cpu.regs.pc);
+
+    println!("\n== broches lues par le firmware");
+    if broches.is_empty() {
+        println!("  aucune");
+    }
+    for (broche, nombre) in &broches {
+        println!("  {:#04x}  {:>10} lectures", broche, nombre);
+    }
 
     let mut chaud: Vec<_> = hist.into_iter().collect();
     chaud.sort_by_key(|(_, c)| std::cmp::Reverse(*c));

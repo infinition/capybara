@@ -15,9 +15,12 @@ use std::sync::{Arc, Mutex};
 pub enum Commande {
     /// Appui bref sur une broche, designee comme le firmware la designe.
     Presser(u32),
-    /// Debut ou fin d'un appui tenu. C'est ce qui porte l'appui long, celui
-    /// que le jeu attend pour ouvrir son menu principal.
+    /// Debut ou fin d'un appui tenu.
     Tenir(u32, bool),
+    /// Appui long calibre, en secondes de temps console. L'emulateur ne
+    /// tournant pas a la vitesse de la console, tenir a la main ne donne pas une
+    /// duree connue : celle-ci en est une.
+    Long(u32, u32),
     Tourner(i32),
     Reculer,
     /// Chemin d'un dump de flash a charger.
@@ -104,9 +107,22 @@ font-size:12px;line-height:1.45;white-space:pre-wrap;max-width:640px;overflow:au
 <button onclick="cmd('tourner_avant')">Molette -</button>
 <button onclick="cmd('reculer')">Revenir en arriere</button>
 </div>
+<div style="margin-top:8px">Appui long, en secondes de temps console :
+<button onclick="long_('a')">A</button>
+<button onclick="long_('ok')">OK</button>
+<button onclick="long_('c')">C</button>
+<button onclick="long_('b')">B</button>
+<select id="duree" style="padding:6px;border-radius:6px;background:#181c26;
+color:#dfe3ee;border:1px solid #3d4761">
+<option value="1">1 s</option><option value="2" selected>2 s</option>
+<option value="3">3 s</option><option value="5">5 s</option>
+</select>
+</div>
 <p style="font-size:12px;color:#9aa4bd;max-width:384px">
-Garde le bouton enfonce pour un appui long : c'est ce qui ouvre le menu
-principal du jeu. Au clavier, tiens la touche.
+Garde le bouton enfonce, ou au clavier tiens la touche, pour un appui tenu.
+L'emulateur tournant a environ un tiers de la vitesse de la console, tenir
+trois secondes a la main n'en fait qu'une a ses yeux : les boutons d'appui
+long ci-dessus tiennent une duree connue, mesuree en temps console.
 </p>
 <div style="margin-top:6px">
 <div style="margin-bottom:6px">Vitesse
@@ -137,6 +153,10 @@ function cmd(n, action){
 }
 function reglage(quoi, cle, valeur){
   fetch('/reglage?quoi=' + quoi + '&' + cle + '=' + encodeURIComponent(valeur));
+}
+function long_(n){
+  const s = document.getElementById('duree').value;
+  fetch('/bouton?nom=' + n + '&action=long&secondes=' + s);
 }
 const ch = () => document.getElementById('chemin').value;
 const et = () => document.getElementById('etat').value;
@@ -282,6 +302,10 @@ fn servir(mut flux: TcpStream, partage: &Arc<Mutex<Partage>>) {
         let commande = match (broche, action.as_str()) {
             (Some(b), "bas") => Some(Commande::Tenir(b, true)),
             (Some(b), "haut") => Some(Commande::Tenir(b, false)),
+            (Some(b), "long") => Some(Commande::Long(
+                b,
+                parametre("secondes").and_then(|v| v.parse().ok()).unwrap_or(2),
+            )),
             (Some(b), _) => Some(Commande::Presser(b)),
             (None, _) => match nom.as_str() {
                 "tourner_avant" => Some(Commande::Tourner(1)),
