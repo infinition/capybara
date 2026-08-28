@@ -17,32 +17,45 @@ vieillissent en temps reel, coque fidele suivant l'edition chargee.
 
 73 tests passent. La branche est `feat/real-firmware-boot`.
 
-## Le seul defaut visible
+## La vitesse
 
-**L'emulation tient 0,78 fois le temps de la console.** Compare a la vraie posee
-a cote : la planete de l'ecran d'accueil oscille toutes les deux secondes au lieu
-d'une, et les melodies trainent d'autant. Meme cause unique pour l'image et pour
-le son. Il manque environ trente pour cent.
+**L'emulation depasse la console depuis le 28 aout 2026 : 1,07 fois le temps
+reel sur `step`, 1,17 sur `run_frame`.** Le regulateur de l'interface la retient
+maintenant a 1,00. Il n'y a plus de defaut visible a l'ecran.
 
 Mesurer avec :
 
 ```bash
-cargo run --release --example vitesse_probe -- <dump.bin> <CLE> <etat.tamastate> 6
+cargo run --release --example vitesse_probe -- <dump.bin> <CLE> <etat.tamastate> 5
 ```
 
-Ce qui a deja paye, de 0,36 a 0,78 : entretenir les peripheriques par paquets de
-256 cycles au lieu de chaque instruction, conditionner la recherche
-d'interruption en attente a un drapeau, activer l'optimisation entre modules en
-une seule unite de generation, et les chemins rapides en 32 bits pour la memoire
-vive.
+La sonde donne les deux boucles. `step` mesure le coeur seul, `run_frame` est ce
+que l'interface appelle vraiment. Longtemps elle ne montrait que `step`, ce qui
+cachait les deux derniers freins.
+
+Le chemin parcouru, de 0,36 a 1,17 :
+
+- entretenir les peripheriques par paquets de 256 cycles au lieu de chaque
+  instruction ;
+- conditionner la recherche d'interruption en attente a un drapeau ;
+- l'optimisation entre modules en une seule unite de generation ;
+- les chemins rapides en 32 bits pour la memoire vive ;
+- recuperer les deux demi mots d'une instruction en une seule resolution de
+  region ;
+- aiguiller les instructions longues sur l'octet haut ;
+- sortir la table de points d'arret du chemin chaud. C'est une table de hachage,
+  et `run_frame` l'interrogeait a chaque instruction : un hachage complet par
+  pas, plus cher que le decodage lui meme ;
+- tester `snsys.reveil_demande` avant d'appeler `reveil_materiel`, qui sert une
+  fois par mise en veille et etait appele a chaque instruction.
 
 Ce qui n'a rien donne, mesure, a ne pas refaire : les chemins rapides en 16 bits,
 la recopie de trame en bloc, `target-cpu` adapte a la machine, et remonter les
 instructions les plus frequentes en tete de la chaine de decodage.
 
-Ce qui reste a essayer : le corps des instructions, la table de dispatch sur les
-quatre bits hauts plutot que la chaine de tests, et la reduction du cout du
-chemin de recuperation d'instruction dans la fenetre XIP.
+Si un jour il faut plus de marge, restent la table de dispatch sur les quatre
+bits hauts plutot que la chaine de tests, et le cout du chemin de recuperation
+d'instruction dans la fenetre XIP.
 
 ## Les cinq trouvailles qui ont debloque le reste
 

@@ -13,11 +13,15 @@ vieillissement en temps reel, coque fidele suivant l'edition, son de la console.
 L'ecran fait 128 x 128 en RGB565. La cle de dechiffrement est `<CLE>`,
 commune aux cinq editions.
 
-**Le seul defaut visible qui reste est la vitesse.** L'emulation tient environ
-0,78 fois le temps de la console : compare a la vraie posee a cote, la planete
-de l'ecran d'accueil oscille toutes les deux secondes au lieu d'une, et les
-melodies trainent d'autant. C'est la meme cause unique pour l'image et pour le
-son. Tout le reste est juste. Voir la section « La vitesse ».
+**Il n'y a plus de defaut visible a l'ecran.** La vitesse a longtemps ete le
+dernier : l'emulation plafonnait a 0,78 fois le temps de la console, la planete
+de l'ecran d'accueil oscillait toutes les deux secondes au lieu d'une et les
+melodies trainaient d'autant. Depuis le 28 aout 2026 elle tient 1,07 fois le
+temps reel sur `step` et 1,17 sur `run_frame`, et le regulateur de l'interface la
+retient a 1,00. Voir la section « La vitesse ».
+
+Ce qui reste ouvert ne se voit pas : le peripherique par lequel la console fait
+sortir ses notes n'est toujours pas identifie.
 
 ## Outils
 
@@ -271,20 +275,20 @@ pas de molette, avec un reglage de volume et une coupure.
 
 ## La vitesse
 
-**L'emulateur ne tient pas encore le temps reel.** Mesure sur une partie, avec
-`vitesse_probe` : 68 millions de cycles par seconde, soit 0,71 fois la vitesse
-de la console, et environ 84 trames poussees en six secondes la ou la vraie en
-pousse 360. Une seconde de console vaut 96 millions de cycles, ce que le
-firmware declare en armant son SysTick a 95999 pour une milliseconde.
+**L'emulateur depasse la console.** Mesure du 28 aout 2026 sur Water, etat 111,
+cinq secondes : 102,98 millions de cycles par seconde sur `step`, soit 1,07 fois
+la vitesse de la console, et 112,33 millions sur `run_frame`, soit 1,17. Une
+seconde de console vaut 96 millions de cycles, ce que le firmware declare en
+armant son SysTick a 95999 pour une milliseconde.
 
-L'interface est donc gouvernee : elle n'accorde a la console que le temps qui
-lui revient, ce qui l'empeche d'aller trop vite sur une machine rapide et de
-pousser plus de trames que la fenetre n'en affiche. Tant que la mesure reste
-sous un, les reglages au dessus de « temps reel » ne changent rien : la machine
-donne deja tout.
+L'interface est gouvernee : elle n'accorde a la console que le temps qui lui
+revient. Tant que la mesure restait sous un, ce gouverneur ne servait a rien et
+les reglages au dessus de « temps reel » ne changeaient rien, la machine donnait
+deja tout. Maintenant qu'elle depasse, il fait son travail et retient
+l'emulation a 1,00.
 
-Le diagnostic affiche la vitesse atteinte. Trois changements l'ont fait passer
-de 0,36 a 0,71 :
+Il a fallu neuf mois de mesures pour passer de 0,36 a 1,17. Ce qui a paye, dans
+l'ordre :
 
 - **Les peripheriques sont entretenus par paquets de 256 cycles** au lieu de
   chaque instruction. C'etait sept appels par pas, dont une division en soixante
@@ -297,11 +301,32 @@ de 0,36 a 0,71 :
 - **L'optimisation entre modules est activee**, en une seule unite de
   generation. Le coeur passe son temps dans une poignee de fonctions appelees
   des millions de fois par seconde.
+- **Les chemins rapides en 32 bits pour la memoire vive.** En 16 bits ils
+  n'avaient rien donne, en 32 si.
+- **Les deux demi mots d'une instruction sont recuperes en une seule resolution
+  de region**, au lieu de deux traversees de la carte memoire.
+- **Les instructions longues sont aiguillees sur l'octet haut**, ce qui coupe la
+  chaine de tests en deux des le premier examen.
+- **La table de points d'arret sort du chemin chaud.** C'est une table de
+  hachage, et `run_frame` l'interrogeait a chaque instruction : un hachage
+  complet par pas, plus cher que le decodage lui meme, et pour rien la quasi
+  totalite du temps.
+- **`reveil_materiel` est precede du test de `snsys.reveil_demande`.** Il sert
+  une fois par mise en veille et etait appele des millions de fois par seconde.
 
-Ce qui n'a rien donne, pour ne pas le refaire : les chemins rapides de lecture
-et d'ecriture en memoire vive, la recopie de trame en bloc, et `target-cpu`
-adapte a la machine. Le cout restant est dans le decodage lui meme, une chaine
-d'une vingtaine de tests parcourue a chaque instruction.
+Les deux derniers ont mis longtemps a se voir parce que `vitesse_probe` ne
+mesurait que `step`, que l'interface n'appelle jamais. Elle mesure maintenant les
+deux boucles, et c'est la lecon a retenir : **mesurer le chemin que le programme
+emprunte vraiment, pas celui qu'il est commode d'instrumenter.**
+
+Ce qui n'a rien donne, pour ne pas le refaire : les chemins rapides en 16 bits,
+la recopie de trame en bloc, `target-cpu` adapte a la machine, et remonter les
+instructions les plus frequentes en tete de la chaine de decodage.
+
+S'il fallait plus de marge un jour, pour une cible plus modeste qu'un ordinateur
+de bureau, restent la table de dispatch sur les quatre bits hauts plutot que la
+chaine de tests, et le cout du chemin de recuperation d'instruction dans la
+fenetre XIP.
 
 ## Le tas et la sauvegarde
 
@@ -398,12 +423,7 @@ somme de controle des deux pages.
 
 ## Ce qui reste a faire
 
-**1. La vitesse, et c'est le seul defaut que l'on voit.** L'emulation tient 0,78
-fois le temps de la console. Il manque environ trente pour cent. La section
-« La vitesse » dit ce qui a paye, ce qui n'a rien donne, et la seule piste
-serieuse restante : le decodage et le corps des instructions.
-
-**2. Le peripherique de sortie du son.** Le moteur du firmware calcule ses notes
+**1. Le peripherique de sortie du son.** Le moteur du firmware calcule ses notes
 mais n'ecrit sur aucun peripherique. Mesure faite avec `son_probe`, filtre par
 intervalle de PC : aucun acces materiel ne vient du module audio pendant qu'une
 note joue, aucune page de PWM n'est touchee, et le port 1, qui porte le buzzer
@@ -412,10 +432,10 @@ sort, l'interface lit les frequences deja calculees dans les voix et les rend en
 signal carre. Le son entendu est donc bien celui que la console compose, mais on
 ne sait toujours pas comment elle le fait sonner.
 
-**3. Les quatre autres editions.** Seule Water a ete menee jusqu'au bout ; Jade
+**2. Les quatre autres editions.** Seule Water a ete menee jusqu'au bout ; Jade
 affiche son oeuf. Earth, Sky et Land n'ont pas ete suivies jusqu'a l'image.
 
-**4. La molette en quadrature.** Elle est modelisee en appuis simples sur les
+**3. La molette en quadrature.** Elle est modelisee en appuis simples sur les
 broches `0x20` et `0x21`, pas en signal a deux phases decalees.
 
 ## Blocages connus, et comment les reconnaitre
