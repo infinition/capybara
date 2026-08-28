@@ -34,6 +34,18 @@ Sept sondes dans `examples/`. Toutes prennent `<dump.bin> <cle hex>`.
 - **`irq_probe`** : releve entrees et sorties d'exception, et designe celle qui
   ne revient pas.
 - **`spin_probe`**, **`race_probe`** : boucles mortes et courses.
+- **`scene_probe`** : repart d'un instantane, rejoue des appuis en secondes de
+  temps console, suit scene, horloge et compteur d'inactivite au fil de
+  l'execution, rend l'ecran et la raison exacte de l'arret. `RESET=1` rallume
+  la console sur la flash de l'instantane, `SORTIE_ETAT` ecrit l'etat atteint,
+  `TRACE_PAS` garde les dernieres adresses executees.
+- **`temps_probe`** : nomme les registres scrutes sans modele derriere, avec le
+  PC responsable, compte les entrees en exception par gestionnaire, et donne
+  l'histogramme des adresses executees. C'est elle qui montre une boucle morte.
+- **`tas_probe`** : parcourt le tas du firmware et rend blocs, trous et plus
+  grand trou disponible, au depart puis au fil du temps.
+- **`alloc_probe`** : compte les prises et les rendus de memoire par appelant et
+  par taille, aux deux entrees de l'allocateur.
 
 Variables d'environnement :
 
@@ -122,6 +134,55 @@ rang 6, conversions enchainees sur l'IRQ 9.
 firmware : molette `0x08`, A `0x09`, C `0x0A`, B `0x0B`, encodeur `0x20` et
 `0x21`.
 
+## Le temps du jeu
+
+**Le calendrier n'est pas compte en logiciel.** Le firmware lit un compteur de
+secondes materiel en `0x45000304`, dans la zone systeme SN_SYS0. Sa couche date
+en `0x00003754` n'est qu'un `ldr r0, [0x45000304]`, et `0x10005860` en fabrique
+la date :
+
+```text
+  secondes = [0x45000304] + [0x18000BAC]   decalage pose au reglage de l'heure
+  jours    = secondes / 86400              constante magique 0xC22E4507 >> 48
+  jour du calendrier = [0x18000BA8] + jours
+  0x100093A4 rend annee, mois, jour a partir du nombre de jours
+  heure = (secondes / 3600) % 24, minute = (secondes / 60) % 60, seconde % 60
+```
+
+Le compteur est libre : le firmware ne l'ecrit jamais, il ne fait qu'ajouter son
+decalage. Tant qu'il rendait zero, la date restait sur celle reglee, l'oeuf
+n'eclosait pas et les jauges ne descendaient pas. Il avance maintenant d'une
+seconde toutes les 96 millions de cycles, la cadence que le firmware programme
+lui-meme dans son SysTick.
+
+Structures utiles, toutes en memoire vive :
+
+| Adresse | Contenu |
+|---|---|
+| `0x18001BA4` | calendrier affiche, six demi-mots : annee, mois, jour, heure, minute, seconde |
+| `0x18000BB8` | le meme, dans le bloc de sauvegarde |
+| `0x18000BA8` | jour de base, `0x18000BAC` decalage en secondes |
+| `0x18001BF4` | scene courante, `0x18001BF8` la precedente |
+| `0x18001BFB` | drapeaux de boucle, bit 4 pose en veille |
+| `0x18001BFE` | compteur d'inactivite, seuil 200, cadence de trame |
+| `0x18001BA0` | drapeaux d'etat, bit 2 demande une sauvegarde |
+| `0x1801C2C4` | millisecondes, entretenu par le SysTick en `0x0000C0F4` |
+| `0x1801C2C0` | trames, entretenu par le TE en `0x0000C120` |
+
+## Le tas et la sauvegarde
+
+Le tas fait 32 Ko, pose en dur par `heap_init(0x18005D70, 0x8000)` en
+`0x00009142`. L'allocateur entre en `0x10016358`, la liberation en `0x100162F0`.
+Il ne tient pas de liste de blocs libres : il parcourt les blocs alloues et
+cherche un trou assez grand entre deux voisins, et saute a l'assertion de
+`0x1005B4AC`, qui boucle sur place, quand il n'en trouve pas.
+
+Toute sauvegarde demande un tampon de page de 4 Ko, en `0x0000B586` pour la
+verification et `0x0000B826` pour l'ecriture. La scene de jeu occupe environ
+30,9 Ko du tas : reprendre un vieil instantane pris en scene de jeu avec une
+sauvegarde en attente mene donc a l'assertion. Ce n'est pas le cas d'une partie
+menee depuis le demarrage, ou la sauvegarde tombe a un moment ou la place existe.
+
 ## La chaine de la mesure de pile
 
 Elle sert de modele pour les prochaines enquetes :
@@ -141,17 +202,21 @@ somme de controle des deux pages.
 
 ## Ce qui reste a faire
 
-1. **Le panneau de l'interface.** Le tampon d'image est lisible en
-   `0x180142A6` ; il faut le brancher sur la fenetre de l'application, pas
-   seulement sur `ecran_probe`.
-2. **Les entrees en direct.** `Machine::appuyer` est prete ; il reste a la
-   cabler sur le clavier de l'interface, et a modeliser l'encodeur en quadrature
-   plutot qu'en simples appuis.
-3. **Le son.** Le buzzer est sur P1.11 et P1.13 en PWM. Rien n'est modelise.
-4. **Traverser la premiere mise en route.** Langue, date, anniversaire, nom de
-   planete. Chaque ecran se pilote deja par `ENTREES`.
-5. **Les quatre autres editions.** Seule Water a ete suivie jusqu'au bout ; les
-   autres passent l'identification mais n'ont pas ete menees jusqu'a l'image.
+1. **Le son.** Le buzzer est sur P1.11 et P1.13 en PWM. Rien n'est modelise.
+   Le moteur audio est cadence a 125 Hz par le SysTick, via `0x10079398` qui
+   compte en `0x180142A0` jusqu'a la periode gardee en `0x1800ECDA`.
+2. **La sauvegarde relue au demarrage.** Un rallumage sur une flash qui porte
+   pourtant une sauvegarde valide repart sur la mise en route au lieu de
+   restaurer le personnage. La verification de page en `0x0000B574` est le
+   point de depart.
+3. **Une execution qui derive de deux octets.** Les instantanes pris a un
+   plantage montrent une adresse de retour a un octet impair de l'instruction
+   reelle, par exemple `0x1006DF3E` la ou le mot commence en `0x1006DF3C`. Le
+   code s'y lit encore, se recale sur les `b .+2` de remplissage, et finit par
+   ecrire des zeros dans la table des vecteurs. L'origine du decalage n'est pas
+   trouvee.
+4. **Les quatre autres editions.** Seule Water a ete menee jusqu'au bout ; Jade
+   affiche son oeuf, les trois autres n'ont pas ete suivies jusqu'a l'image.
 
 ## Ce qu'il ne faut pas refaire
 

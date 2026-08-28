@@ -115,6 +115,11 @@ fn main() {
         println!("== console rallumee sur la flash de l'instantane");
     }
 
+    // L'instantane rapporte son propre tic systeme ; SONIX_TIC doit primer,
+    // sinon on ne peut pas eprouver une source d'interruption sur un etat deja
+    // pris.
+    m.periph.tic = tamagotchi_paradise_rs::emulator::peripherals::TicSysteme::default();
+
     // ENTREES="seconde:broche:duree,..." en temps console.
     let mut appuis: Vec<(u64, u32, u64)> = std::env::var("ENTREES")
         .ok()

@@ -44,6 +44,14 @@ fn main() {
             }
             Err(e) => println!("instantane illisible : {}", e),
         }
+        // RESET=1 rallume la console sur la flash de l'instantane, donc avec sa
+        // sauvegarde, au lieu de reprendre l'execution ou elle en etait.
+        if std::env::var("RESET").is_ok() {
+            m.reset();
+            m.is_running = true;
+            m.console.clear();
+            println!("== console rallumee sur la flash de l'instantane");
+        }
     }
     if let Ok(v) = std::env::var("MMIO_FORCE") {
         for paire in v.split(',') {
