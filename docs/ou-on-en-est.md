@@ -94,9 +94,13 @@ de `0x11000` produit du code qui se lit sans erreur et ne veut rien dire.
 avait ete pris pour un identifiant rendu octet par octet, parce qu'un `CMP.W`
 faux faisait echouer la comparaison qui distingue lecture et ecriture.
 
-**Les deux bugs les plus couteux etaient dans le coeur, pas dans les
-peripheriques.** Un immediat mal etendu et un `ITSTATE` non vide a l'entree en
-exception ont chacun coute des jours d'enquete sur de fausses pistes.
+**Les bugs les plus couteux etaient dans le coeur, pas dans les
+peripheriques.** Un immediat mal etendu, un `ITSTATE` non vide a l'entree en
+exception, et un bit de pouce laisse dans le PC par `set_reg` ont chacun coute
+des jours d'enquete sur de fausses pistes. Le dernier donnait un PC impair, donc
+une lecture d'instruction decalee d'un octet, donc du code qui se lit encore
+mais ne veut plus rien dire ; l'ecran de code secret restait noir et les
+adresses de retour tombaient a cote des instructions.
 
 ## Ce qui est etabli et modelise
 
@@ -169,6 +173,30 @@ Structures utiles, toutes en memoire vive :
 | `0x1801C2C4` | millisecondes, entretenu par le SysTick en `0x0000C0F4` |
 | `0x1801C2C0` | trames, entretenu par le TE en `0x0000C120` |
 
+## La veille
+
+Deux veilles, et elles n'ont rien a voir.
+
+**La veille legere**, en `0x000022B8`, pose un bit dans `0x45000300`, execute un
+`WFI`, et revient. C'est celle de l'affichage de l'heure, une dizaine de
+secondes apres le dernier appui.
+
+**La veille profonde**, en `0x000023D0`, est atteinte une trentaine de secondes
+apres. Elle demande la mise hors tension du coeur par le bit 0 de
+`0x45000300`, execute un `WFI`, remet des bits, efface toutes les interruptions
+en attente, et se rebranche sur elle meme. Le saut de `0x00002432` est
+inconditionnel, et les deux seules interruptions restees autorisees, 2 et 3, ont
+des gestionnaires qui reviennent dans la boucle : aucune sortie logicielle
+n'existe. Juste avant d'y entrer, le firmware desactive toutes les autres
+interruptions une par une, en `0x00002352`.
+
+Le reveil vient donc du materiel et remet le coeur a zero. `Machine::appuyer`
+le reproduit : un appui pendant que le PC est dans `VEILLE_PROFONDE` rallume la
+console. La memoire vive est effacee par le demarrage, mais la sauvegarde est en
+flash et le compteur de secondes continue de tourner, donc la partie et l'heure
+reprennent. Le firmware passe alors par son ecran continuer ou effacer, puis par
+la confirmation de la date, deja remplie a l'heure juste.
+
 ## Le tas et la sauvegarde
 
 Le tas fait 32 Ko, pose en dur par `heap_init(0x18005D70, 0x8000)` en
@@ -205,10 +233,11 @@ somme de controle des deux pages.
 1. **Le son.** Le buzzer est sur P1.11 et P1.13 en PWM. Rien n'est modelise.
    Le moteur audio est cadence a 125 Hz par le SysTick, via `0x10079398` qui
    compte en `0x180142A0` jusqu'a la periode gardee en `0x1800ECDA`.
-2. **La sauvegarde relue au demarrage.** Un rallumage sur une flash qui porte
-   pourtant une sauvegarde valide repart sur la mise en route au lieu de
-   restaurer le personnage. La verification de page en `0x0000B574` est le
-   point de depart.
+2. **La confirmation de la date apres un reveil.** Le firmware la demande a
+   chaque rallumage, alors que le compteur de secondes n'a pas ete perdu. Il
+   lit pourtant son drapeau de validite en `0x00003760`, qui rend bien vrai, et
+   le compteur en `0x00003754`. Reste a trouver ce qui lui fait croire que
+   l'heure est a refaire.
 3. **Une execution qui derive de deux octets.** Les instantanes pris a un
    plantage montrent une adresse de retour a un octet impair de l'instruction
    reelle, par exemple `0x1006DF3E` la ou le mot commence en `0x1006DF3C`. Le
