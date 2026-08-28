@@ -205,6 +205,12 @@ impl Journal {
         Ok(())
     }
 
+    /// Chemin du fichier d'un point, pour le recopier ailleurs.
+    pub fn chemin_du_point(&self, indice: usize) -> Option<PathBuf> {
+        let dossier = self.dossier.as_ref()?;
+        Some(dossier.join(&self.points.get(indice)?.fichier))
+    }
+
     /// Relit le point demande.
     pub fn restaurer(&self, indice: usize) -> Option<Instantane> {
         let dossier = self.dossier.as_ref()?;

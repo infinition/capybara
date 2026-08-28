@@ -966,6 +966,60 @@ impl TamagotchiApp {
         }
     }
 
+    /// Ecrit l'etat courant de la console dans un fichier choisi.
+    ///
+    /// Un instantane ne porte que les pages de flash modifiees : il ne veut
+    /// rien dire sans son dump, et c'est pour cela qu'il retient le chemin de
+    /// celui ci.
+    fn exporter_l_etat(&mut self) {
+        if self.machine.empreinte.is_none() {
+            self.status_msg = Some("Charge une console avant d'exporter.".to_string());
+            return;
+        }
+        let defaut = format!(
+            "{}-{}.tamastate",
+            if self.emplacement_choisi.is_empty() { "partie" } else { &self.emplacement_choisi },
+            chrono::Local::now().format("%Y%m%d-%H%M%S")
+        );
+        let Some(chemin) = rfd::FileDialog::new()
+            .add_filter("Instantane", &["tamastate"])
+            .set_file_name(defaut)
+            .set_title("Exporter l'etat de la console")
+            .save_file()
+        else {
+            return;
+        };
+        match self.machine.instantane().ecrire(&chemin) {
+            Ok(()) => self.status_msg = Some("Etat exporte.".to_string()),
+            Err(e) => self.status_msg = Some(format!("Export impossible : {}", e)),
+        }
+    }
+
+    /// Recopie un point de reprise vers un fichier choisi.
+    fn exporter_un_point(&mut self, indice: usize) {
+        let Some(source) = self.reprises.chemin_du_point(indice) else {
+            return;
+        };
+        let defaut = self
+            .reprises
+            .points()
+            .get(indice)
+            .map(|p| format!("point-{}.tamastate", p.quand.format("%Y%m%d-%H%M%S")))
+            .unwrap_or_else(|| "point.tamastate".to_string());
+        let Some(cible) = rfd::FileDialog::new()
+            .add_filter("Instantane", &["tamastate"])
+            .set_file_name(defaut)
+            .set_title("Exporter ce point de reprise")
+            .save_file()
+        else {
+            return;
+        };
+        match std::fs::copy(&source, &cible) {
+            Ok(_) => self.status_msg = Some("Point exporte.".to_string()),
+            Err(e) => self.status_msg = Some(format!("Export impossible : {}", e)),
+        }
+    }
+
     /// Restaure un point de reprise et remet les commandes au repos.
     fn revenir_au_point(&mut self, indice: usize) {
         let Some(etat) = self.reprises.restaurer(indice) else {
@@ -1007,6 +1061,9 @@ impl TamagotchiApp {
             if ui.button("Importer...").clicked() {
                 self.importer_un_point();
             }
+            if ui.button("Exporter l'etat").clicked() {
+                self.exporter_l_etat();
+            }
         });
         if self.reprises.points().is_empty() {
             ui.label(
@@ -1019,6 +1076,7 @@ impl TamagotchiApp {
         // Du plus recent au plus ancien : c'est dans cet ordre qu'on cherche.
         let mut a_restaurer = None;
         let mut a_oublier = None;
+        let mut a_exporter = None;
         egui::ScrollArea::vertical()
             .max_height(150.0)
             .id_salt("reprises")
@@ -1038,6 +1096,13 @@ impl TamagotchiApp {
                                 .small()
                                 .color(egui::Color32::GRAY),
                         );
+                        if ui
+                            .small_button("^")
+                            .on_hover_text("Exporter ce point vers un fichier")
+                            .clicked()
+                        {
+                            a_exporter = Some(indice);
+                        }
                         if ui.small_button("x").on_hover_text("Effacer ce point").clicked() {
                             a_oublier = Some(indice);
                         }
@@ -1046,6 +1111,9 @@ impl TamagotchiApp {
             });
         if let Some(indice) = a_restaurer {
             self.revenir_au_point(indice);
+        }
+        if let Some(indice) = a_exporter {
+            self.exporter_un_point(indice);
         }
         if let Some(indice) = a_oublier {
             self.reprises.oublier(indice);
@@ -1327,6 +1395,7 @@ impl TamagotchiApp {
                 let mut point_voulu = None;
                 let mut poser_un_point = false;
                 let mut importer_un_point = false;
+                let mut exporter_l_etat = false;
                 let mut partie_voulue = None;
                 let mut basculer_le_son = false;
                 let mut basculer_le_dessus = false;
@@ -1402,6 +1471,10 @@ impl TamagotchiApp {
                             }
                             if ui.button("Importer un instantane...").clicked() {
                                 importer_un_point = true;
+                                ui.close_menu();
+                            }
+                            if ui.button("Exporter l'etat courant...").clicked() {
+                                exporter_l_etat = true;
                                 ui.close_menu();
                             }
                             if ui.button("Tous les points...").clicked() {
@@ -1489,6 +1562,9 @@ impl TamagotchiApp {
                 }
                 if importer_un_point {
                     self.importer_un_point();
+                }
+                if exporter_l_etat {
+                    self.exporter_l_etat();
                 }
                 if let Some(z) = zoom_voulu {
                     self.zoom_jeu = z;
