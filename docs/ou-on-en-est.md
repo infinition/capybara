@@ -414,7 +414,7 @@ entier et la forme se croiserait.
 Commandes : trois boutons A, B et C sous l'ecran, et la molette sur l'antenne
 droite. Sa fenetre transparente montre deux fleches opposees qui defilent quand
 on tourne et gardent leur elan ; elle est aussi le bouton de molette, comme sur
-la console. A la souris, le clic gauche sur l'ecran vaut A, le droit vaut B, le
+la console. A la souris, le clic gauche sur l'ecran vaut A, le droit vaut C, le
 milieu vaut l'appui de molette, maintien compris dans les trois cas, sans quoi
 l'appui long qui ouvre le laboratoire serait impossible. On ne compte pas
 l'appui de molette pendant qu'on la tourne, sinon chaque cran vaudrait une

@@ -109,12 +109,14 @@ impl TamagotchiApp {
         let i18n = I18n::default();
         let machine = Machine::new();
 
-        // Le serveur local permet de suivre l'emulation depuis un navigateur,
-        // et d'envoyer les memes commandes que la fenetre.
+        // Le serveur local reste eteint au demarrage. Il coute une copie de la
+        // memoire d'ecran et un rapport de diagnostic a chaque image, pour un
+        // service dont on ne se sert pas en jouant. Il s'allume depuis le
+        // panneau d'inspection.
         let partage = std::sync::Arc::new(std::sync::Mutex::new(crate::web::Partage::default()));
-        let port_web = crate::web::demarrer(std::sync::Arc::clone(&partage), 7340).ok();
+        let port_web: Option<u16> = None;
 
-        Self {
+        let mut app = Self {
             machine,
             audio,
             i18n,
@@ -152,7 +154,12 @@ impl TamagotchiApp {
             notes: Vec::new(),
             vitesse: 1.0,
             cycles_dus: 0.0,
-        }
+        };
+        // La console reprend ou elle en etait, comme un vrai Tamagotchi
+        // qu'on rallume : le dump et l'emplacement du dernier lancement sont
+        // rouverts sans rien demander.
+        app.reprendre_la_derniere_partie();
+        app
     }
 }
 
@@ -197,6 +204,39 @@ impl TamagotchiApp {
         }
         self.emplacement_choisi = nom;
         self.rafraichir_emplacements();
+        self.retenir_la_partie();
+    }
+
+    /// Note le dump et l'emplacement en cours, pour les retrouver au prochain
+    /// lancement.
+    fn retenir_la_partie(&self) {
+        if self.load_path_input.is_empty() {
+            return;
+        }
+        crate::emulator::sauvegarde::ecrire_derniere_partie(
+            &crate::emulator::sauvegarde::DernierePartie {
+                dump: self.load_path_input.clone(),
+                emplacement: self.emplacement_choisi.clone(),
+            },
+        );
+    }
+
+    /// Rouvre la partie du dernier lancement, si son dump est toujours la.
+    ///
+    /// Rien n'est signale quand il manque : c'est le cas d'un premier
+    /// demarrage, ou d'un fichier deplace, et l'ecran de chargement suffit.
+    fn reprendre_la_derniere_partie(&mut self) {
+        let Some(partie) = crate::emulator::sauvegarde::lire_derniere_partie() else {
+            return;
+        };
+        let chemin = std::path::PathBuf::from(&partie.dump);
+        if !chemin.is_file() {
+            return;
+        }
+        self.load_firmware(chemin);
+        if !partie.emplacement.is_empty() && partie.emplacement != self.emplacement_choisi {
+            self.ouvrir_emplacement(partie.emplacement);
+        }
     }
 
     /// Recopie la partie sur le disque quand le jeu a ecrit sa flash.
@@ -423,7 +463,14 @@ impl TamagotchiApp {
     }
 
     /// Publie l'image et le diagnostic pour le serveur local.
+    ///
+    /// Ne fait rien tant que le serveur est eteint : sans lecteur en face, la
+    /// copie de la memoire d'ecran et la mise en forme du rapport seraient
+    /// payees soixante fois par seconde pour rien.
     fn publier(&mut self) {
+        if self.port_web.is_none() {
+            return;
+        }
         let rapport = self.diagnostic();
         let mut partage = self.partage.lock().unwrap();
         partage.ecran.clear();
@@ -907,16 +954,12 @@ impl eframe::App for TamagotchiApp {
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("Vitesse :").strong());
-                            // La console avance au temps reel par defaut, comme
-                            // la vraie. Les vitesses au dessus servent a faire
-                            // passer le temps, pas a jouer.
-                            for (nom, v) in [
-                                ("Pause", 0.0_f32),
-                                ("Temps reel", 1.0),
-                                ("x2", 2.0),
-                                ("x8", 8.0),
-                                ("Max", f32::INFINITY),
-                            ] {
+                            // Deux positions, et pas davantage. L'emulation
+                            // tient tout juste le temps reel : au dessus, la
+                            // machine donne deja tout et le reglage ne change
+                            // rien. Le diagnostic affiche la vitesse atteinte,
+                            // c'est le chiffre a regarder.
+                            for (nom, v) in [("Pause", 0.0_f32), ("Temps reel", 1.0)] {
                                 let choisi = if v.is_infinite() {
                                     self.vitesse.is_infinite()
                                 } else {
@@ -979,8 +1022,21 @@ impl eframe::App for TamagotchiApp {
                                 );
                             }
                             None => {
+                                // Eteint par defaut : il ne sert qu'a suivre
+                                // l'emulation depuis un navigateur, et il coute
+                                // une copie d'ecran a chaque image.
+                                if ui.button("Demarrer le serveur local").clicked() {
+                                    self.port_web = crate::web::demarrer(
+                                        std::sync::Arc::clone(&self.partage),
+                                        7340,
+                                    )
+                                    .ok();
+                                }
                                 ui.label(
-                                    egui::RichText::new("Serveur local indisponible.").small(),
+                                    egui::RichText::new(
+                                        "Suivi dans le navigateur, eteint. Une fois allume,                                          il le reste jusqu'a la fermeture.",
+                                    )
+                                    .small(),
                                 );
                             }
                         }

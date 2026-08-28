@@ -179,7 +179,7 @@ impl LcdPanel {
             commandes.bouton_a.clique = true;
         }
         if sur_ecran.secondary_clicked() {
-            commandes.bouton_b.clique = true;
+            commandes.bouton_c.clique = true;
         }
         if sur_ecran.middle_clicked() {
             commandes.molette.clique = true;
@@ -193,7 +193,7 @@ impl LcdPanel {
                 )
             });
             commandes.bouton_a.maintenu |= gauche;
-            commandes.bouton_b.maintenu |= droit;
+            commandes.bouton_c.maintenu |= droit;
             commandes.molette.maintenu |= milieu;
         }
 

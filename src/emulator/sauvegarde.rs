@@ -267,6 +267,38 @@ pub fn dossier_racine() -> PathBuf {
     base.join("sauvegardes")
 }
 
+/// Derniere partie ouverte, retenue d'un lancement a l'autre.
+///
+/// La sauvegarde `.tamasave` survivait deja a l'extinction de l'ordinateur,
+/// mais il fallait redesigner le dump et l'emplacement a chaque demarrage.
+/// Un vrai Tamagotchi qu'on rallume reprend ou il en etait, sans rien demander.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+pub struct DernierePartie {
+    pub dump: String,
+    pub emplacement: String,
+}
+
+/// Fichier qui la porte, a cote des sauvegardes.
+pub fn chemin_derniere_partie() -> PathBuf {
+    dossier_racine().join("derniere-partie.json")
+}
+
+pub fn lire_derniere_partie() -> Option<DernierePartie> {
+    let texte = std::fs::read_to_string(chemin_derniere_partie()).ok()?;
+    serde_json::from_str(&texte).ok()
+}
+
+/// L'ecrit sans bruit : ne pas pouvoir la retenir n'empeche pas de jouer.
+pub fn ecrire_derniere_partie(partie: &DernierePartie) {
+    let chemin = chemin_derniere_partie();
+    if let Some(parent) = chemin.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(texte) = serde_json::to_string_pretty(partie) {
+        let _ = std::fs::write(chemin, texte);
+    }
+}
+
 /// Empreinte d'un dump : son nom, puis huit chiffres tires de son contenu.
 ///
 /// Le nom seul ne suffit pas, deux copies renommees se confondraient ; le

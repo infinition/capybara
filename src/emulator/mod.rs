@@ -309,7 +309,7 @@ impl Machine {
     ///
     /// Les valeurs relevees sur des notes reelles, 4545, 1911, 1516, 1351, 955,
     /// 758 et 568, ne tombent sur la gamme temperee que prises ainsi, a trois
-    /// cents pres : Mi4, Sol5, Si5, Do#6, Sol6, Si6 et Mi7. Lues comme des
+    /// cents pres : Mi3, Sol4, Si4, Do#5, Sol5, Si5 et Mi6. Lues comme des
     /// hertz elles en sont toutes a quarante deux cents, presque un quart de
     /// ton, et un firmware ne compose pas faux de facon aussi reguliere.
     ///
@@ -317,9 +317,14 @@ impl Machine {
     /// s'inverse : une suite qui monte dans le tableau descend a l'oreille.
     /// C'est ce qui faisait entendre les melodies a l'envers.
     ///
-    /// Et 1 500 000 vaut 96 MHz divises par 64, soit un prediviseur rond sur
-    /// l'horloge du coeur, ce qui est la forme habituelle d'un timer en carre.
-    pub const BASE_DE_TEMPS_AUDIO: f32 = 1_500_000.0;
+    /// L'octave, elle, ne se deduit pas de la gamme : doubler ou diviser par
+    /// deux garde toutes les notes justes. Elle a ete calee a l'oreille contre
+    /// la console posee a cote, et donne 750 000. Ce chiffre est le plus
+    /// naturel des deux pour du materiel : c'est 96 MHz divises par 64, donc
+    /// une base de 1,5 MHz, puis par deux parce qu'un timer en carre bascule sa
+    /// sortie a chaque comparaison et met donc deux comparaisons par periode.
+    /// Le son de validation vaut alors Do#5 puis Sol4.
+    pub const BASE_DE_TEMPS_AUDIO: f32 = 750_000.0;
 
     /// Hauteur d'une voix, en hertz, a partir du compte range dans son champ.
     ///

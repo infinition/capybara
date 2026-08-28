@@ -60,6 +60,12 @@ impl AudioEngine {
     /// Frequence d'echantillonnage des tranches de buzzer.
     const TAUX: u32 = 44_100;
 
+    /// Avance de silence posee a l'ouverture de la voie, en secondes.
+    ///
+    /// C'est le matelas qui absorbe une image d'interface en retard. Il retarde
+    /// le debut du son d'autant, ce qui reste sous le seuil de perception.
+    const AVANCE: f32 = 0.04;
+
     /// Pousse une suite de notes, chacune avec sa duree en cycles de console.
     ///
     /// Relever la note une fois par image d'interface ne suffit pas : une
@@ -82,18 +88,35 @@ impl AudioEngine {
         let Some(handle) = &self.stream_handle else {
             return;
         };
-        if self.buzzer.is_none() {
+        let neuve = self.buzzer.is_none();
+        if neuve {
             self.buzzer = Sink::try_new(handle).ok();
         }
         let Some(sink) = &self.buzzer else {
             return;
         };
-        // La file n'est pas bornee ici. Jeter une tranche laisse un trou au
-        // milieu d'une melodie, et l'ordre entendu n'est plus celui compose.
-        // La cadence est deja tenue par ailleurs : on pousse autant de son que
-        // de temps reel ecoule, la file ne peut donc pas s'allonger.
+        // Une voie qui vient de naitre part avec une avance de silence. Sans
+        // elle, la premiere tranche est consommee avant que la suivante arrive
+        // et le son gresille des la premiere note.
+        if neuve {
+            let lead = (Self::TAUX as f32 * Self::AVANCE) as usize;
+            sink.append(SamplesBuffer::new(1, Self::TAUX, vec![0.0_f32; lead]));
+        }
 
-        let total_echantillons = (Self::TAUX as f32 * secondes) as usize;
+        // La file n'est pas bornee : jeter une tranche laisse un trou au milieu
+        // d'une melodie. Elle est gouvernee. Sous la cible on produit un peu
+        // plus de son que de temps ecoule, au dessus un peu moins, ce qui la
+        // tient toujours pleine. C'est son assechement qui fait le
+        // gresillement, pas le signal carre : quand elle se vide, la sortie
+        // passe par un silence et chaque reprise s'entend comme un claquement.
+        // Dix pour cent d'ecart de tempo ne s'entendent pas sur un buzzer.
+        let correction = match sink.len() {
+            0..=1 => 1.10,
+            2..=4 => 1.0,
+            _ => 0.92,
+        };
+
+        let total_echantillons = (Self::TAUX as f32 * secondes * correction) as usize;
         let mut echantillons = Vec::with_capacity(total_echantillons + notes.len());
         for &(frequence, cycles) in notes {
             let part = cycles as f64 / total as f64;
