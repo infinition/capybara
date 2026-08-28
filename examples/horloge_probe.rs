@@ -27,6 +27,23 @@ fn main() {
     m.load_firmware_file(&path).unwrap();
     m.restaurer(&Instantane::lire(std::path::Path::new(&etat_path)).expect("lecture de l'etat"));
 
+    // L'ecran affiche une date : la retrouver en memoire donne la structure
+    // d'horloge, et permet ensuite de la surveiller directement.
+    if let Ok(v) = std::env::var("CHERCHE") {
+        let cible: u32 = v.trim_start_matches("0x").parse().unwrap_or(2025);
+        let d = &m.bus.sram.data;
+        println!("== occurrences de {} en memoire vive", cible);
+        for i in 0..d.len().saturating_sub(2) {
+            let h = u16::from_le_bytes([d[i], d[i + 1]]) as u32;
+            if h == cible {
+                let suite: Vec<String> =
+                    d[i..(i + 12).min(d.len())].iter().map(|o| format!("{:02x}", o)).collect();
+                println!("  {:#010x}  {}", 0x1800_0000u32 + i as u32, suite.join(" "));
+            }
+        }
+        println!();
+    }
+
     let avant = m.bus.sram.data.clone();
     let mut pas = 0u64;
     while pas < budget {
