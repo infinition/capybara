@@ -913,7 +913,7 @@ impl eframe::App for TamagotchiApp {
     ///
     /// L'ecriture periodique est espacee d'une seconde : sans ce dernier
     /// passage, la derniere sauvegarde du jeu pourrait rester en memoire.
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         let _ = self.machine.ecrire_sauvegarde();
     }
 

@@ -4,7 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = "0.29"
+# Moteur wgpu et non glow. Sur Windows, le compositeur du bureau ignore la
+# couche alpha des fenetres OpenGL : la fenetre du mode jeu restait sur fond
+# noir au lieu d'etre decoupee. wgpu passe par Direct3D et compose correctement.
+eframe = { version = "0.29", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "wgpu",
+    "wayland",
+    "x11",
+] }
 egui = "0.29"
 rodio = "0.19"
 serde = { version = "1.0", features = ["derive"] }
@@ -14,6 +23,7 @@ rand = "0.8"
 directories = "5.0"
 byteorder = "1.5"
 rfd = "0.15"
+log = "0.4"
 
 # Le coeur est un interpreteur : il passe son temps dans une poignee de
 # fonctions qui s'appellent des millions de fois par seconde. L'optimisation
