@@ -127,8 +127,16 @@ impl GpioPort {
         let Some((pin, demi)) = self.periodique else {
             return false;
         };
+        // Le compteur est ramene dans la periode plutot que divise : la
+        // division en soixante quatre bits revenait a chaque entretien des
+        // peripheriques, soit une fois toutes les deux cent cinquante six
+        // instructions, pour un signal qui ne bascule qu'a 120 Hz.
         self.cycles = self.cycles.wrapping_add(cycles as u64);
-        let haut = (self.cycles / demi) % 2 == 0;
+        let periode = demi.saturating_mul(2).max(1);
+        if self.cycles >= periode {
+            self.cycles %= periode;
+        }
+        let haut = self.cycles < demi;
         let etait_haut = self.entrees & (1 << pin) != 0;
         if haut {
             self.entrees |= 1 << pin;
