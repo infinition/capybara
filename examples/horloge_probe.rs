@@ -44,7 +44,11 @@ fn main() {
         println!();
     }
 
+    // La PRAM porte le noyau du SDK, dont le compteur de millisecondes du
+    // SysTick : la chercher en memoire vive seule laissait de cote la moitie
+    // des candidats.
     let avant = m.bus.sram.data.clone();
+    let avant_pram = m.bus.pram.data.clone();
     let mut pas = 0u64;
     while pas < budget {
         if !matches!(m.step(), StepResult::Ok(_)) {
@@ -57,22 +61,30 @@ fn main() {
 
     // Un compteur de temps avance d'un petit nombre, proportionnel a la duree.
     // Tout le reste bouge de facon erratique ou pas du tout.
-    let apres = &m.bus.sram.data;
     let mut trouves = Vec::new();
-    for i in (0..avant.len().min(apres.len()) - 4).step_by(4) {
-        let a = u32::from_le_bytes([avant[i], avant[i + 1], avant[i + 2], avant[i + 3]]);
-        let b = u32::from_le_bytes([apres[i], apres[i + 1], apres[i + 2], apres[i + 3]]);
-        if b > a {
-            let delta = b - a;
-            if delta <= 4000 {
-                trouves.push((0x1800_0000u32 + i as u32, a, b, delta));
+    // Le plafond ecarte les pointeurs et les sommes de controle, qui sautent de
+    // millions. Un compteur de temps, meme en millisecondes, reste sous
+    // quelques milliers par seconde.
+    let plafond = (4000.0 * secondes.max(1.0)) as u32;
+    for (base, avant, apres) in [
+        (0x1800_0000u32, &avant, &m.bus.sram.data),
+        (0x0000_0000u32, &avant_pram, &m.bus.pram.data),
+    ] {
+        for i in (0..avant.len().min(apres.len()) - 4).step_by(4) {
+            let a = u32::from_le_bytes([avant[i], avant[i + 1], avant[i + 2], avant[i + 3]]);
+            let b = u32::from_le_bytes([apres[i], apres[i + 1], apres[i + 2], apres[i + 3]]);
+            if b > a {
+                let delta = b - a;
+                if delta <= plafond {
+                    trouves.push((base + i as u32, a, b, delta));
+                }
             }
         }
     }
     trouves.sort_by_key(|&(_, _, _, d)| d);
 
     println!("\n== compteurs croissants, du plus lent au plus rapide");
-    for &(adresse, a, b, delta) in trouves.iter().take(40) {
+    for &(adresse, a, b, delta) in trouves.iter().take(60) {
         let par_seconde = delta as f64 / secondes;
         println!(
             "  {:#010x}  {:>10} -> {:<10}  +{:<6}  {:.2} par seconde",
