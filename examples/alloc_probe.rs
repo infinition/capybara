@@ -41,6 +41,17 @@ fn main() {
     m.load_firmware_file(&path).unwrap();
     m.restaurer(&Instantane::lire(std::path::Path::new(&etat_path)).expect("lecture de l'etat"));
 
+    // RESET=1 rallume la console avec la flash de l'instantane, donc avec sa
+    // sauvegarde. C'est le seul moyen de revoir l'entree en scene de jeu, et
+    // donc les prises de memoire qui la remplissent, sans rejouer toute la mise
+    // en route a la main.
+    if std::env::var("RESET").is_ok() {
+        m.reset();
+        m.is_running = true;
+        m.console.clear();
+        println!("== console rallumee sur la flash de l'instantane");
+    }
+
     let mut appuis: Vec<(u64, u32, u64)> = std::env::var("ENTREES")
         .ok()
         .map(|v| {

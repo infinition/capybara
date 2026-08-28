@@ -75,6 +75,16 @@ fn main() {
     m.load_firmware_file(&path).unwrap();
     m.restaurer(&Instantane::lire(std::path::Path::new(&etat_path)).expect("lecture de l'etat"));
 
+    // RESET=1 rallume la console avec la flash de l'instantane, donc avec sa
+    // sauvegarde. C'est le seul moyen de revoir l'entree en scene de jeu sans
+    // rejouer toute la mise en route a la main.
+    if std::env::var("RESET").is_ok() {
+        m.reset();
+        m.is_running = true;
+        m.console.clear();
+        println!("== console rallumee sur la flash de l'instantane");
+    }
+
     println!("== descripteur du tas");
     for i in 0..8u32 {
         println!("  {:#010x} = {:#010x}", DESCRIPTEUR + i * 4, mot(&m, DESCRIPTEUR + i * 4));

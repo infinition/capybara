@@ -105,6 +105,16 @@ fn main() {
     m.load_firmware_file(&path).unwrap();
     m.restaurer(&Instantane::lire(std::path::Path::new(&etat_path)).expect("lecture de l'etat"));
 
+    // RESET=1 rallume la console avec la flash de l'instantane, donc avec sa
+    // sauvegarde. C'est le seul moyen de revoir l'entree en scene de jeu sans
+    // rejouer toute la mise en route a la main.
+    if std::env::var("RESET").is_ok() {
+        m.reset();
+        m.is_running = true;
+        m.console.clear();
+        println!("== console rallumee sur la flash de l'instantane");
+    }
+
     // ENTREES="seconde:broche:duree,..." en temps console.
     let mut appuis: Vec<(u64, u32, u64)> = std::env::var("ENTREES")
         .ok()
@@ -130,6 +140,12 @@ fn main() {
 
     etat_lisible(&m, "au depart");
 
+    // TRACE_PAS=N garde les N dernieres adresses executees. C'est la seule
+    // lecture fiable du chemin qui mene a un arret, un desassemblage a froid se
+    // decalant des qu'il traverse des donnees.
+    let trace_len: usize = std::env::var("TRACE_PAS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let mut trace: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
+
     let budget = (secondes * SECONDE) as u64;
     let mut relachements: Vec<(u64, u32)> = Vec::new();
     let mut pas = 0u64;
@@ -147,9 +163,39 @@ fn main() {
                 true
             }
         });
-        if !matches!(m.step(), StepResult::Ok(_)) {
-            println!("arret a PC={:#010x}", m.cpu.regs.pc);
-            break;
+        let avant = m.cpu.regs.pc;
+        if trace_len > 0 {
+            if trace.len() == trace_len {
+                trace.pop_front();
+            }
+            trace.push_back(avant);
+        }
+        match m.step() {
+            StepResult::Ok(_) => {}
+            autre => {
+                let raison = match autre {
+                    StepResult::Undefined(op) => format!("instruction non decodee {:#06x}", op),
+                    StepResult::Halt => "halt".to_string(),
+                    StepResult::Breakpoint => "point d'arret".to_string(),
+                    StepResult::Ok(_) => unreachable!(),
+                };
+                println!(
+                    "arret a PC={:#010x} ({}), etape suivante {:#010x}",
+                    avant, raison, m.cpu.regs.pc
+                );
+                println!("  registres : {}", (0..13)
+                    .map(|i| format!("r{}={:#x}", i, m.cpu.regs.get_reg(i)))
+                    .collect::<Vec<_>>()
+                    .join(" "));
+                println!("  SP={:#010x} LR={:#010x}", m.cpu.regs.get_sp(), m.cpu.regs.lr);
+                if !trace.is_empty() {
+                    println!("  derniers pas :");
+                    for a in &trace {
+                        println!("    {:#010x}", a);
+                    }
+                }
+                break;
+            }
         }
         pas += 1;
         // Un releve periodique dit si l'horloge suit le compteur ou decroche,
@@ -168,6 +214,16 @@ fn main() {
 
     println!();
     etat_lisible(&m, &format!("apres {:.2} secondes", pas as f64 / SECONDE));
+
+    // SORTIE_ETAT=chemin ecrit l'etat atteint. Rejouer vingt minutes de mise en
+    // route a chaque essai coute trop cher : on la rejoue une fois, on garde le
+    // resultat, et on repart de la.
+    if let Ok(chemin) = std::env::var("SORTIE_ETAT") {
+        match m.instantane().ecrire(std::path::Path::new(&chemin)) {
+            Ok(()) => println!("== etat ecrit dans {}", chemin),
+            Err(e) => println!("== etat non ecrit : {}", e),
+        }
+    }
 
     let largeur = 128u32;
     let vram = &m.periph.display.vram;
