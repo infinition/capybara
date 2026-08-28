@@ -23,6 +23,39 @@ fn main() {
     m.load_firmware_file(&path).unwrap();
     m.restaurer(&Instantane::lire(std::path::Path::new(&etat_path)).expect("lecture de l'etat"));
 
+    // Deux boucles, et il faut regarder les deux. `step` mesure le coeur seul.
+    // `run_frame` est ce que l'interface appelle vraiment : elle y ajoute le
+    // test des points d'arret et l'interception de la console de debug, et
+    // c'est donc elle qui dit ce que l'utilisateur verra.
+    for par_trame in [false, true] {
+        m.bus.mmio_trace.enabled = false;
+        m.is_running = true;
+        m.bus.mmio_trace.clear();
+        let cycles_debut = m.cpu.cycles;
+        let debut = std::time::Instant::now();
+        while debut.elapsed().as_secs_f64() < reelles {
+            if par_trame {
+                if !matches!(m.run_frame(), StepResult::Ok(_)) {
+                    break;
+                }
+            } else {
+                for _ in 0..20_000 {
+                    if !matches!(m.step(), StepResult::Ok(_)) {
+                        break;
+                    }
+                }
+            }
+        }
+        let ecoule = debut.elapsed().as_secs_f64();
+        let cycles = (m.cpu.cycles - cycles_debut) as f64;
+        println!(
+            "  {:<10} : {:.2} millions de cycles par seconde, soit {:.2} fois le temps reel",
+            if par_trame { "run_frame" } else { "step" },
+            cycles / ecoule / 1e6,
+            cycles / ecoule / CYCLES_PAR_SECONDE as f64
+        );
+    }
+
     for journal in [true, false] {
         m.bus.mmio_trace.enabled = journal;
         m.bus.mmio_trace.clear();

@@ -166,10 +166,17 @@ impl Machine {
             return StepResult::Halt;
         }
 
+        // Sans point d'arret pose, il n'y a rien a chercher. La table est une
+        // table de hachage : l'interroger a chaque instruction coutait un
+        // hachage complet par pas, soit plus cher que le decodage lui meme, et
+        // pour rien la quasi totalite du temps. La sonde de vitesse passait a
+        // cote, elle appelle step sans passer par ici.
+        let poses = !self.breakpoints.is_empty();
+
         let mut executed = 0;
         while executed < self.instructions_per_frame {
             let pc = self.cpu.regs.pc;
-            if self.breakpoints.contains(&pc) {
+            if poses && self.breakpoints.contains(&pc) {
                 self.is_running = false;
                 self.last_stop = Some(StopReason::Breakpoint(pc));
                 return StepResult::Breakpoint;
@@ -186,7 +193,10 @@ impl Machine {
                 }
             }
 
-            if self.reveil_materiel() {
+            // Le drapeau est teste ici plutot que dans l'appel : un reveil
+            // materiel arrive une fois par mise en veille, l'appel de fonction
+            // arrivait a chaque instruction.
+            if self.periph.snsys.reveil_demande && self.reveil_materiel() {
                 executed += 1;
                 continue;
             }
