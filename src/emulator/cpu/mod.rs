@@ -174,6 +174,17 @@ impl Cpu {
     fn enter_exception(&mut self, exception_num: u32, bus: &mut MemoryBus, periph: &mut Peripherals) {
         let mut sp = self.regs.get_sp();
 
+        // L'etat du bloc IT voyage dans le xPSR empile, aux places que lui donne
+        // l'architecture : bits 26:25 pour ses deux bits bas, 15:10 pour les six
+        // hauts. Sans cela une exception prise entre un IT et son instruction
+        // conditionnelle laisse le gestionnaire heriter de la condition, et sa
+        // premiere instruction est sautee. C'est ainsi que le gestionnaire du TE
+        // perdait le PUSH de son adresse de retour et ne revenait jamais.
+        let it = self.regs.itstate as u32;
+        let xpsr_empile = (self.regs.xpsr & !0x0600_FC00)
+            | ((it & 0x3) << 25)
+            | (((it >> 2) & 0x3F) << 10);
+
         // Stack frame: R0, R1, R2, R3, R12, LR, ReturnAddress (PC), xPSR
         let frame = [
             self.regs.get_reg(0),
@@ -183,7 +194,7 @@ impl Cpu {
             self.regs.get_reg(12),
             self.regs.lr,
             self.regs.pc,
-            self.regs.xpsr,
+            xpsr_empile,
         ];
 
         for &val in frame.iter().rev() {
@@ -194,6 +205,8 @@ impl Cpu {
 
         self.regs.lr = 0xFFFF_FFF9; // Return to Thread mode with Main Stack
         self.regs.mode = Mode::Handler;
+        // Le gestionnaire demarre hors de tout bloc IT.
+        self.regs.itstate = 0;
 
         let handler_addr = bus.read_u32(self.nvic.vtor + exception_num * 4, periph, &self.nvic);
         self.regs.pc = handler_addr & !1;
@@ -230,6 +243,9 @@ impl Cpu {
         self.regs.set_reg(12, r12);
         self.regs.lr = lr;
         self.regs.xpsr = xpsr;
+        // Le bloc IT interrompu reprend la ou il en etait.
+        self.regs.itstate =
+            ((((xpsr >> 25) & 0x3) | (((xpsr >> 10) & 0x3F) << 2)) & 0xFF) as u8;
         self.regs.mode = Mode::Thread;
         self.regs.set_sp(sp);
         self.regs.pc = ret & !1;

@@ -237,7 +237,13 @@ fn main() {
 == etat des interruptions");
     println!("  SysTick CSR={:#010x} RVR={:#010x} CVR={:#010x}  actif={} irq={}",
         n.syst_csr, n.syst_rvr, n.syst_cvr, n.syst_csr & 1 != 0, n.syst_csr & 2 != 0);
-    println!("  VTOR={:#010x}  PRIMASK={}", n.vtor, m.cpu.regs.primask);
+    // Le mode compte autant que PRIMASK : notre coeur ne prend une exception
+    // que depuis le mode Thread, donc un retour d'exception manque se voit ici.
+    let mode = match m.cpu.regs.mode {
+        tamagotchi_paradise_rs::emulator::cpu::registers::Mode::Thread => "Thread",
+        _ => "Handler",
+    };
+    println!("  VTOR={:#010x}  PRIMASK={}  mode={}", n.vtor, m.cpu.regs.primask, mode);
     for i in 0..4 {
         if n.iser[i] != 0 || n.ispr[i] != 0 {
             println!("  IRQ {:>3}..{:<3} activees={:#010x} en attente={:#010x}",

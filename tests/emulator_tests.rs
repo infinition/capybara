@@ -1149,6 +1149,45 @@ fn remplacer_la_pile_efface_le_drapeau_et_refait_la_somme() {
 }
 
 #[test]
+fn une_exception_prise_dans_un_bloc_it_ne_saute_pas_la_premiere_instruction() {
+    let mut machine = Machine::new();
+    let (p, n) = (&mut machine.periph, &mut machine.cpu.nvic);
+
+    // Vecteur d'IRQ 0 vers un gestionnaire fictif, et pile utilisable.
+    machine.bus.write_u32(0x40, 0x0000_2001, p, n);
+    machine.cpu.regs.set_sp(map::SRAM_BASE + 0x1000);
+    machine.cpu.regs.pc = 0x1000;
+
+    // Le coeur est au milieu d'un bloc IT dont la condition est fausse : les
+    // instructions restantes doivent etre sautees, mais seulement celles du
+    // code interrompu, jamais celles du gestionnaire.
+    machine.cpu.regs.itstate = 0x08; // condition EQ, une instruction restante
+    machine.cpu.regs.set_flag_z(false);
+
+    let sp_avant = machine.cpu.regs.get_sp();
+    machine.cpu.nvic.iser[0] = 1;
+    machine.cpu.nvic.request_irq(0);
+    machine.step();
+
+    assert_eq!(machine.cpu.regs.pc, 0x2000, "le gestionnaire doit demarrer");
+    assert_eq!(machine.cpu.regs.itstate, 0, "le gestionnaire demarre hors bloc IT");
+    assert_eq!(machine.cpu.regs.get_sp(), sp_avant - 32, "le contexte doit etre empile");
+
+    // L'etat du bloc IT voyage dans le xPSR empile et revient au retour.
+    let xpsr = machine.bus.read_u32(
+        machine.cpu.regs.get_sp() + 28,
+        &mut machine.periph,
+        &machine.cpu.nvic,
+    );
+    assert_eq!((xpsr >> 25) & 0x3, 0, "les deux bits bas de l'etat IT");
+    assert_eq!((xpsr >> 10) & 0x3F, 0x02, "les six bits hauts de l'etat IT");
+
+    machine.cpu.regs.pc = 0xFFFF_FFF9;
+    machine.step();
+    assert_eq!(machine.cpu.regs.itstate, 0x08, "le bloc IT interrompu doit reprendre");
+}
+
+#[test]
 fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();

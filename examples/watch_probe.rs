@@ -56,6 +56,13 @@ fn main() {
         b(0) | (b(1) << 8) | (b(2) << 16) | (b(3) << 24)
     };
     let mut precedent = surveille.map(|a| lire_surveille(&m, a));
+    // WATCH_DEPUIS=N ignore les modifications d'avant le Nieme pas. Une adresse
+    // de pile change sans arret : sans ce filtre on ne voit jamais celle qui
+    // compte.
+    let depuis: u64 = std::env::var("WATCH_DEPUIS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
 
     let mut seen = 0u64;
     let mut steps = 0u64;
@@ -77,6 +84,9 @@ fn main() {
             let maintenant = lire_surveille(&m, a);
             if maintenant != avant {
                 precedent = Some(maintenant);
+                if steps < depuis {
+                    continue;
+                }
                 seen += 1;
                 println!(
                     "  {:#010x} passe de {:#010x} a {:#010x}, PC={:#010x}, apres {} pas",
