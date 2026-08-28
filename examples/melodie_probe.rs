@@ -68,6 +68,9 @@ fn main() {
             continue;
         }
         let joue = m.son_en_cours();
+        if joue && m.voix_base.is_none() {
+            m.localiser_les_voix();
+        }
         if joue && !jouait {
             // Debut d'une melodie : on repart d'une suite propre.
             depuis = m.cpu.cycles;

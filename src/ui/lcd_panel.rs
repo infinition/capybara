@@ -66,13 +66,23 @@ impl LcdPanel {
         let couleurs = shell_color.couleurs();
         let (corps_col, calotte_col, ombre_col, bouton_col) =
             (couleurs.corps, couleurs.calotte, couleurs.ombre, couleurs.bouton);
+        let (accent_col, motif_col) = (couleurs.accent, couleurs.motif);
         let mut commandes = Commandes::default();
 
         // La coque suit la fenetre, mais l'ecran et les boutons se placent les
         // uns par rapport aux autres : rien ne doit se chevaucher, quelle que
         // soit la taille. On laisse de la place a droite pour l'antenne.
-        let largeur = (available_rect.width() * 0.72).min(360.0);
-        let hauteur = (available_rect.height() * 0.94).min(560.0);
+        // La console mesure 7,5 cm de haut pour 6,5 de large. Les deux cotes
+        // etaient calcules separement, chacun sur sa dimension de fenetre : la
+        // coque s'ecrasait ou s'etirait selon la forme de celle ci. La hauteur
+        // commande maintenant, la largeur en decoule, et la molette qui deborde
+        // a droite est comptee dans la place a tenir.
+        const RAPPORT: f32 = 6.5 / 7.5;
+        const DEBORD_MOLETTE: f32 = 1.15;
+        let hauteur = (available_rect.height() * 0.96)
+            .min(available_rect.width() * 0.96 / (RAPPORT * DEBORD_MOLETTE))
+            .min(680.0);
+        let largeur = hauteur * RAPPORT;
         let centre = pos2(available_rect.center().x - largeur * 0.06, available_rect.center().y);
         let coque = Rect::from_center_size(centre, vec2(largeur, hauteur));
 
@@ -92,7 +102,25 @@ impl LcdPanel {
             pos2(centre.x + flanc - largeur * 0.06, antenne_haut),
             pos2(centre.x + flanc + largeur * 0.13, antenne_bas),
         );
-        ui.painter().rect_filled(antenne, largeur * 0.05, ombre_col);
+        // La molette n'est pas de la couleur du corps sur la console : elle
+        // tranche, vert d'eau sur la rose, violet sur la bleue. Elle est
+        // cannelee, ce que rendent quelques traits horizontaux.
+        let rayon_molette = largeur * 0.055;
+        ui.painter().rect_filled(antenne.translate(vec2(0.0, 2.5)), rayon_molette, ombre_col);
+        ui.painter().rect_filled(antenne, rayon_molette, accent_col);
+        ui.painter().rect_stroke(antenne, rayon_molette, Stroke::new(1.5, ombre_col));
+        let cannelures = 7;
+        for i in 1..cannelures {
+            let y = antenne.min.y
+                + antenne.height() * i as f32 / cannelures as f32;
+            ui.painter().line_segment(
+                [
+                    pos2(antenne.min.x + antenne.width() * 0.28, y),
+                    pos2(antenne.max.x - antenne.width() * 0.12, y),
+                ],
+                Stroke::new(1.0, ombre_col.gamma_multiply(0.5)),
+            );
+        }
 
         // Corps de l'oeuf, puis sa calotte : la moitie haute de la vraie coque
         // porte un motif de coquille fendue et n'est pas de la meme couleur.
@@ -149,12 +177,60 @@ impl LcdPanel {
         let marge = largeur * 0.17;
         let cote = (largeur - 2.0 * marge).min(hauteur * 0.38).max(64.0);
         let ecran_rect =
-            Rect::from_center_size(pos2(centre.x, centre.y - hauteur * 0.06), vec2(cote, cote));
+            Rect::from_center_size(pos2(centre.x, centre.y - hauteur * 0.04), vec2(cote, cote));
 
-        // Cadre d'ecran, avec sa couronne de coquille fendue imprimee.
-        let cadre = ecran_rect.expand(cote * 0.10);
-        ui.painter().rect_filled(cadre, cote * 0.10, Color32::from_rgb(248, 249, 252));
-        ui.painter().rect_stroke(cadre, cote * 0.10, Stroke::new(2.5, ombre_col));
+        // Le tour d'ecran de la console n'est pas un rectangle arrondi : c'est
+        // une plaque imprimee a huit cotes, coins coupes, avec une pointe vers
+        // le bas sous l'ecran. C'est aussi elle qui porte le cache transparent
+        // ou se glissent les papiers de personnalisation.
+        let cadre = ecran_rect.expand(cote * 0.22);
+        let coupe = cadre.width() * 0.20;
+        let pointe = cadre.height() * 0.16;
+        let plaque = vec![
+            pos2(cadre.min.x + coupe, cadre.min.y),
+            pos2(cadre.max.x - coupe, cadre.min.y),
+            pos2(cadre.max.x, cadre.min.y + coupe),
+            pos2(cadre.max.x, cadre.max.y - coupe),
+            pos2(cadre.max.x - coupe, cadre.max.y),
+            pos2(centre.x, cadre.max.y + pointe),
+            pos2(cadre.min.x + coupe, cadre.max.y),
+            pos2(cadre.min.x, cadre.max.y - coupe),
+            pos2(cadre.min.x, cadre.min.y + coupe),
+        ];
+        ui.painter().add(Shape::convex_polygon(
+            plaque.clone(),
+            motif_col,
+            Stroke::new(2.0, ombre_col),
+        ));
+        // Liseré interieur, plus clair : la plaque imprimee a un bord.
+        let interieur: Vec<Pos2> = plaque
+            .iter()
+            .map(|p| {
+                let v = *p - cadre.center();
+                cadre.center() + v * 0.88
+            })
+            .collect();
+        ui.painter().add(Shape::convex_polygon(
+            interieur,
+            calotte_col.gamma_multiply(0.92),
+            Stroke::NONE,
+        ));
+
+        // Le mot de marque, au dessus de l'ecran, dans la couleur d'accent.
+        ui.painter().text(
+            pos2(centre.x, cadre.min.y + cote * 0.11),
+            egui::Align2::CENTER_CENTER,
+            "TAMAGOTCHI",
+            egui::FontId::proportional((cote * 0.11).clamp(7.0, 14.0)),
+            accent_col,
+        );
+
+        // Fond blanc sous la dalle, comme la vitre de la vraie.
+        ui.painter().rect_filled(
+            ecran_rect.expand(cote * 0.045),
+            cote * 0.03,
+            Color32::from_rgb(246, 248, 250),
+        );
         match ecran {
             Some(texture) => {
                 ui.painter().image(
@@ -216,12 +292,22 @@ impl LcdPanel {
             };
             let peintre = ui.painter();
             let decalage = if etat.maintenu { 1.5 } else { 0.0 };
-            peintre.circle_filled(pos2(centre.x, centre.y + 2.5), rayon, ombre_col);
+            // Creux dans la coque, puis la pastille. Sur la console les trois
+            // boutons tranchent sur le corps, ils ne sont pas de sa couleur.
+            peintre.circle_filled(pos2(centre.x, centre.y + 2.0), rayon * 1.12, ombre_col);
             peintre.circle_filled(
                 pos2(centre.x, centre.y + decalage),
                 rayon,
-                if etat.maintenu { ombre_col } else { bouton_col },
+                if etat.maintenu { bouton_col.gamma_multiply(0.75) } else { bouton_col },
             );
+            // Reflet en haut a gauche, ce qui donne le relief du plastique.
+            if !etat.maintenu {
+                peintre.circle_filled(
+                    pos2(centre.x - rayon * 0.28, centre.y - rayon * 0.30),
+                    rayon * 0.30,
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 90),
+                );
+            }
             peintre.circle_stroke(
                 pos2(centre.x, centre.y + decalage),
                 rayon,
@@ -231,8 +317,8 @@ impl LcdPanel {
                 pos2(centre.x, centre.y + decalage),
                 egui::Align2::CENTER_CENTER,
                 etiquette,
-                egui::FontId::monospace(13.0),
-                Color32::from_rgb(60, 50, 40),
+                egui::FontId::monospace(12.0),
+                ombre_col.gamma_multiply(0.8),
             );
             etat
         };

@@ -23,6 +23,11 @@ fn main() -> eframe::Result<()> {
             // systemes elle ne s'allume pas apres coup. Elle ne se voit qu'en
             // mode jeu, ou le fond n'est pas peint.
             .with_transparent(true)
+            // Sans decor a la creation. Sur Windows une fenetre transparente
+            // ne s'obtient a peu pres jamais autrement : la barre de titre
+            // force un fond opaque. Les modes accueil et inspection remettent
+            // le decor a l'execution, ce sens la marchant bien.
+            .with_decorations(false)
             .with_resizable(true),
         ..Default::default()
     };

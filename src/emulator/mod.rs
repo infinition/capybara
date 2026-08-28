@@ -56,6 +56,13 @@ pub struct Machine {
     pub sauvegarde_active: Option<std::path::PathBuf>,
     /// Revision de flash deja recopiee sur le disque.
     pub revision_ecrite: u64,
+    /// Base du tableau des voix audio, une fois trouvee en memoire.
+    ///
+    /// Elle n'est pas la meme d'une edition a l'autre : 0x1801C820 sur Water,
+    /// huit octets plus loin sur Jade Forest, sortie plus tard. La chercher
+    /// plutot que la coder en dur evite de la relever a chaque edition, et
+    /// c'est ce qui rendait Jade Forest muette.
+    pub voix_base: Option<u32>,
 }
 
 impl Default for Machine {
@@ -90,6 +97,7 @@ impl Machine {
             edition: Edition::default(),
             sauvegarde_active: None,
             revision_ecrite: 0,
+            voix_base: None,
         }
     }
 
@@ -297,6 +305,8 @@ impl Machine {
     /// Une voix porte l'horloge du coeur en tete, son compte de rechargement
     /// en `+4`, un temoin d'activite en `+8` et son volume en `+0xC`. Le compte
     /// n'est pas une frequence : voir `BASE_DE_TEMPS_AUDIO`.
+    /// Base relevee sur Water. Elle sert de repere et de repli ; la base reelle
+    /// est cherchee en memoire, voir `localiser_les_voix`.
     pub const VOIX_AUDIO: u32 = 0x1801_C820;
     pub const TAILLE_VOIX: u32 = 0x34;
     pub const NOMBRE_VOIX: u32 = 8;
@@ -342,9 +352,59 @@ impl Machine {
         }
     }
 
+    /// Nombre d'entrees balayees a partir de la base trouvee.
+    ///
+    /// La base reperee n'est pas forcement la premiere entree du tableau : on
+    /// balaie donc large de part et d'autre, ce qui ne coute que quelques
+    /// lectures.
+    const FENETRE_VOIX: u32 = 24;
+
+    /// Horloge du coeur, en tete de chaque entree de voix. C'est elle qui
+    /// signe le tableau.
+    const HORLOGE_VOIX: u32 = 0x05B8_D800;
+
     /// Vrai quand le firmware est en train de jouer un son.
     pub fn son_en_cours(&self) -> bool {
         self.lire_sram_u8(Self::SON_EN_COURS) != 0
+    }
+
+    /// Cherche le tableau des voix en memoire vive, et retient sa base.
+    ///
+    /// Une voix porte l'horloge du coeur en tete, `0x05B8D800`. On releve
+    /// toutes les adresses qui la portent, on garde le plus gros groupe aligne
+    /// sur le pas d'une entree, et on recule de quelques entrees pour ne pas
+    /// manquer celles qui precedent. A appeler pendant qu'un son joue : au
+    /// silence le tableau peut n'avoir jamais ete rempli.
+    pub fn localiser_les_voix(&mut self) {
+        let d = &self.bus.sram.data;
+        let mut candidats: Vec<u32> = Vec::new();
+        let mut o = 0usize;
+        while o + 16 <= d.len() {
+            if u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) == Self::HORLOGE_VOIX {
+                candidats.push(0x1800_0000 + o as u32);
+            }
+            o += 4;
+        }
+        if candidats.is_empty() {
+            return;
+        }
+        // Le plus gros groupe aligne sur le pas gagne : une valeur isolee qui
+        // vaut l'horloge par hasard ne fait pas un tableau.
+        let mut meilleur: Option<(u32, usize)> = None;
+        for &a in &candidats {
+            let compte = candidats
+                .iter()
+                .filter(|&&b| (b.max(a) - b.min(a)) % Self::TAILLE_VOIX == 0)
+                .count();
+            if meilleur.map_or(true, |(_, c)| compte > c) {
+                meilleur = Some((a, compte));
+            }
+        }
+        let Some((ancre, _)) = meilleur else {
+            return;
+        };
+        let recul = Self::TAILLE_VOIX * (Self::FENETRE_VOIX / 3);
+        self.voix_base = Some(ancre.saturating_sub(recul).max(0x1800_0000));
     }
 
     /// Frequence de la note en cours, zero au silence.
@@ -357,8 +417,18 @@ impl Machine {
         if !self.son_en_cours() {
             return 0.0;
         }
-        for i in 0..Self::NOMBRE_VOIX {
-            let base = Self::VOIX_AUDIO + i * Self::TAILLE_VOIX;
+        let Some(depart) = self.voix_base else {
+            return 0.0;
+        };
+        for i in 0..Self::FENETRE_VOIX {
+            let base = depart + i * Self::TAILLE_VOIX;
+            // Une vraie entree porte l'horloge du coeur en tete. Sans ce
+            // controle, une structure voisine tombant sur le meme pas passe
+            // pour une voix, et sa valeur figee s'entend comme une note qui ne
+            // s'arrete jamais.
+            if self.lire_sram_u32(base) != Self::HORLOGE_VOIX {
+                continue;
+            }
             if self.lire_sram_u8(base + 8) == 0 {
                 continue;
             }
@@ -380,9 +450,15 @@ impl Machine {
         if !self.son_en_cours() {
             return Vec::new();
         }
-        (0..Self::NOMBRE_VOIX)
+        let Some(depart) = self.voix_base else {
+            return Vec::new();
+        };
+        (0..Self::FENETRE_VOIX)
             .filter_map(|i| {
-                let base = Self::VOIX_AUDIO + i * Self::TAILLE_VOIX;
+                let base = depart + i * Self::TAILLE_VOIX;
+                if self.lire_sram_u32(base) != Self::HORLOGE_VOIX {
+                    return None;
+                }
                 // L'octet en `+8` distingue la voix qui joue de celles qui
                 // gardent seulement leur derniere valeur : le tableau reste
                 // rempli au silence, seule celle la est en cours.

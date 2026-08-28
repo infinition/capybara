@@ -19,13 +19,19 @@ pub enum ShellColor {
     WhiteGlacier,
 }
 
-/// Les couleurs d'une coque : le corps, sa moitie haute, l'ombre des reliefs et
-/// la teinte des boutons.
+/// Les couleurs d'une coque.
+///
+/// Sur la console, les boutons et la molette ne sont pas de la couleur du
+/// corps : ils tranchent, en vert d'eau sur la rose, en violet sur la bleue.
+/// C'est `accent` qui porte cette seconde couleur. `motif` est celle du decor
+/// imprime autour de l'ecran, propre au theme de chaque edition.
 pub struct Palette {
     pub corps: Color32,
     pub calotte: Color32,
     pub ombre: Color32,
     pub bouton: Color32,
+    pub accent: Color32,
+    pub motif: Color32,
 }
 
 impl ShellColor {
@@ -37,40 +43,52 @@ impl ShellColor {
     pub fn couleurs(&self) -> Palette {
         match self {
             ShellColor::PinkLand => Palette {
-                corps: Color32::from_rgb(244, 150, 186),
-                calotte: Color32::from_rgb(255, 205, 224),
-                ombre: Color32::from_rgb(186, 88, 130),
-                bouton: Color32::from_rgb(255, 240, 170),
+                corps: Color32::from_rgb(243, 138, 174),
+                calotte: Color32::from_rgb(252, 196, 216),
+                ombre: Color32::from_rgb(198, 90, 132),
+                bouton: Color32::from_rgb(96, 208, 190),
+                accent: Color32::from_rgb(72, 198, 178),
+                motif: Color32::from_rgb(226, 96, 140),
             },
             ShellColor::BlueWater => Palette {
-                corps: Color32::from_rgb(78, 165, 226),
-                calotte: Color32::from_rgb(160, 216, 246),
-                ombre: Color32::from_rgb(40, 105, 165),
-                bouton: Color32::from_rgb(255, 235, 150),
+                corps: Color32::from_rgb(112, 190, 234),
+                calotte: Color32::from_rgb(178, 224, 248),
+                ombre: Color32::from_rgb(52, 122, 180),
+                bouton: Color32::from_rgb(128, 122, 208),
+                accent: Color32::from_rgb(118, 112, 202),
+                motif: Color32::from_rgb(74, 152, 206),
             },
             ShellColor::PurpleSky => Palette {
-                corps: Color32::from_rgb(160, 136, 214),
-                calotte: Color32::from_rgb(210, 194, 244),
-                ombre: Color32::from_rgb(102, 78, 158),
-                bouton: Color32::from_rgb(255, 236, 170),
+                corps: Color32::from_rgb(174, 152, 224),
+                calotte: Color32::from_rgb(216, 202, 246),
+                ombre: Color32::from_rgb(112, 88, 168),
+                bouton: Color32::from_rgb(244, 154, 196),
+                accent: Color32::from_rgb(238, 140, 188),
+                motif: Color32::from_rgb(140, 116, 200),
             },
             ShellColor::JadeForest => Palette {
-                corps: Color32::from_rgb(88, 186, 140),
-                calotte: Color32::from_rgb(170, 226, 190),
-                ombre: Color32::from_rgb(44, 122, 92),
-                bouton: Color32::from_rgb(255, 238, 160),
+                corps: Color32::from_rgb(96, 190, 146),
+                calotte: Color32::from_rgb(178, 228, 196),
+                ombre: Color32::from_rgb(48, 128, 96),
+                bouton: Color32::from_rgb(250, 214, 96),
+                accent: Color32::from_rgb(246, 206, 80),
+                motif: Color32::from_rgb(62, 152, 116),
             },
             ShellColor::OrangeTropics => Palette {
-                corps: Color32::from_rgb(244, 154, 78),
-                calotte: Color32::from_rgb(255, 208, 150),
-                ombre: Color32::from_rgb(186, 96, 32),
-                bouton: Color32::from_rgb(255, 244, 190),
+                corps: Color32::from_rgb(246, 152, 82),
+                calotte: Color32::from_rgb(255, 206, 152),
+                ombre: Color32::from_rgb(192, 100, 36),
+                bouton: Color32::from_rgb(80, 200, 200),
+                accent: Color32::from_rgb(64, 190, 192),
+                motif: Color32::from_rgb(226, 116, 60),
             },
             ShellColor::WhiteGlacier => Palette {
-                corps: Color32::from_rgb(232, 240, 248),
+                corps: Color32::from_rgb(234, 242, 250),
                 calotte: Color32::from_rgb(252, 253, 255),
-                ombre: Color32::from_rgb(150, 172, 196),
-                bouton: Color32::from_rgb(196, 232, 250),
+                ombre: Color32::from_rgb(154, 176, 200),
+                bouton: Color32::from_rgb(150, 206, 240),
+                accent: Color32::from_rgb(138, 198, 236),
+                motif: Color32::from_rgb(168, 200, 228),
             },
         }
     }

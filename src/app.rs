@@ -602,6 +602,11 @@ impl TamagotchiApp {
     /// c'est que le firmware la joue vraiment.
     fn note_jouee(&mut self) -> f32 {
         let joue = self.machine.son_en_cours();
+        if joue && self.machine.voix_base.is_none() {
+            // Le tableau des voix ne se cherche qu'une fois, et pendant qu'un
+            // son joue : au silence il peut n'avoir jamais ete rempli.
+            self.machine.localiser_les_voix();
+        }
         if joue && !self.son_jouait {
             self.note_perimee = self.machine.note_courante();
             self.perimee_jusqu = self.machine.cpu.cycles
@@ -711,7 +716,9 @@ impl TamagotchiApp {
                 // decoupee sur le bureau. La fenetre garde la proportion de
                 // l'oeuf, un peu plus haute que large.
                 ctx.send_viewport_cmd(Cmd::Decorations(false));
-                ctx.send_viewport_cmd(Cmd::InnerSize(egui::vec2(340.0, 470.0)));
+                // Forme de la console : 6,5 sur 7,5, plus le debord de la
+                // molette. La fenetre est donc presque carree.
+                ctx.send_viewport_cmd(Cmd::InnerSize(egui::vec2(430.0, 450.0)));
             }
             Mode::Inspection => {
                 ctx.send_viewport_cmd(Cmd::Decorations(true));
@@ -855,31 +862,47 @@ impl TamagotchiApp {
                 self.rafraichir_la_texture(ctx);
                 self.dessiner_la_console(ctx, ui, zone);
 
-                // Deux commandes minuscules dans le coin, la ou la coque ne va
-                // pas. Sans barre de titre, la fermeture doit bien vivre
-                // quelque part.
-                let cote = 20.0;
-                let coin = egui::Rect::from_min_size(
-                    zone.left_top() + egui::vec2(4.0, 4.0),
+                // Un seul bouton, minuscule, pose sur le bas de la coque : le
+                // reste des commandes passe par le clic droit, comme partout
+                // ailleurs sur le bureau. Sans barre de titre il faut bien que
+                // la fermeture vive quelque part, et un menu vaut mieux qu'un
+                // bouton de plus sur un objet qu'on veut voir nu.
+                let cote = 15.0;
+                let pastille = egui::Rect::from_center_size(
+                    egui::pos2(zone.center().x, zone.max.y - cote * 1.6),
                     egui::vec2(cote, cote),
                 );
                 if ui
-                    .put(coin, egui::Button::new(egui::RichText::new("i").small()))
+                    .put(
+                        pastille,
+                        egui::Button::new(egui::RichText::new("i").size(9.0))
+                            .rounding(cote * 0.5)
+                            .fill(egui::Color32::from_black_alpha(40)),
+                    )
                     .on_hover_text("Inspection")
                     .clicked()
                 {
                     self.mode = Mode::Inspection;
                 }
-                let ferme = egui::Rect::from_min_size(
-                    zone.left_top() + egui::vec2(8.0 + cote, 4.0),
-                    egui::vec2(cote, cote),
-                );
-                if ui
-                    .put(ferme, egui::Button::new(egui::RichText::new("x").small()))
-                    .on_hover_text("Fermer")
-                    .clicked()
-                {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+
+                // Clic droit sur la coque : le menu de la fenetre.
+                let mut mode_voulu = None;
+                fond.context_menu(|ui| {
+                    if ui.button("Inspection").clicked() {
+                        mode_voulu = Some(Mode::Inspection);
+                        ui.close_menu();
+                    }
+                    if ui.button("Accueil").clicked() {
+                        mode_voulu = Some(Mode::Accueil);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Fermer").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                if let Some(m) = mode_voulu {
+                    self.mode = m;
                 }
             });
     }
