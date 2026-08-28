@@ -93,43 +93,34 @@ fn silhouette_fenetre(cadre: Rect) -> Vec<Vec<Pos2>> {
     vec![corps, joues, pointe]
 }
 
-/// Papier glisse sous la fenetre transparente, tel que le panneau le recoit.
-pub struct Papier<'a> {
-    pub texture: &'a TextureHandle,
-    /// Largeur sur hauteur de l'image d'origine, pour ne pas la deformer.
-    pub rapport: f32,
-    pub zoom: f32,
-    pub dx: f32,
-    pub dy: f32,
+/// Habillage de la coque, tel que le panneau le recoit.
+///
+/// Les textures sont deja composees, papier et masque cuits ensemble, dans le
+/// repere carre de la coque : le panneau n'a plus qu'a les poser.
+pub struct Habits<'a> {
+    pub reglages: &'a crate::gui::fond::Habillage,
+    /// Papier de la fenetre, ou de la coque entiere.
+    pub papier: Option<&'a TextureHandle>,
+    /// Papier propre a la calotte, quand elle a le sien.
+    pub chapeau: Option<&'a TextureHandle>,
 }
 
-/// Peint un morceau de la decoupe avec le papier, en maillage texture.
+/// Peint un polygone avec une texture composee dans le repere de la coque.
 ///
-/// egui ne sait pas rogner sur un polygone : on ne peut pas poser une image et
-/// la couper a la forme. On fabrique donc le maillage a la main, en eventail
-/// depuis le premier sommet, et on calcule les coordonnees de texture depuis la
-/// position dans le cadre. L'image garde ses proportions, la plus petite
-/// dimension remplissant la decoupe, comme une photo cadree pour remplir.
-fn peindre_papier(morceau: &[Pos2], cadre: Rect, papier: &Papier<'_>) -> Shape {
-    let mut maillage = egui::Mesh::with_texture(papier.texture.id());
-    let centre = cadre.center();
-    let zoom = papier.zoom.max(0.05);
-    // Le cadre de reference est le carre circonscrit : la decoupe deborde un
-    // peu du cadre en bas, le papier doit deborder autant.
-    let etendue = cadre.width().max(cadre.height()) * 1.2;
-    // On etale la dimension la plus large de l'image pour la rendre carree, ce
-    // qui evite de l'ecraser.
-    let (ex, ey) = if papier.rapport >= 1.0 {
-        (etendue * papier.rapport, etendue)
-    } else {
-        (etendue, etendue / papier.rapport)
-    };
+/// egui ne sait pas rogner sur un polygone : on fabrique le maillage a la main,
+/// en eventail depuis le premier sommet, et les coordonnees de texture viennent
+/// de la position dans le carre de reference. Ce carre est le meme que celui de
+/// la composition, ce qui suffit a faire correspondre les deux sans autre
+/// calcul.
+fn peindre_texture(morceau: &[Pos2], repere: Rect, texture: egui::TextureId) -> Shape {
+    let mut maillage = egui::Mesh::with_texture(texture);
     for point in morceau {
-        let u = (point.x - centre.x) / (ex * zoom) + 0.5 - papier.dx;
-        let v = (point.y - centre.y) / (ey * zoom) + 0.5 - papier.dy;
         maillage.colored_vertex(*point, Color32::WHITE);
         let dernier = maillage.vertices.len() - 1;
-        maillage.vertices[dernier].uv = pos2(u, v);
+        maillage.vertices[dernier].uv = pos2(
+            (point.x - repere.min.x) / repere.width(),
+            (point.y - repere.min.y) / repere.height(),
+        );
     }
     for i in 1..morceau.len().saturating_sub(1) {
         maillage.add_triangle(0, i as u32, i as u32 + 1);
@@ -200,13 +191,18 @@ impl LcdPanel {
         ecran: Option<&TextureHandle>,
         shell_color: ShellColor,
         angle_molette: f32,
-        papier: Option<&Papier<'_>>,
-        habillage: &crate::gui::fond::Habillage,
+        habits: &Habits<'_>,
     ) -> Commandes {
+        let habillage = habits.reglages;
         let couleurs = shell_color.couleurs();
         let (corps_col, calotte_col, ombre_col, bouton_col) =
             (couleurs.corps, couleurs.calotte, couleurs.ombre, couleurs.bouton);
         let (accent_col, motif_col) = (couleurs.accent, couleurs.motif);
+        // Les commandes peuvent avoir leur propre couleur, sinon elles suivent
+        // la coque.
+        let rvb = |c: Option<[u8; 3]>, defaut: Color32| {
+            c.map(|[r, v, b]| Color32::from_rgb(r, v, b)).unwrap_or(defaut)
+        };
         let mut commandes = Commandes::default();
 
         // La coque suit la fenetre, mais l'ecran et les boutons se placent les
@@ -247,7 +243,11 @@ impl LcdPanel {
         // cannelee, ce que rendent quelques traits horizontaux.
         let rayon_molette = largeur * 0.055;
         ui.painter().rect_filled(antenne.translate(vec2(0.0, 2.5)), rayon_molette, ombre_col);
-        ui.painter().rect_filled(antenne, rayon_molette, accent_col);
+        ui.painter().rect_filled(
+            antenne,
+            rayon_molette,
+            rvb(habits.reglages.molette_couleur, accent_col),
+        );
         ui.painter().rect_stroke(antenne, rayon_molette, Stroke::new(1.5, ombre_col));
         let cannelures = 7;
         for i in 1..cannelures {
@@ -262,6 +262,10 @@ impl LcdPanel {
             );
         }
 
+        // Repere carre de la coque : c'est celui dans lequel les papiers ont ete
+        // composes, et il ne depend pas de la largeur de la fenetre.
+        let repere = Rect::from_center_size(centre, vec2(hauteur, hauteur));
+
         // Corps de l'oeuf, puis sa calotte : la moitie haute de la vraie coque
         // porte un motif de coquille fendue et n'est pas de la meme couleur.
         let contour = contour_oeuf(centre, largeur, hauteur, 96);
@@ -270,6 +274,16 @@ impl LcdPanel {
             corps_col,
             Stroke::new(3.0, ombre_col),
         ));
+
+        // Le papier peut couvrir la coque entiere. Il est pose ici, sur le
+        // corps : ce qui vient apres, calotte et fenetre, le recouvre ou non
+        // selon les reglages, ce qui suffit a tout ordonner.
+        if habillage.couvre_tout {
+            if let Some(texture) = habits.papier {
+                ui.painter()
+                    .add(peindre_texture(&contour, repere, texture.id()));
+            }
+        }
 
         // La calotte se construit en balayant l'angle de part et d'autre du
         // sommet, pas en filtrant le contour : un filtre garderait les points
@@ -291,7 +305,21 @@ impl LcdPanel {
                 centre.y - hauteur * 0.5 * t.cos(),
             ));
         }
-        ui.painter().add(Shape::convex_polygon(calotte, calotte_col, Stroke::NONE));
+        // Couverte par le papier general, la calotte n'est pas repeinte : c'est
+        // ce qui la laisse apparaitre. Sinon elle prend sa couleur, la sienne
+        // ou celle de la coque, puis son propre papier s'il y en a un.
+        let chapeau_couvert = habillage.couvre_tout && habillage.inclut_le_chapeau;
+        if !chapeau_couvert {
+            let couleur = habillage
+                .chapeau_couleur
+                .map(|[r, v, b]| Color32::from_rgb(r, v, b))
+                .unwrap_or(calotte_col);
+            ui.painter().add(Shape::convex_polygon(calotte.clone(), couleur, Stroke::NONE));
+            if let Some(texture) = habits.chapeau {
+                ui.painter()
+                    .add(peindre_texture(&calotte, repere, texture.id()));
+            }
+        }
 
         // La fente elle meme : une ligne de dents alternees, la coquille
         // cassee. Les dents pointant vers le bas sont de la couleur de la
@@ -315,9 +343,16 @@ impl LcdPanel {
 
         // L'ecran occupe le haut de la coque, les commandes le bas.
         let marge = largeur * 0.17;
-        let cote = (largeur - 2.0 * marge).min(hauteur * 0.38).max(64.0);
-        let ecran_rect =
-            Rect::from_center_size(pos2(centre.x, centre.y - hauteur * 0.04), vec2(cote, cote));
+        let cote = ((largeur - 2.0 * marge).min(hauteur * 0.38).max(64.0)
+            * habillage.ecran_taille.clamp(0.4, 1.8))
+            .min(largeur * 0.98);
+        let ecran_rect = Rect::from_center_size(
+            pos2(
+                centre.x,
+                centre.y - hauteur * 0.04 + hauteur * habillage.ecran_dy.clamp(-0.4, 0.4),
+            ),
+            vec2(cote, cote),
+        );
 
         // La fenetre transparente qui entoure l'ecran. Ce n'est pas un cadre :
         // il n'y a aucun trait sur la console, c'est la decoupe du plastique
@@ -329,13 +364,20 @@ impl LcdPanel {
         // couleur, poses l'un sur l'autre. Sans trait, les jointures ne se
         // voient pas, et egui ne sait remplir que du convexe.
         let cadre = ecran_rect.expand(cote * 0.30);
-        for morceau in silhouette_fenetre(cadre) {
-            match papier {
-                Some(papier) => {
-                    ui.painter().add(peindre_papier(&morceau, cadre, papier));
-                }
-                None => {
-                    ui.painter().add(Shape::convex_polygon(morceau, motif_col, Stroke::NONE));
+        if !habillage.couvre_tout {
+            for morceau in silhouette_fenetre(cadre) {
+                match habits.papier {
+                    Some(texture) => {
+                        ui.painter()
+                            .add(peindre_texture(&morceau, repere, texture.id()));
+                    }
+                    None => {
+                        ui.painter().add(Shape::convex_polygon(
+                            morceau,
+                            motif_col,
+                            Stroke::NONE,
+                        ));
+                    }
                 }
             }
         }
@@ -431,6 +473,7 @@ impl LcdPanel {
             .min(coque.max.y - rayon - hauteur * 0.06);
         let ecart = (largeur * 0.27).min(90.0);
 
+        let teinte_bouton = rvb(habits.reglages.bouton_couleur, bouton_col);
         let bouton = |ui: &mut Ui, centre: Pos2, etiquette: &str| -> EtatBouton {
             let zone = Rect::from_center_size(centre, vec2(rayon * 2.0, rayon * 2.0));
             let reponse = ui.allocate_rect(zone, Sense::click_and_drag());
@@ -448,7 +491,7 @@ impl LcdPanel {
             peintre.circle_filled(
                 pos2(centre.x, centre.y + decalage),
                 rayon,
-                if etat.maintenu { bouton_col.gamma_multiply(0.75) } else { bouton_col },
+                if etat.maintenu { teinte_bouton.gamma_multiply(0.75) } else { teinte_bouton },
             );
             // Reflet en haut a gauche, ce qui donne le relief du plastique.
             if !etat.maintenu {

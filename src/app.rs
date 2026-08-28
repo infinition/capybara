@@ -12,6 +12,44 @@ use crate::hw_bridge::FlashInspector;
 use crate::i18n::{I18n, Language};
 use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
+/// Ouvre le choix d'une image.
+fn choisir_une_image() -> Option<std::path::PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("Image", &["png", "jpg", "jpeg", "bmp", "gif", "webp"])
+        .set_title("Choisir une image")
+        .pick_file()
+}
+
+/// Reglages de cadrage d'une image : zoom, decalage et rotation.
+///
+/// Rend deux temoins : le premier dit qu'il faut reecrire le fichier, le second
+/// qu'il faut recuire la texture. Ce sont les memes ici, mais les separer evite
+/// d'oublier l'un des deux ailleurs.
+fn cadrage_reglable(
+    ui: &mut egui::Ui,
+    cadrage: &mut crate::gui::fond::Cadrage,
+    quoi: &str,
+) -> (bool, bool) {
+    let mut change = false;
+    change |= ui
+        .add(egui::Slider::new(&mut cadrage.zoom, 0.1..=4.0).text(format!("zoom {}", quoi)))
+        .changed();
+    change |= ui
+        .add(egui::Slider::new(&mut cadrage.dx, -1.5..=1.5).text("gauche / droite"))
+        .changed();
+    change |= ui
+        .add(egui::Slider::new(&mut cadrage.dy, -1.5..=1.5).text("haut / bas"))
+        .changed();
+    change |= ui
+        .add(egui::Slider::new(&mut cadrage.rotation, -180.0..=180.0).text("rotation"))
+        .changed();
+    if ui.button(format!("Recentrer le {}", quoi)).clicked() {
+        *cadrage = Default::default();
+        change = true;
+    }
+    (change, change)
+}
+
 /// Rend un nom de partie utilisable comme nom de fichier.
 ///
 /// Le nom saisi devient un fichier dans le dossier de la console : tout ce qui
@@ -41,6 +79,15 @@ fn open_dossier(chemin: &std::path::Path) -> std::io::Result<()> {
     #[cfg(all(unix, not(target_os = "macos")))]
     let commande = "xdg-open";
     std::process::Command::new(commande).arg(chemin).spawn().map(|_| ())
+}
+
+/// Onglet du panneau lateral.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Onglet {
+    /// Console, partie, points de reprise, diagnostic.
+    Console,
+    /// Habillage de la coque.
+    Personnalisation,
 }
 
 /// Ce que la fenetre montre.
@@ -99,12 +146,16 @@ pub struct TamagotchiApp {
     pub historique: crate::emulator::etat::Historique,
     /// Points de reprise horodates, ecrits sur le disque et propres au dump.
     pub reprises: crate::emulator::reprises::Journal,
+    /// Onglet ouvert dans le panneau lateral.
+    pub onglet: Onglet,
     /// Vue de restauration ouverte.
     pub voir_reprises: bool,
     /// Habillage de la console courante : papier, titre et vitre.
     pub fond: crate::gui::fond::Habillage,
-    /// Texture du papier, et rapport largeur sur hauteur de l'image d'origine.
-    fond_texture: Option<(egui::TextureHandle, f32)>,
+    /// Texture du papier, papier et masque deja cuits ensemble.
+    fond_texture: Option<egui::TextureHandle>,
+    /// Texture du papier propre a la calotte.
+    chapeau_texture: Option<egui::TextureHandle>,
     /// Nom en cours de saisie pour une nouvelle sauvegarde.
     ///
     /// `Some` tant que la fenetre de saisie est ouverte. Un menu contextuel ne
@@ -223,9 +274,11 @@ impl TamagotchiApp {
             ecran: None,
             historique: crate::emulator::etat::Historique::default(),
             reprises: crate::emulator::reprises::Journal::default(),
+            onglet: Onglet::Console,
             voir_reprises: false,
             fond: crate::gui::fond::Habillage::default(),
             fond_texture: None,
+            chapeau_texture: None,
             papier_a_relire: true,
             saisie_sauvegarde: None,
             partage,
@@ -791,16 +844,13 @@ impl TamagotchiApp {
 
     /// Dessine la coque et envoie ses commandes sur les broches.
     fn dessiner_la_console(&mut self, ctx: &Context, ui: &mut egui::Ui, zone: egui::Rect) {
-        // Le papier glisse sous la fenetre transparente, quand il y en a un.
-        let papier = self.fond_texture.as_ref().map(|(texture, rapport)| {
-            crate::ui::lcd_panel::Papier {
-                texture,
-                rapport: *rapport,
-                zoom: self.fond.zoom,
-                dx: self.fond.dx,
-                dy: self.fond.dy,
-            }
-        });
+        // Les papiers sont deja composes, masque compris : le panneau n'a plus
+        // qu'a les poser.
+        let habits = crate::ui::lcd_panel::Habits {
+            reglages: &self.fond,
+            papier: self.fond_texture.as_ref(),
+            chapeau: self.chapeau_texture.as_ref(),
+        };
         let commandes = LcdPanel::render(
             ui,
             zone,
@@ -808,8 +858,7 @@ impl TamagotchiApp {
             self.ecran.as_ref(),
             self.shell_color,
             self.angle_molette,
-            papier.as_ref(),
-            &self.fond,
+            &habits,
         );
 
         // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
@@ -859,27 +908,47 @@ impl TamagotchiApp {
     fn recharger_le_papier(&mut self, ctx: &Context) {
         self.fond = crate::gui::fond::Habillage::default();
         self.fond_texture = None;
+        self.chapeau_texture = None;
         let Some(dossier) = self.dossier_du_papier() else {
             return;
         };
         self.fond = crate::gui::fond::Habillage::lire(&dossier);
-        if self.fond.fichier.is_empty() {
-            return;
-        }
-        match crate::gui::fond::charger_image(&dossier.join(&self.fond.fichier)) {
-            Ok((image, rapport)) => {
-                let texture =
-                    ctx.load_texture("papier_coque", image, egui::TextureOptions::LINEAR);
-                self.fond_texture = Some((texture, rapport));
-            }
-            Err(e) => {
-                self.status_msg = Some(format!("Papier illisible : {}", e));
-                self.fond.fichier.clear();
-            }
-        }
+        self.recomposer_les_papiers(ctx);
     }
 
-    /// Habillage de la coque : papier, mot imprime et vitre.
+    /// Recuit les papiers dans leurs textures.
+    ///
+    /// A appeler des qu'un cadrage change : la transparence est calculee une
+    /// fois ici, et non a chaque image.
+    fn recomposer_les_papiers(&mut self, ctx: &Context) {
+        use crate::gui::fond;
+        let Some(dossier) = self.dossier_du_papier() else {
+            return;
+        };
+        let charger = |nom: &str| -> Option<image::RgbaImage> {
+            if nom.is_empty() {
+                return None;
+            }
+            fond::charger_image(&dossier.join(nom)).ok()
+        };
+        let masque = charger(&self.fond.masque);
+
+        self.fond_texture = charger(&self.fond.fichier).map(|papier| {
+            let image = fond::composer(
+                &papier,
+                &self.fond.papier,
+                masque.as_ref().map(|m| (m, &self.fond.masque_cadrage)),
+            );
+            ctx.load_texture("papier_coque", image, egui::TextureOptions::LINEAR)
+        });
+
+        self.chapeau_texture = charger(&self.fond.chapeau_fichier).map(|papier| {
+            let image = fond::composer(&papier, &self.fond.chapeau_cadrage, None);
+            ctx.load_texture("papier_chapeau", image, egui::TextureOptions::LINEAR)
+        });
+    }
+
+    /// Habillage de la coque : papiers, masque, mot imprime, vitre, couleurs.
     ///
     /// Tout y est retenu par console, comme le papier de la vraie machine suit
     /// la coque et non le Tamagotchi.
@@ -890,62 +959,132 @@ impl TamagotchiApp {
             return;
         };
         let mut change = false;
+        let mut recomposer = false;
 
-        // --- le papier glisse sous la fenetre transparente
+        // --- le papier
         ui.horizontal(|ui| {
             if ui
-                .button("Choisir un papier...")
+                .button("Papier...")
                 .on_hover_text(
                     "L'image se glisse sous la fenetre transparente, comme le papier \
                      imprime de la vraie console.",
                 )
                 .clicked()
             {
-                if let Some(chemin) = rfd::FileDialog::new()
-                    .add_filter("Image", &["png", "jpg", "jpeg", "bmp", "gif", "webp"])
-                    .set_title("Choisir un papier pour la coque")
-                    .pick_file()
-                {
-                    match crate::gui::fond::adopter_image(&chemin, &dossier) {
+                if let Some(chemin) = choisir_une_image() {
+                    match crate::gui::fond::adopter_image(&chemin, &dossier, "fond") {
                         Ok(nom) => {
                             self.fond.fichier = nom;
-                            self.fond.zoom = 1.0;
-                            self.fond.dx = 0.0;
-                            self.fond.dy = 0.0;
-                            self.fond.ecrire(&dossier);
-                            self.recharger_le_papier(ctx);
+                            self.fond.papier = Default::default();
+                            change = true;
+                            recomposer = true;
                         }
-                        Err(e) => {
-                            self.status_msg = Some(format!("Image refusee : {}", e));
-                        }
+                        Err(e) => self.status_msg = Some(format!("Image refusee : {}", e)),
                     }
                 }
             }
             if !self.fond.fichier.is_empty() && ui.button("Retirer").clicked() {
                 self.fond.retirer_le_papier(&dossier);
-                self.fond_texture = None;
+                recomposer = true;
             }
         });
-
         if !self.fond.fichier.is_empty() {
+            let (c, r) = cadrage_reglable(ui, &mut self.fond.papier, "papier");
+            change |= c;
+            recomposer |= r;
             change |= ui
-                .add(egui::Slider::new(&mut self.fond.zoom, 0.2..=3.0).text("zoom"))
+                .checkbox(&mut self.fond.couvre_tout, "Couvrir toute la coque")
                 .changed();
-            change |= ui
-                .add(egui::Slider::new(&mut self.fond.dx, -1.0..=1.0).text("gauche / droite"))
-                .changed();
-            change |= ui
-                .add(egui::Slider::new(&mut self.fond.dy, -1.0..=1.0).text("haut / bas"))
-                .changed();
-            if ui.button("Recentrer le papier").clicked() {
-                self.fond.zoom = 1.0;
-                self.fond.dx = 0.0;
-                self.fond.dy = 0.0;
-                change = true;
+            if self.fond.couvre_tout {
+                change |= ui
+                    .checkbox(&mut self.fond.inclut_le_chapeau, "y compris le chapeau")
+                    .changed();
             }
         }
 
         ui.separator();
+
+        // --- le masque de decoupe
+        ui.horizontal(|ui| {
+            if ui
+                .button("Masque...")
+                .on_hover_text(
+                    "Image en noir et blanc : le noir laisse voir le papier, le blanc \
+                     le cache, et ce qui est hors de l'image est cache aussi.",
+                )
+                .clicked()
+            {
+                if let Some(chemin) = choisir_une_image() {
+                    match crate::gui::fond::adopter_image(&chemin, &dossier, "masque") {
+                        Ok(nom) => {
+                            self.fond.masque = nom;
+                            self.fond.masque_cadrage = Default::default();
+                            change = true;
+                            recomposer = true;
+                        }
+                        Err(e) => self.status_msg = Some(format!("Image refusee : {}", e)),
+                    }
+                }
+            }
+            if !self.fond.masque.is_empty() && ui.button("Retirer").clicked() {
+                self.fond.retirer_le_masque(&dossier);
+                recomposer = true;
+            }
+        });
+        if !self.fond.masque.is_empty() {
+            let (c, r) = cadrage_reglable(ui, &mut self.fond.masque_cadrage, "masque");
+            change |= c;
+            recomposer |= r;
+        }
+
+        ui.separator();
+
+        // --- le chapeau, quand il n'est pas couvert par le papier general
+        if !(self.fond.couvre_tout && self.fond.inclut_le_chapeau) {
+            ui.label(egui::RichText::new("Chapeau").strong());
+            ui.horizontal(|ui| {
+                let mut teinte = self.fond.chapeau_couleur.is_some();
+                if ui.checkbox(&mut teinte, "couleur").changed() {
+                    self.fond.chapeau_couleur = if teinte {
+                        let c = self.shell_color.couleurs().calotte;
+                        Some([c.r(), c.g(), c.b()])
+                    } else {
+                        None
+                    };
+                    change = true;
+                }
+                if let Some(rvb) = &mut self.fond.chapeau_couleur {
+                    change |= ui.color_edit_button_srgb(rvb).changed();
+                } else {
+                    ui.label(egui::RichText::new("celle de la coque").small());
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Image du chapeau...").clicked() {
+                    if let Some(chemin) = choisir_une_image() {
+                        match crate::gui::fond::adopter_image(&chemin, &dossier, "chapeau") {
+                            Ok(nom) => {
+                                self.fond.chapeau_fichier = nom;
+                                self.fond.chapeau_cadrage = Default::default();
+                                change = true;
+                                recomposer = true;
+                            }
+                            Err(e) => self.status_msg = Some(format!("Image refusee : {}", e)),
+                        }
+                    }
+                }
+                if !self.fond.chapeau_fichier.is_empty() && ui.button("Retirer").clicked() {
+                    self.fond.retirer_le_chapeau(&dossier);
+                    recomposer = true;
+                }
+            });
+            if !self.fond.chapeau_fichier.is_empty() {
+                let (c, r) = cadrage_reglable(ui, &mut self.fond.chapeau_cadrage, "chapeau");
+                change |= c;
+                recomposer |= r;
+            }
+            ui.separator();
+        }
 
         // --- le mot imprime au dessus de l'ecran
         change |= ui
@@ -963,7 +1102,6 @@ impl TamagotchiApp {
                 .add(egui::Slider::new(&mut self.fond.titre_taille, 0.3..=3.0).text("taille"))
                 .changed();
             ui.horizontal(|ui| {
-                // Sans couleur choisie, le mot prend celle d'accent de la coque.
                 let mut choisie = self.fond.titre_couleur.is_some();
                 if ui.checkbox(&mut choisie, "couleur").changed() {
                     self.fond.titre_couleur = if choisie {
@@ -1006,8 +1144,58 @@ impl TamagotchiApp {
             );
         }
 
-        if change {
+        ui.separator();
+
+        // --- la dalle
+        ui.label(egui::RichText::new("Ecran").strong());
+        change |= ui
+            .add(egui::Slider::new(&mut self.fond.ecran_taille, 0.4..=1.8).text("taille"))
+            .changed();
+        change |= ui
+            .add(egui::Slider::new(&mut self.fond.ecran_dy, -0.4..=0.4).text("haut / bas"))
+            .changed();
+        if ui.button("Ecran d'origine").clicked() {
+            self.fond.ecran_taille = 1.0;
+            self.fond.ecran_dy = 0.0;
+            change = true;
+        }
+
+        ui.separator();
+
+        // --- les commandes
+        ui.label(egui::RichText::new("Commandes").strong());
+        for (etiquette, defaut, champ) in [
+            ("boutons", self.shell_color.couleurs().bouton, 0usize),
+            ("molette", self.shell_color.couleurs().accent, 1),
+        ] {
+            ui.horizontal(|ui| {
+                let actuel = if champ == 0 {
+                    &mut self.fond.bouton_couleur
+                } else {
+                    &mut self.fond.molette_couleur
+                };
+                let mut choisie = actuel.is_some();
+                if ui.checkbox(&mut choisie, etiquette).changed() {
+                    *actuel = if choisie {
+                        Some([defaut.r(), defaut.g(), defaut.b()])
+                    } else {
+                        None
+                    };
+                    change = true;
+                }
+                if let Some(rvb) = actuel {
+                    change |= ui.color_edit_button_srgb(rvb).changed();
+                } else {
+                    ui.label(egui::RichText::new("celle de la coque").small());
+                }
+            });
+        }
+
+        if change || recomposer {
             self.fond.ecrire(&dossier);
+        }
+        if recomposer {
+            self.recomposer_les_papiers(ctx);
         }
     }
 
@@ -2065,6 +2253,30 @@ impl eframe::App for TamagotchiApp {
                 .default_width(480.0)
                 .show(ctx, |ui| {
                     ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        for (onglet, nom) in [
+                            (Onglet::Console, "Console"),
+                            (Onglet::Personnalisation, "Personnalisation"),
+                        ] {
+                            if ui.selectable_label(self.onglet == onglet, nom).clicked() {
+                                self.onglet = onglet;
+                            }
+                        }
+                    });
+                    ui.separator();
+
+                    // L'habillage occupe plus de place que le panneau n'en a :
+                    // il a son onglet, et il defile.
+                    if self.onglet == Onglet::Personnalisation {
+                        egui::ScrollArea::vertical().id_salt("personnalisation").show(
+                            ui,
+                            |ui| {
+                                self.dessiner_l_habillage(ui, ctx);
+                                ui.add_space(12.0);
+                            },
+                        );
+                        return;
+                    }
 
                     // Firmware File Loader Box
                     ui.group(|ui| {
@@ -2307,10 +2519,6 @@ impl eframe::App for TamagotchiApp {
                         self.dessiner_les_reprises(ui);
                     });
 
-                    ui.separator();
-                    ui.group(|ui| {
-                        self.dessiner_l_habillage(ui, ctx);
-                    });
 
                     // Les panneaux d'inspection coutent plus cher a dessiner que
                     // l'emulation n'en gagne a tourner : ils restent replies par
