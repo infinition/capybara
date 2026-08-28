@@ -8,6 +8,7 @@ mod gui;
 mod hw_bridge;
 mod i18n;
 mod ui;
+mod web;
 
 use app::TamagotchiApp;
 use eframe::egui;

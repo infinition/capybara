@@ -17,6 +17,7 @@
 /// La pile est mesuree sur P0.6. Sans ce convertisseur ni son interruption, le
 /// firmware ne voit aucune tension, pose son drapeau de pile faible dans l'etat
 /// sauvegarde et s'eteint apres avoir affiche son message.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct AdcPile {
     pub ctrl: u32,
     pub commande: u32,

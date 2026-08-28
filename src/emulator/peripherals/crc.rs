@@ -23,6 +23,7 @@
 /// zero, le firmware rejetait ses deux emplacements et affichait la chaine de
 /// repli du SDK, "unsupport chip, please check your flash vender", qui n'a rien
 /// a voir avec le fabricant de la flash.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChecksumUnit {
     pub ctrl: u32,
     pub source: u32,
@@ -66,7 +67,7 @@ impl Default for ChecksumUnit {
 }
 
 /// Calcul demande, a executer par le bus qui seul voit la memoire.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Calcul {
     pub source: u32,
     pub length: u32,

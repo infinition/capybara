@@ -30,6 +30,14 @@ pub struct TamagotchiApp {
     pub appuis: std::collections::HashMap<u32, u32>,
     /// Phases de l'encodeur restant a jouer, une par image.
     pub phases_encodeur: std::collections::VecDeque<(bool, bool)>,
+    /// Texture de l'ecran, refaite seulement quand une trame arrive.
+    pub ecran: Option<egui::TextureHandle>,
+    /// Anneau d'instantanes automatiques, pour revenir avant un blocage.
+    pub historique: crate::emulator::etat::Historique,
+    /// Etat publie au serveur local et commandes qui en reviennent.
+    pub partage: std::sync::Arc<std::sync::Mutex<crate::web::Partage>>,
+    /// Port du serveur local, quand il a pu demarrer.
+    pub port_web: Option<u16>,
 }
 
 impl TamagotchiApp {
@@ -37,6 +45,11 @@ impl TamagotchiApp {
         let audio = AudioEngine::new();
         let i18n = I18n::default();
         let machine = Machine::new();
+
+        // Le serveur local permet de suivre l'emulation depuis un navigateur,
+        // et d'envoyer les memes commandes que la fenetre.
+        let partage = std::sync::Arc::new(std::sync::Mutex::new(crate::web::Partage::default()));
+        let port_web = crate::web::demarrer(std::sync::Arc::clone(&partage), 7340).ok();
 
         Self {
             machine,
@@ -54,6 +67,10 @@ impl TamagotchiApp {
             budget_ms: 12,
             appuis: std::collections::HashMap::new(),
             phases_encodeur: std::collections::VecDeque::new(),
+            ecran: None,
+            historique: crate::emulator::etat::Historique::default(),
+            partage,
+            port_web,
         }
     }
 }
@@ -65,6 +82,7 @@ impl TamagotchiApp {
         self.machine.console.clear();
         self.appuis.clear();
         self.phases_encodeur.clear();
+        self.historique.vider();
         match self.machine.load_firmware_file(&path) {
             Ok(report) => {
                 // Les dumps Earth et Land ont ete extraits pile faible : sans
@@ -154,6 +172,34 @@ impl TamagotchiApp {
                 self.machine.appuyer(Machine::ENCODEUR_2);
             }
         }
+    }
+
+    /// Revient a l'instantane precedent.
+    fn reculer(&mut self) {
+        match self.historique.reculer() {
+            Some(etat) => {
+                let cycles = etat.cycles;
+                self.machine.restaurer(&etat);
+                self.appuis.clear();
+                self.phases_encodeur.clear();
+                self.status_msg = Some(format!("Retour a {} pas executes.", cycles));
+            }
+            None => {
+                self.status_msg = Some("Aucun instantane a restaurer.".to_string());
+            }
+        }
+    }
+
+    /// Publie l'image et le diagnostic pour le serveur local.
+    fn publier(&mut self) {
+        let rapport = self.diagnostic();
+        let mut partage = self.partage.lock().unwrap();
+        partage.ecran.clear();
+        partage.ecran.extend_from_slice(&self.machine.periph.display.vram);
+        partage.largeur = self.machine.periph.display.width;
+        partage.hauteur = self.machine.periph.display.height;
+        partage.trames = self.machine.periph.display.trames;
+        partage.diagnostic = rapport;
     }
 
     /// Rapport d'etat copiable, pour signaler un blocage sans capture d'ecran.
@@ -253,6 +299,23 @@ impl eframe::App for TamagotchiApp {
         // 2. Avance de l'emulation, bornee en temps pour que l'interface reste
         //    reactive. Le coeur tourne a environ dix-neuf millions de pas par
         //    seconde, soit un cinquieme de la console.
+        // Commandes venues du navigateur : elles passent par les memes broches
+        // que la fenetre.
+        let recues: Vec<crate::web::Commande> = {
+            let mut partage = self.partage.lock().unwrap();
+            std::mem::take(&mut partage.commandes)
+        };
+        for commande in recues {
+            match commande {
+                crate::web::Commande::BoutonA => self.presser(Machine::BOUTON_A),
+                crate::web::Commande::BoutonB => self.presser(Machine::BOUTON_B),
+                crate::web::Commande::BoutonC => self.presser(Machine::BOUTON_C),
+                crate::web::Commande::Molette => self.presser(Machine::BOUTON_MOLETTE),
+                crate::web::Commande::Tourner(sens) => self.tourner_molette(sens),
+                crate::web::Commande::Reculer => self.reculer(),
+            }
+        }
+
         self.appliquer_entrees();
         if self.machine.is_running && self.budget_ms > 0 {
             let debut = std::time::Instant::now();
@@ -262,6 +325,7 @@ impl eframe::App for TamagotchiApp {
                     break;
                 }
             }
+            self.historique.suivre(&self.machine);
         }
 
         // Support Drag and Drop of firmware files onto the emulator
@@ -360,6 +424,9 @@ impl eframe::App for TamagotchiApp {
                                     self.budget_ms = ms;
                                 }
                             }
+                            if ui.button("Revenir en arriere").clicked() {
+                                self.reculer();
+                            }
                             if ui.button("Rejouer depuis le debut").clicked() {
                                 let chemin = self.load_path_input.clone();
                                 if !chemin.is_empty() {
@@ -367,9 +434,66 @@ impl eframe::App for TamagotchiApp {
                                 }
                             }
                         });
+                        ui.horizontal(|ui| {
+                            if ui.button("Sauver l'etat...").clicked() {
+                                if let Some(chemin) = rfd::FileDialog::new()
+                                    .add_filter("Etat de l'emulateur (*.tamastate)", &["tamastate"])
+                                    .set_file_name("tamagotchi.tamastate")
+                                    .save_file()
+                                {
+                                    let etat = self.machine.instantane();
+                                    self.status_msg = Some(match etat.ecrire(&chemin) {
+                                        Ok(()) => format!("Etat ecrit dans {}", chemin.display()),
+                                        Err(e) => format!("Ecriture impossible : {}", e),
+                                    });
+                                }
+                            }
+                            if ui.button("Charger un etat...").clicked() {
+                                if let Some(chemin) = rfd::FileDialog::new()
+                                    .add_filter("Etat de l'emulateur (*.tamastate)", &["tamastate"])
+                                    .pick_file()
+                                {
+                                    self.status_msg = Some(
+                                        match crate::emulator::etat::Instantane::lire(&chemin) {
+                                            Ok(etat) => {
+                                                self.machine.restaurer(&etat);
+                                                self.appuis.clear();
+                                                self.phases_encodeur.clear();
+                                                format!("Etat restaure, {} pas executes.", etat.cycles)
+                                            }
+                                            Err(e) => format!("Lecture impossible : {}", e),
+                                        },
+                                    );
+                                }
+                            }
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} instantanes automatiques",
+                                    self.historique.len()
+                                ))
+                                .small(),
+                            );
+                        });
+                        match self.port_web {
+                            Some(port) => {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Suivi dans le navigateur : http://127.0.0.1:{}/",
+                                        port
+                                    ))
+                                    .small()
+                                    .color(egui::Color32::from_rgb(140, 220, 160)),
+                                );
+                            }
+                            None => {
+                                ui.label(
+                                    egui::RichText::new("Serveur local indisponible.").small(),
+                                );
+                            }
+                        }
                         ui.label(
                             egui::RichText::new(
-                                "Clavier : A, B, C pour les boutons, Espace ou Entree pour la molette,                                  Fleche haut et Page suivante pour la tourner.",
+                                "Clavier : A, B, C pour les boutons, Espace ou Entree pour la                                  molette, Fleche haut et Page suivante pour la tourner.",
                             )
                             .small(),
                         );
@@ -468,59 +592,54 @@ impl eframe::App for TamagotchiApp {
         CentralPanel::default().show(ctx, |ui| {
             let available_rect = ui.available_rect_before_wrap();
 
-            let mut btn_a_pressed = false;
-            let mut btn_b_pressed = false;
-            let mut btn_c_pressed = false;
-            let mut dial_delta = 0;
-            let mut dial_press = false;
+            // L'ecran est une texture : la retesseler en seize mille rectangles a
+            // chaque image mangeait le temps qui doit aller a l'emulation.
+            if self.machine.periph.display.dirty || self.ecran.is_none() {
+                let d = &self.machine.periph.display;
+                let mut pixels = Vec::with_capacity(d.width * d.height);
+                for &brut in &d.vram {
+                    let r = (((brut >> 11) & 0x1F) * 255 / 31) as u8;
+                    let v = (((brut >> 5) & 0x3F) * 255 / 63) as u8;
+                    let b = ((brut & 0x1F) * 255 / 31) as u8;
+                    pixels.push(egui::Color32::from_rgb(r, v, b));
+                }
+                let image = egui::ColorImage { size: [d.width, d.height], pixels };
+                let options = egui::TextureOptions::NEAREST;
+                match &mut self.ecran {
+                    Some(texture) => texture.set(image, options),
+                    None => {
+                        self.ecran = Some(ctx.load_texture("ecran_console", image, options));
+                    }
+                }
+                self.machine.periph.display.dirty = false;
+                self.publier();
+            }
 
-            LcdPanel::render(
+            let commandes = LcdPanel::render(
                 ui,
                 available_rect,
                 &self.machine.periph.display,
+                self.ecran.as_ref(),
                 self.shell_color,
-                |p| {
-                    if p {
-                        btn_a_pressed = true;
-                    }
-                },
-                |p| {
-                    if p {
-                        btn_b_pressed = true;
-                    }
-                },
-                |p| {
-                    if p {
-                        btn_c_pressed = true;
-                    }
-                },
-                |d| {
-                    dial_delta = d;
-                },
-                |p| {
-                    if p {
-                        dial_press = true;
-                    }
-                },
             );
 
-            // Les commandes vont sur les vraies broches de la console : bouton A
-            // en P0.9, B en P0.11, C en P0.10, appui de la molette en P0.8 et
-            // encodeur sur P2.0 et P2.1.
-            if btn_a_pressed {
+            // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
+            // P0.11, C en P0.10, appui de molette en P0.8, encodeur sur P2.0 et
+            // P2.1.
+            if commandes.bouton_a {
                 self.presser(Machine::BOUTON_A);
             }
-            if btn_b_pressed {
+            if commandes.bouton_b {
                 self.presser(Machine::BOUTON_B);
             }
-            if btn_c_pressed {
+            if commandes.bouton_c {
                 self.presser(Machine::BOUTON_C);
             }
-            if dial_press {
+            if commandes.molette_appuyee {
                 self.presser(Machine::BOUTON_MOLETTE);
             }
-            if dial_delta != 0 {
-                self.tourner_molette(dial_delta);
+            if commandes.molette_tournee != 0 {
+                self.tourner_molette(commandes.molette_tournee);
                 self.audio.play(SoundEffect::DialTick);
             }
         });

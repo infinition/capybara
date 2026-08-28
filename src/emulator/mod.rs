@@ -1,5 +1,6 @@
 pub mod aes;
 pub mod cpu;
+pub mod etat;
 pub mod loader;
 pub mod mmu;
 pub mod peripherals;
@@ -243,6 +244,9 @@ impl Machine {
         self.periph.fuses.device_key = self.device_key;
         self.bus.mmio_trace.clear();
         self.bus.mmio_trace.enabled = true;
+
+        // L'image chargee sert de fond aux instantanes.
+        self.bus.flash.figer_reference();
 
         self.reset();
         self.is_running = report.bootable;

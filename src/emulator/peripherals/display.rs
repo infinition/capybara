@@ -11,6 +11,7 @@ pub const LCD_HEIGHT: usize = 128;
 /// plus 0x1C, en 0x00004506.
 pub const PANNEAU_DONNEES: u32 = 0x4000_E01C;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DisplayController {
     pub ctrl: u32,
     pub fb_base_addr: u32,

@@ -1276,6 +1276,49 @@ fn le_firmware_reel_pousse_des_trames_vers_le_panneau() {
 }
 
 #[test]
+fn un_instantane_remet_la_machine_dans_son_etat() {
+    let path = std::path::Path::new(REAL_DUMP_WATER);
+    if !path.exists() {
+        return;
+    }
+    let mut machine = Machine::new();
+    machine.device_key = Some(REAL_DEVICE_KEY);
+    machine.load_firmware_file(path).unwrap();
+    machine.remplacer_la_pile();
+    machine.instructions_per_frame = 200_000;
+
+    for _ in 0..40 {
+        machine.run_frame();
+    }
+    let etat = machine.instantane();
+    let pc = machine.cpu.regs.pc;
+    let cycles = machine.cpu.cycles;
+    let sram: Vec<u8> = machine.bus.sram.data.clone();
+
+    // On avance, puis on revient : tout doit correspondre a nouveau.
+    for _ in 0..40 {
+        machine.run_frame();
+    }
+    assert_ne!(machine.cpu.cycles, cycles, "l'execution doit avoir avance");
+
+    machine.restaurer(&etat);
+    assert_eq!(machine.cpu.regs.pc, pc);
+    assert_eq!(machine.cpu.cycles, cycles);
+    assert_eq!(machine.bus.sram.data, sram, "la memoire vive doit etre revenue");
+
+    // Une ecriture en flash faite apres l'instantane ne doit pas survivre.
+    let page = Machine::PAGES_SAUVEGARDE[0];
+    let avant = machine.bus.flash.read_u8(page + 8);
+    machine.bus.flash.write_u8(page + 8, avant ^ 0xFF);
+    machine.restaurer(&etat);
+    assert_eq!(
+        machine.bus.flash.read_u8(page + 8),
+        avant,
+        "la page de sauvegarde doit revenir a son contenu d'instantane"
+    );
+}
+
+#[test]
 fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 /// Le firmware ecrit une sequence de verrouillage PLL puis attend le bit 8 du
 /// statut (offset 0x08). Les valeurs ecrites sont memorisees pour que le
 /// read-modify-write sur l'offset 0x00 retrouve l'etat precedent.
-#[derive(Default)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SnSysRegisters {
     regs: BTreeMap<u32, u32>,
     pll_locked: bool,

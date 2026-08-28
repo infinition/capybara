@@ -14,6 +14,7 @@
 /// Sans peripherique reel derriere, la conversion est instantanee : le bit de
 /// fin est pose des qu'un canal a ete demande. Seuls ces deux registres sont
 /// modelises, pour que les autres restent visibles dans la trace MMIO.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct SarAdc {
     pub channel: u32,
     /// Une conversion a ete demandee, donc le resultat est disponible.

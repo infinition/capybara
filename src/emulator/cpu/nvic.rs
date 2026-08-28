@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Nvic {
     pub iser: [u32; 8], // Interrupt Set-Enable
     pub icer: [u32; 8], // Interrupt Clear-Enable

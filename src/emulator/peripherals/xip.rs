@@ -5,6 +5,7 @@
 /// dump ecrit l'adresse issue du bloc boot-info (+0x818) dans BASE, puis 3 dans
 /// CTRL. C'est ce qui explique qu'un saut vers 0x1006D1C4 vise en realite
 /// l'offset flash 0x11000 + 0x6D1C4.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct XipController {
     pub ctrl: u32,
     /// Adresse flash mappee au debut de la fenetre, dans l'espace 0x60000000.

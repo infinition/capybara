@@ -17,6 +17,7 @@
 /// 0x10014050, qui charge le descripteur 0x1801C9C0 et le remet a l'etat 1.
 /// Sans ce transfert ni son interruption, la boucle de demarrage en 0x967E
 /// attend indefiniment.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DmaController {
     pub canaux: [Canal; NB_CANAUX],
     /// Drapeaux de fin, un bit par canal.
@@ -28,7 +29,7 @@ pub struct DmaController {
     pub irq_a_lever: bool,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Canal {
     pub ctrl: u32,
     pub config: u32,
@@ -76,7 +77,7 @@ pub const LARGEUR_UNITE: u32 = 2;
 pub const IRQ: u32 = 58;
 
 /// Copie demandee par un canal.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Transfert {
     pub canal: usize,
     pub source: u32,

@@ -37,6 +37,7 @@
 ///
 /// La copie est faite d'un coup au depart et le bit de depart retombe aussitot :
 /// rien ne modelise ici la duree d'un transfert reel.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct FlashController {
     pub ctrl: u32,
     pub command: u32,
@@ -198,7 +199,7 @@ impl FlashController {
 }
 
 /// Copie demandee par le DMA du controleur.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Transfer {
     pub flash_offset: u32,
     pub mem_addr: u32,

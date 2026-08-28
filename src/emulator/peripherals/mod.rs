@@ -28,6 +28,7 @@ pub use timers::Timers;
 pub use uart::UartController;
 pub use xip::XipController;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Peripherals {
     pub sys: SysRegisters,
     pub fuses: FuseRegisters,

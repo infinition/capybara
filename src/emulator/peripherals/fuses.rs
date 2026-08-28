@@ -4,6 +4,7 @@
 /// de poids fort, `FEUSE3` la porte en mot complet selon la variante. C'est la
 /// que le bootrom va chercher la deviceKey pour deriver l'IV du code chiffre,
 /// et c'est pour cela qu'elle est absente du dump de flash.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct FuseRegisters {
     pub device_key: Option<u32>,
     pub feuse0: u32,

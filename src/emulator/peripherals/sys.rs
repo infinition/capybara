@@ -1,3 +1,4 @@
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct SysRegisters {
     pub osc_ctrl: u32,
     pub pinctrl: u32,

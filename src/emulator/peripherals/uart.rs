@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct UartController {
     pub baud_rate: u32,
     pub tx_buffer: VecDeque<u8>,

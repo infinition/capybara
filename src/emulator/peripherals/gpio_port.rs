@@ -23,6 +23,7 @@
 /// bit-band, et le bus traduit cela en lecture puis ecriture du mot entier.
 /// Une broche en entree rend le niveau exterieur, haut au repos par sa
 /// resistance de tirage, et tire bas par un appui.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct GpioPort {
     /// Niveau impose de l'exterieur. Un bit a un correspond a une entree au
     /// repos.

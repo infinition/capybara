@@ -1,3 +1,4 @@
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Timers {
     pub timer0_count: u32,
     pub timer0_reload: u32,

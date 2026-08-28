@@ -6,3 +6,4 @@ pub mod gui;
 pub mod hw_bridge;
 pub mod i18n;
 pub mod ui;
+pub mod web;

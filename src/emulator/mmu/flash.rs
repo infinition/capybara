@@ -1,6 +1,14 @@
 pub struct SpiFlash {
     pub data: Vec<u8>,
     pub size: usize,
+    /// Image telle qu'elle a ete chargee, avant toute ecriture du jeu.
+    ///
+    /// Elle sert de fond aux instantanes : eux ne retiennent que les pages
+    /// modifiees, et une restauration remet les autres a cette reference.
+    pub reference: Vec<u8>,
+    /// Pages de 4 Ko ecrites depuis le chargement. Le jeu n'en salit qu'une
+    /// poignee, celles de sa sauvegarde.
+    pub pages_salies: std::collections::BTreeSet<usize>,
 }
 
 impl Default for SpiFlash {
@@ -14,6 +22,8 @@ impl SpiFlash {
         Self {
             data: vec![0xFF; size],
             size,
+            reference: Vec::new(),
+            pages_salies: std::collections::BTreeSet::new(),
         }
     }
 
@@ -50,6 +60,15 @@ impl SpiFlash {
     pub fn write_u8(&mut self, offset: usize, val: u8) {
         if offset < self.size {
             self.data[offset] = val;
+            // Suivre la page permet aux instantanes de ne retenir que ce qui a
+            // vraiment change, au lieu de recopier seize mega-octets.
+            self.pages_salies.insert(offset / crate::emulator::etat::PAGE_FLASH);
         }
+    }
+
+    /// Fige l'image courante comme reference des instantanes.
+    pub fn figer_reference(&mut self) {
+        self.reference.clone_from(&self.data);
+        self.pages_salies.clear();
     }
 }

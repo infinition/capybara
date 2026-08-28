@@ -1,3 +1,4 @@
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct GpioController {
     pub pin_data: u32,
     pub btn_a: bool,
