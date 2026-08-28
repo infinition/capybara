@@ -1045,7 +1045,7 @@ impl TamagotchiApp {
     /// Liste des points de reprise, avec l'heure et l'age de chacun.
     fn dessiner_les_reprises(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Revenir en arriere").strong());
+            ui.label(egui::RichText::new("Points de reprise").strong());
             ui.label(
                 egui::RichText::new(format!("{} points", self.reprises.points().len())).small(),
             );
@@ -1073,6 +1073,13 @@ impl TamagotchiApp {
             );
             return;
         }
+        ui.label(
+            egui::RichText::new(
+                "Cliquez sur une heure pour y ramener la console. Un point est pris                  chaque minute et garde jusqu'a douze heures.",
+            )
+            .small()
+            .color(egui::Color32::GRAY),
+        );
         // Du plus recent au plus ancien : c'est dans cet ordre qu'on cherche.
         let mut a_restaurer = None;
         let mut a_oublier = None;
@@ -1442,7 +1449,7 @@ impl TamagotchiApp {
                             }
                         });
 
-                        egui::CollapsingHeader::new("Revenir en arriere").show(ui, |ui| {
+                        egui::CollapsingHeader::new("Ramener la console a...").show(ui, |ui| {
                             if self.reprises.points().is_empty() {
                                 ui.label(
                                     egui::RichText::new("Aucun point pour l'instant.").small(),
@@ -1477,7 +1484,7 @@ impl TamagotchiApp {
                                 exporter_l_etat = true;
                                 ui.close_menu();
                             }
-                            if ui.button("Tous les points...").clicked() {
+                            if ui.button("Voir tous les points...").clicked() {
                                 mode_voulu = Some(Mode::Inspection);
                                 ui.close_menu();
                             }
@@ -1995,10 +2002,27 @@ impl eframe::App for TamagotchiApp {
                                     self.cycles_dus = 0.0;
                                 }
                             }
-                            if ui.button("Revenir en arriere").clicked() {
+                            // Ces deux la sont des outils de mise au point, pas
+                            // des fonctions de jeu. Leurs anciens noms,
+                            // « revenir en arriere » et « rejouer depuis le
+                            // debut », se confondaient avec les points de
+                            // reprise, qui eux ramenent la console a une heure.
+                            if ui
+                                .button("Annuler les 2 dernieres secondes")
+                                .on_hover_text(
+                                    "Filet de mise au point : revient a l'instantane                                      automatique precedent, pris toutes les deux secondes                                      d'emulation. Pour remonter plus loin, servez vous des                                      points de reprise.",
+                                )
+                                .clicked()
+                            {
                                 self.reculer();
                             }
-                            if ui.button("Rejouer depuis le debut").clicked() {
+                            if ui
+                                .button("Rallumer la console")
+                                .on_hover_text(
+                                    "Recharge le dump et remet la console a son demarrage.                                      La partie sauvegardee n'est pas touchee : elle est                                      relue et le jeu reprend ou il en etait.",
+                                )
+                                .clicked()
+                            {
                                 let chemin = self.load_path_input.clone();
                                 if !chemin.is_empty() {
                                     self.load_firmware(std::path::PathBuf::from(chemin));
