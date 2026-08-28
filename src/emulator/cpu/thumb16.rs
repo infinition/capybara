@@ -21,210 +21,211 @@ impl Thumb16 {
         periph: &mut Peripherals,
         nvic: &mut Nvic,
     ) -> StepResult {
-        // IT : 1011 1111 cccc mmmm, avec masque non nul. Un masque nul designe
-        // les hints (NOP, WFI, WFE, SEV), traites juste apres.
-        if (w & 0xFF00) == 0xBF00 && (w & 0x000F) != 0 {
-            regs.itstate = (w & 0xFF) as u8;
-            return StepResult::Ok(1);
-        }
+        // Aiguillage sur le quartet haut. C'etait une chaine d'une quinzaine de
+        // tests de masque parcourue a chaque instruction, et les formes les plus
+        // frequentes se trouvaient a la fin : les acces relatifs au pointeur de
+        // pile en 1001, le groupe divers en 1011, les branchements en 1101 et
+        // 1110. Le quartet haut suffit a separer tous les groupes, le compilateur
+        // en fait une table de saut.
+        match w >> 12 {
+            // Decalage par immediat, et addition ou soustraction a trois registres.
+            0x0 | 0x1 => Self::exec_decalage(w, regs),
 
-        // NOP
-        if w == 0xBF00 {
-            return StepResult::Ok(1);
-        }
-        // WFI / WFE
-        if w == 0xBF30 || w == 0xBF20 {
-            return StepResult::Ok(1);
-        }
-        // BKPT
-        if (w & 0xFF00) == 0xBE00 {
-            return StepResult::Breakpoint;
-        }
+            // Deplacement, comparaison, addition et soustraction immediates.
+            0x2 | 0x3 => Self::exec_imm8(w, regs),
 
-        // Shift by immediate: 000 op imm5 rm rd
-        if (w & 0xE000) == 0x0000 {
-            let op = (w >> 11) & 0x3;
-            let imm5 = ((w >> 6) & 0x1F) as u32;
-            let rm = (w >> 3) & 0x7;
-            let rd = w & 0x7;
-            let rm_val = regs.get_reg(rm as u8);
-
-            let res = match op {
-                0 => {
-                    // LSL
-                    if imm5 == 0 {
-                        rm_val
-                    } else {
-                        regs.set_flag_c((rm_val & (1 << (32 - imm5))) != 0);
-                        rm_val << imm5
-                    }
+            0x4 => {
+                if (w & 0x0C00) == 0x0000 {
+                    // Traitement de donnees : 0100 00 op rm rdn
+                    Self::exec_alu(w, regs)
+                } else if (w & 0x0C00) == 0x0400 {
+                    // Registres hauts, BX et BLX : 0100 01 op h1 h2 rm rdn
+                    Self::exec_high_reg(w, regs)
+                } else {
+                    // LDR relatif au PC : 0100 1 rd imm8
+                    let rd = ((w >> 8) & 0x7) as u8;
+                    let imm = ((w & 0xFF) as u32) * 4;
+                    let addr = ((regs.pc + 2) & !3) + imm;
+                    let val = bus.read_u32(addr, periph, nvic);
+                    regs.set_reg(rd, val);
+                    return StepResult::Ok(2);
                 }
-                1 => {
-                    // LSR
-                    let shift = if imm5 == 0 { 32 } else { imm5 };
-                    regs.set_flag_c((rm_val & (1 << (shift - 1))) != 0);
-                    if shift >= 32 { 0 } else { rm_val >> shift }
-                }
-                2 => {
-                    // ASR
-                    let shift = if imm5 == 0 { 32 } else { imm5 };
-                    regs.set_flag_c((rm_val & (1 << (shift - 1))) != 0);
-                    let s = rm_val as i32;
-                    if shift >= 32 {
-                        if s < 0 { 0xFFFF_FFFF } else { 0 }
-                    } else {
-                        (s >> shift) as u32
-                    }
-                }
-                _ => {
-                    // Add/Sub 3-register: 0001 10 op rn rd / rm rn rd
-                    return Self::exec_add_sub(w, regs);
-                }
-            };
-
-            regs.set_reg(rd as u8, res);
-            regs.set_nz(res);
-            return StepResult::Ok(1);
-        }
-
-        // Move/Compare/Add/Sub immediate: 001 op rd/rn imm8
-        if (w & 0xE000) == 0x2000 {
-            let op = (w >> 11) & 0x3;
-            let rd = ((w >> 8) & 0x7) as u8;
-            let imm8 = (w & 0xFF) as u32;
-
-            match op {
-                0 => {
-                    // MOVS rd, #imm8
-                    regs.set_reg(rd, imm8);
-                    regs.set_nz(imm8);
-                }
-                1 => {
-                    // CMP rn, #imm8
-                    let rn_val = regs.get_reg(rd);
-                    let (res, borrow) = rn_val.overflowing_sub(imm8);
-                    regs.set_nz(res);
-                    regs.set_flag_c(!borrow);
-                    regs.set_flag_v(((rn_val ^ imm8) & (rn_val ^ res) & 0x8000_0000) != 0);
-                }
-                2 => {
-                    // ADDS rd, #imm8
-                    let rd_val = regs.get_reg(rd);
-                    let (res, carry) = rd_val.overflowing_add(imm8);
-                    regs.set_reg(rd, res);
-                    regs.set_nz(res);
-                    regs.set_flag_c(carry);
-                    regs.set_flag_v((!(rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
-                }
-                3 => {
-                    // SUBS rd, #imm8
-                    let rd_val = regs.get_reg(rd);
-                    let (res, borrow) = rd_val.overflowing_sub(imm8);
-                    regs.set_reg(rd, res);
-                    regs.set_nz(res);
-                    regs.set_flag_c(!borrow);
-                    regs.set_flag_v(((rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
-                }
-                _ => {}
             }
-            return StepResult::Ok(1);
-        }
 
-        // ALU operations: 0100 00 op rm rdn
-        if (w & 0xFC00) == 0x4000 {
-            return Self::exec_alu(w, regs);
-        }
+            // Chargement et rangement a offset registre : 0101 op rm rn rd
+            0x5 => Self::exec_ldr_str_reg(w, regs, bus, periph, nvic),
 
-        // High register operations / BX / BLX: 0100 01 op h1 h2 rm rdn
-        if (w & 0xFC00) == 0x4400 {
-            return Self::exec_high_reg(w, regs);
-        }
+            // Mot et octet a offset immediat : 011 op imm5 rn rd
+            0x6 | 0x7 => Self::exec_ldr_str_imm(w, regs, bus, periph, nvic),
 
-        // LDR PC-relative: 0100 1 rd imm8
-        if (w & 0xF800) == 0x4800 {
-            let rd = ((w >> 8) & 0x7) as u8;
-            let imm = ((w & 0xFF) as u32) * 4;
-            let addr = ((regs.pc + 2) & !3) + imm;
-            let val = bus.read_u32(addr, periph, nvic);
-            regs.set_reg(rd, val);
-            return StepResult::Ok(2);
-        }
+            // Demi mot a offset immediat : 1000 op imm5 rn rd
+            0x8 => Self::exec_ldr_str_half(w, regs, bus, periph, nvic),
 
-        // Load/Store register offset: 0101 op rm rn rd
-        if (w & 0xF000) == 0x5000 {
-            return Self::exec_ldr_str_reg(w, regs, bus, periph, nvic);
-        }
-
-        // Load/Store word/byte immediate: 011 op imm5 rn rd
-        if (w & 0xE000) == 0x6000 {
-            return Self::exec_ldr_str_imm(w, regs, bus, periph, nvic);
-        }
-
-        // Load/Store halfword immediate: 1000 op imm5 rn rd
-        if (w & 0xF000) == 0x8000 {
-            return Self::exec_ldr_str_half(w, regs, bus, periph, nvic);
-        }
-
-        // Load/Store SP-relative: 1001 op rd imm8
-        if (w & 0xF000) == 0x9000 {
-            let is_ldr = (w & 0x0800) != 0;
-            let rd = ((w >> 8) & 0x7) as u8;
-            let imm = ((w & 0xFF) as u32) * 4;
-            let addr = regs.get_sp() + imm;
-            if is_ldr {
-                let val = bus.read_u32(addr, periph, nvic);
-                regs.set_reg(rd, val);
-            } else {
-                let val = regs.get_reg(rd);
-                bus.write_u32(addr, val, periph, nvic);
-            }
-            return StepResult::Ok(2);
-        }
-
-        // Add to SP / PC: 1010 op rd imm8
-        if (w & 0xF000) == 0xA000 {
-            let is_sp = (w & 0x0800) != 0;
-            let rd = ((w >> 8) & 0x7) as u8;
-            let imm = ((w & 0xFF) as u32) * 4;
-            let base = if is_sp { regs.get_sp() } else { (regs.pc + 2) & !3 };
-            regs.set_reg(rd, base + imm);
-            return StepResult::Ok(1);
-        }
-
-        // Miscellaneous: 1011 op
-        if (w & 0xF000) == 0xB000 {
-            return Self::exec_misc(w, regs, bus, periph, nvic);
-        }
-
-        // Multiple Load/Store: 1100 op rn reg_list
-        if (w & 0xF000) == 0xC000 {
-            return Self::exec_ldm_stm(w, regs, bus, periph, nvic);
-        }
-
-        // Conditional branch: 1101 cond imm8
-        if (w & 0xF000) == 0xD000 && (w & 0x0F00) != 0x0E00 && (w & 0x0F00) != 0x0F00 {
-            let cond = (w >> 8) & 0xF;
-            let imm8 = (w & 0xFF) as i8 as i32;
-            if Self::eval_condition(cond, regs) {
-                // Le PC architectural vaut adresse + 4, or step() n'a avance que
-                // de 2 pour une instruction 16 bits : il manque 2.
-                regs.pc = (regs.pc as i32 + 2 + (imm8 * 2)) as u32;
+            // Relatif au pointeur de pile : 1001 op rd imm8
+            0x9 => {
+                let is_ldr = (w & 0x0800) != 0;
+                let rd = ((w >> 8) & 0x7) as u8;
+                let imm = ((w & 0xFF) as u32) * 4;
+                let addr = regs.get_sp() + imm;
+                if is_ldr {
+                    let val = bus.read_u32(addr, periph, nvic);
+                    regs.set_reg(rd, val);
+                } else {
+                    let val = regs.get_reg(rd);
+                    bus.write_u32(addr, val, periph, nvic);
+                }
                 return StepResult::Ok(2);
             }
-            return StepResult::Ok(1);
-        }
 
-        // Unconditional branch: 1110 0 imm11
-        if (w & 0xF800) == 0xE000 {
-            let mut imm11 = (w & 0x07FF) as i32;
-            if (imm11 & 0x0400) != 0 {
-                imm11 |= !0x07FF;
+            // Adresse relative au pointeur de pile ou au PC : 1010 op rd imm8
+            0xA => {
+                let is_sp = (w & 0x0800) != 0;
+                let rd = ((w >> 8) & 0x7) as u8;
+                let imm = ((w & 0xFF) as u32) * 4;
+                let base = if is_sp { regs.get_sp() } else { (regs.pc + 2) & !3 };
+                regs.set_reg(rd, base + imm);
+                return StepResult::Ok(1);
             }
-            regs.pc = (regs.pc as i32 + 2 + (imm11 * 2)) as u32;
-            return StepResult::Ok(2);
-        }
 
-        StepResult::Undefined(w)
+            0xB => {
+                // IT : 1011 1111 cccc mmmm, avec masque non nul. Un masque nul
+                // designe les indications NOP, WFI, WFE et SEV.
+                if (w & 0xFF00) == 0xBF00 {
+                    if (w & 0x000F) != 0 {
+                        regs.itstate = (w & 0xFF) as u8;
+                    }
+                    // NOP, WFI, WFE et SEV n'ont aucun effet ici.
+                    return StepResult::Ok(1);
+                }
+                // BKPT
+                if (w & 0xFF00) == 0xBE00 {
+                    return StepResult::Breakpoint;
+                }
+                Self::exec_misc(w, regs, bus, periph, nvic)
+            }
+
+            // Acces multiples : 1100 op rn reg_list
+            0xC => Self::exec_ldm_stm(w, regs, bus, periph, nvic),
+
+            // Branchement conditionnel : 1101 cond imm8. Les conditions 1110 et
+            // 1111 sont UDF et SVC, que le modele ne traite pas.
+            0xD => {
+                let cond = (w >> 8) & 0xF;
+                if cond >= 0xE {
+                    return StepResult::Undefined(w);
+                }
+                let imm8 = (w & 0xFF) as i8 as i32;
+                if Self::eval_condition(cond, regs) {
+                    // Le PC architectural vaut adresse + 4, or step() n'a avance
+                    // que de 2 pour une instruction 16 bits : il manque 2.
+                    regs.pc = (regs.pc as i32 + 2 + (imm8 * 2)) as u32;
+                    return StepResult::Ok(2);
+                }
+                StepResult::Ok(1)
+            }
+
+            // Branchement inconditionnel : 1110 0 imm11. Au dela de 1110 1 on est
+            // dans une instruction de 32 bits, qui n'arrive pas ici.
+            0xE if (w & 0x0800) == 0 => {
+                let mut imm11 = (w & 0x07FF) as i32;
+                if (imm11 & 0x0400) != 0 {
+                    imm11 |= !0x07FF;
+                }
+                regs.pc = (regs.pc as i32 + 2 + (imm11 * 2)) as u32;
+                StepResult::Ok(2)
+            }
+
+            _ => StepResult::Undefined(w),
+        }
+    }
+
+    /// Decalage par immediat, et addition ou soustraction a trois registres.
+    fn exec_decalage(w: u16, regs: &mut Registers) -> StepResult {
+        let op = (w >> 11) & 0x3;
+        let imm5 = ((w >> 6) & 0x1F) as u32;
+        let rm = (w >> 3) & 0x7;
+        let rd = w & 0x7;
+        let rm_val = regs.get_reg(rm as u8);
+
+        let res = match op {
+            0 => {
+                // LSL
+                if imm5 == 0 {
+                    rm_val
+                } else {
+                    regs.set_flag_c((rm_val & (1 << (32 - imm5))) != 0);
+                    rm_val << imm5
+                }
+            }
+            1 => {
+                // LSR
+                let shift = if imm5 == 0 { 32 } else { imm5 };
+                regs.set_flag_c((rm_val & (1 << (shift - 1))) != 0);
+                if shift >= 32 { 0 } else { rm_val >> shift }
+            }
+            2 => {
+                // ASR
+                let shift = if imm5 == 0 { 32 } else { imm5 };
+                regs.set_flag_c((rm_val & (1 << (shift - 1))) != 0);
+                let s = rm_val as i32;
+                if shift >= 32 {
+                    if s < 0 { 0xFFFF_FFFF } else { 0 }
+                } else {
+                    (s >> shift) as u32
+                }
+            }
+            _ => {
+                // Add/Sub 3-register: 0001 10 op rn rd / rm rn rd
+                return Self::exec_add_sub(w, regs);
+            }
+        };
+
+        regs.set_reg(rd as u8, res);
+        regs.set_nz(res);
+        return StepResult::Ok(1);
+    }
+
+    /// Deplacement, comparaison, addition et soustraction immediates.
+    fn exec_imm8(w: u16, regs: &mut Registers) -> StepResult {
+        let op = (w >> 11) & 0x3;
+        let rd = ((w >> 8) & 0x7) as u8;
+        let imm8 = (w & 0xFF) as u32;
+
+        match op {
+            0 => {
+                // MOVS rd, #imm8
+                regs.set_reg(rd, imm8);
+                regs.set_nz(imm8);
+            }
+            1 => {
+                // CMP rn, #imm8
+                let rn_val = regs.get_reg(rd);
+                let (res, borrow) = rn_val.overflowing_sub(imm8);
+                regs.set_nz(res);
+                regs.set_flag_c(!borrow);
+                regs.set_flag_v(((rn_val ^ imm8) & (rn_val ^ res) & 0x8000_0000) != 0);
+            }
+            2 => {
+                // ADDS rd, #imm8
+                let rd_val = regs.get_reg(rd);
+                let (res, carry) = rd_val.overflowing_add(imm8);
+                regs.set_reg(rd, res);
+                regs.set_nz(res);
+                regs.set_flag_c(carry);
+                regs.set_flag_v((!(rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
+            }
+            3 => {
+                // SUBS rd, #imm8
+                let rd_val = regs.get_reg(rd);
+                let (res, borrow) = rd_val.overflowing_sub(imm8);
+                regs.set_reg(rd, res);
+                regs.set_nz(res);
+                regs.set_flag_c(!borrow);
+                regs.set_flag_v(((rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
+            }
+            _ => {}
+        }
+        return StepResult::Ok(1);
     }
 
     fn exec_add_sub(w: u16, regs: &mut Registers) -> StepResult {
