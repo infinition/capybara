@@ -16,9 +16,13 @@ use eframe::egui;
 fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 720.0])
-            .with_min_inner_size([720.0, 560.0])
-            .with_title("Tamagotchi Paradise Hardware Emulator (Sonix SNC73410)")
+            .with_inner_size([560.0, 600.0])
+            .with_min_inner_size([300.0, 380.0])
+            .with_title("Tamagotchi Paradise")
+            // La transparence se demande a la creation : sur la plupart des
+            // systemes elle ne s'allume pas apres coup. Elle ne se voit qu'en
+            // mode jeu, ou le fond n'est pas peint.
+            .with_transparent(true)
             .with_resizable(true),
         ..Default::default()
     };

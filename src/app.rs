@@ -12,7 +12,28 @@ use crate::hw_bridge::FlashInspector;
 use crate::i18n::{I18n, Language};
 use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
+/// Ce que la fenetre montre.
+///
+/// L'inspection coute plus cher a dessiner que l'emulation n'en gagne a
+/// tourner : desassembleur, registres, memoire et diagnostic sont refaits a
+/// chaque image. En mode jeu rien de tout cela n'existe, et la fenetre se
+/// reduit a la console elle meme, decoupee sur le bureau.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Ecran de depart : choisir un dump, un emplacement, puis jouer.
+    Accueil,
+    /// La console seule, sans cadre de fenetre, deplacable sur le bureau.
+    Jeu,
+    /// La fenetre complete, avec tous les panneaux.
+    Inspection,
+}
+
 pub struct TamagotchiApp {
+    /// Ce que la fenetre montre.
+    pub mode: Mode,
+    /// Dernier mode applique a la fenetre, pour ne poser les commandes de
+    /// viewport qu'au changement.
+    mode_applique: Option<Mode>,
     pub machine: Machine,
     pub audio: AudioEngine,
     pub i18n: I18n,
@@ -117,6 +138,8 @@ impl TamagotchiApp {
         let port_web: Option<u16> = None;
 
         let mut app = Self {
+            mode: Mode::Accueil,
+            mode_applique: None,
             machine,
             audio,
             i18n,
@@ -596,6 +619,270 @@ impl TamagotchiApp {
         }
         note
     }
+
+    /// Recopie la memoire d'ecran de la console dans une texture.
+    ///
+    /// L'ecran est une texture, pas seize mille rectangles : le tesseler a
+    /// chaque image mangeait le temps qui doit aller a l'emulation.
+    fn rafraichir_la_texture(&mut self, ctx: &Context) {
+        // L'ecran est une texture : la retesseler en seize mille rectangles a
+        // chaque image mangeait le temps qui doit aller a l'emulation.
+        if self.machine.periph.display.dirty || self.ecran.is_none() {
+            let d = &self.machine.periph.display;
+            let mut pixels = Vec::with_capacity(d.width * d.height);
+            for &brut in &d.vram {
+                let r = (((brut >> 11) & 0x1F) * 255 / 31) as u8;
+                let v = (((brut >> 5) & 0x3F) * 255 / 63) as u8;
+                let b = ((brut & 0x1F) * 255 / 31) as u8;
+                pixels.push(egui::Color32::from_rgb(r, v, b));
+        }
+            let image = egui::ColorImage { size: [d.width, d.height], pixels };
+            let options = egui::TextureOptions::NEAREST;
+            match &mut self.ecran {
+                Some(texture) => texture.set(image, options),
+                None => {
+                    self.ecran = Some(ctx.load_texture("ecran_console", image, options));
+            }
+        }
+            self.machine.periph.display.dirty = false;
+            self.publier();
+        }
+    }
+
+    /// Dessine la coque et envoie ses commandes sur les broches.
+    fn dessiner_la_console(&mut self, ctx: &Context, ui: &mut egui::Ui, zone: egui::Rect) {
+        let commandes = LcdPanel::render(
+            ui,
+            zone,
+            &self.machine.periph.display,
+            self.ecran.as_ref(),
+            self.shell_color,
+            self.angle_molette,
+        );
+
+        // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
+        // P0.11, C en P0.10, appui de molette en P0.8, encodeur sur P2.0 et
+        // P2.1.
+        for (broche, etat) in [
+            (Machine::BOUTON_A, commandes.bouton_a),
+            (Machine::BOUTON_B, commandes.bouton_b),
+            (Machine::BOUTON_C, commandes.bouton_c),
+            (Machine::BOUTON_MOLETTE, commandes.molette),
+        ] {
+            // Le pointeur enfonce tient la broche, un clic bref declenche
+            // une impulsion assez longue pour que le firmware la voie.
+            if etat.maintenu {
+                self.maintenir(broche);
+            }
+            if etat.clique {
+                self.presser(broche);
+            }
+        }
+        if commandes.molette_tournee != 0 {
+            self.tourner_molette(commandes.molette_tournee);
+            // La molette garde son elan : les deux fleches de la fenetre
+            // continuent de defiler un instant apres le geste, comme sur la
+            // vraie, qui est crantee mais pas instantanee.
+            self.angle_molette += commandes.molette_tournee as f32 * 24.0;
+        }
+        // Retour au repos, doux, pour que l'animation ne s'arrete pas net.
+        self.angle_molette *= 0.88;
+        if self.angle_molette.abs() < 0.01 {
+            self.angle_molette = 0.0;
+        } else {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Pose la fenetre pour le mode courant, une seule fois par changement.
+    fn appliquer_le_mode(&mut self, ctx: &Context) {
+        use egui::ViewportCommand as Cmd;
+        if self.mode_applique == Some(self.mode) {
+            return;
+        }
+        self.mode_applique = Some(self.mode);
+        match self.mode {
+            Mode::Accueil => {
+                ctx.send_viewport_cmd(Cmd::Decorations(true));
+                ctx.send_viewport_cmd(Cmd::InnerSize(egui::vec2(560.0, 600.0)));
+            }
+            Mode::Jeu => {
+                // Sans cadre ni barre de titre : ne reste que la coque,
+                // decoupee sur le bureau. La fenetre garde la proportion de
+                // l'oeuf, un peu plus haute que large.
+                ctx.send_viewport_cmd(Cmd::Decorations(false));
+                ctx.send_viewport_cmd(Cmd::InnerSize(egui::vec2(340.0, 470.0)));
+            }
+            Mode::Inspection => {
+                ctx.send_viewport_cmd(Cmd::Decorations(true));
+                ctx.send_viewport_cmd(Cmd::InnerSize(egui::vec2(1180.0, 800.0)));
+            }
+        }
+    }
+
+    /// Ecran de depart : le dump, l'emplacement, puis on joue.
+    fn dessiner_accueil(&mut self, ctx: &Context) {
+        CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(24.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new("Tamagotchi Paradise").size(28.0).strong());
+                ui.label(
+                    egui::RichText::new("emulateur du SoC Sonix SNC7340")
+                        .small()
+                        .color(egui::Color32::GRAY),
+                );
+            });
+            ui.add_space(20.0);
+
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("Console").strong());
+                ui.horizontal(|ui| {
+                    if ui.button("Choisir un dump...").clicked() {
+                        if let Some(chemin) = rfd::FileDialog::new()
+                            .add_filter("Dump de flash", &["bin", "rom", "dump", "raw"])
+                            .set_title("Choisir un dump de flash Tamagotchi")
+                            .pick_file()
+                        {
+                            self.load_firmware(chemin);
+                        }
+                    }
+                    let nom = std::path::Path::new(&self.load_path_input)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "aucun".to_string());
+                    ui.label(egui::RichText::new(nom).monospace());
+                });
+                if self.machine.empreinte.is_some() {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{}, coque {}",
+                            self.machine.edition.nom(),
+                            self.shell_color.nom()
+                        ))
+                        .small(),
+                    );
+                }
+            });
+
+            ui.add_space(8.0);
+
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("Partie").strong());
+                if self.machine.empreinte.is_none() {
+                    ui.label(egui::RichText::new("Charge d'abord un dump.").small());
+                } else {
+                    ui.horizontal_wrapped(|ui| {
+                        for nom in self.emplacements.clone() {
+                            if ui
+                                .selectable_label(self.emplacement_choisi == nom, &nom)
+                                .clicked()
+                            {
+                                self.ouvrir_emplacement(nom);
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.nouvel_emplacement)
+                                .hint_text("nouvelle partie")
+                                .desired_width(180.0),
+                        );
+                        if ui.button("Creer").clicked() && !self.nouvel_emplacement.is_empty() {
+                            let nom = self.nouvel_emplacement.clone();
+                            self.nouvel_emplacement.clear();
+                            self.ouvrir_emplacement(nom);
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(
+                            "La partie s'ecrit toute seule et vieillit en temps reel, meme ordinateur eteint.",
+                        )
+                        .small()
+                        .color(egui::Color32::GRAY),
+                    );
+                }
+            });
+
+            ui.add_space(16.0);
+
+            ui.vertical_centered(|ui| {
+                let pret = self.machine.empreinte.is_some();
+                if ui
+                    .add_enabled(
+                        pret,
+                        egui::Button::new(egui::RichText::new("Jouer").size(20.0).strong())
+                            .min_size(egui::vec2(220.0, 44.0)),
+                    )
+                    .clicked()
+                {
+                    self.mode = Mode::Jeu;
+                }
+                ui.add_space(6.0);
+                if ui
+                    .add(egui::Button::new("Inspection").min_size(egui::vec2(220.0, 30.0)))
+                    .clicked()
+                {
+                    self.mode = Mode::Inspection;
+                }
+            });
+
+            if let Some(msg) = &self.status_msg {
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(msg)
+                        .small()
+                        .color(egui::Color32::from_rgb(220, 200, 90)),
+                );
+            }
+        });
+    }
+
+    /// Mode jeu : la console seule, decoupee, deplacable sur le bureau.
+    fn dessiner_jeu(&mut self, ctx: &Context) {
+        CentralPanel::default()
+            .frame(egui::Frame::none())
+            .show(ctx, |ui| {
+                let zone = ui.available_rect_before_wrap();
+
+                // Le fond sert de poignee. Il est alloue avant la console pour
+                // que les boutons et l'ecran gardent la priorite du pointeur :
+                // egui donne la main au dernier element pose.
+                let fond = ui.allocate_rect(zone, egui::Sense::drag());
+                if fond.drag_started() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+
+                self.rafraichir_la_texture(ctx);
+                self.dessiner_la_console(ctx, ui, zone);
+
+                // Deux commandes minuscules dans le coin, la ou la coque ne va
+                // pas. Sans barre de titre, la fermeture doit bien vivre
+                // quelque part.
+                let cote = 20.0;
+                let coin = egui::Rect::from_min_size(
+                    zone.left_top() + egui::vec2(4.0, 4.0),
+                    egui::vec2(cote, cote),
+                );
+                if ui
+                    .put(coin, egui::Button::new(egui::RichText::new("i").small()))
+                    .on_hover_text("Inspection")
+                    .clicked()
+                {
+                    self.mode = Mode::Inspection;
+                }
+                let ferme = egui::Rect::from_min_size(
+                    zone.left_top() + egui::vec2(8.0 + cote, 4.0),
+                    egui::vec2(cote, cote),
+                );
+                if ui
+                    .put(ferme, egui::Button::new(egui::RichText::new("x").small()))
+                    .on_hover_text("Fermer")
+                    .clicked()
+                {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            });
+    }
 }
 
 impl eframe::App for TamagotchiApp {
@@ -605,6 +892,16 @@ impl eframe::App for TamagotchiApp {
     /// passage, la derniere sauvegarde du jeu pourrait rester en memoire.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let _ = self.machine.ecrire_sauvegarde();
+    }
+
+    /// Fond de la fenetre. Transparent en mode jeu : c'est ce qui decoupe la
+    /// coque sur le bureau, le reste de la surface ne peignant rien.
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        if self.mode == Mode::Jeu {
+            [0.0, 0.0, 0.0, 0.0]
+        } else {
+            visuals.panel_fill.to_normalized_gamma_f32()
+        }
     }
 
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
@@ -786,6 +1083,19 @@ impl eframe::App for TamagotchiApp {
             }
         });
 
+        self.appliquer_le_mode(ctx);
+        match self.mode {
+            Mode::Accueil => {
+                self.dessiner_accueil(ctx);
+                return;
+            }
+            Mode::Jeu => {
+                self.dessiner_jeu(ctx);
+                return;
+            }
+            Mode::Inspection => {}
+        }
+
         // 3. Top Status & Menu Bar
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -793,6 +1103,12 @@ impl eframe::App for TamagotchiApp {
 
                 ui.separator();
 
+                if ui.button("Retour au jeu").clicked() {
+                    self.mode = Mode::Jeu;
+                }
+                if ui.button("Accueil").clicked() {
+                    self.mode = Mode::Accueil;
+                }
                 if ui.button(if self.show_debugger { "Masquer l'inspection" } else { "Afficher l'inspection" }).clicked() {
                     self.show_debugger = !self.show_debugger;
                 }
@@ -1149,70 +1465,8 @@ impl eframe::App for TamagotchiApp {
         CentralPanel::default().show(ctx, |ui| {
             let available_rect = ui.available_rect_before_wrap();
 
-            // L'ecran est une texture : la retesseler en seize mille rectangles a
-            // chaque image mangeait le temps qui doit aller a l'emulation.
-            if self.machine.periph.display.dirty || self.ecran.is_none() {
-                let d = &self.machine.periph.display;
-                let mut pixels = Vec::with_capacity(d.width * d.height);
-                for &brut in &d.vram {
-                    let r = (((brut >> 11) & 0x1F) * 255 / 31) as u8;
-                    let v = (((brut >> 5) & 0x3F) * 255 / 63) as u8;
-                    let b = ((brut & 0x1F) * 255 / 31) as u8;
-                    pixels.push(egui::Color32::from_rgb(r, v, b));
-                }
-                let image = egui::ColorImage { size: [d.width, d.height], pixels };
-                let options = egui::TextureOptions::NEAREST;
-                match &mut self.ecran {
-                    Some(texture) => texture.set(image, options),
-                    None => {
-                        self.ecran = Some(ctx.load_texture("ecran_console", image, options));
-                    }
-                }
-                self.machine.periph.display.dirty = false;
-                self.publier();
-            }
-
-            let commandes = LcdPanel::render(
-                ui,
-                available_rect,
-                &self.machine.periph.display,
-                self.ecran.as_ref(),
-                self.shell_color,
-                self.angle_molette,
-            );
-
-            // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
-            // P0.11, C en P0.10, appui de molette en P0.8, encodeur sur P2.0 et
-            // P2.1.
-            for (broche, etat) in [
-                (Machine::BOUTON_A, commandes.bouton_a),
-                (Machine::BOUTON_B, commandes.bouton_b),
-                (Machine::BOUTON_C, commandes.bouton_c),
-                (Machine::BOUTON_MOLETTE, commandes.molette),
-            ] {
-                // Le pointeur enfonce tient la broche, un clic bref declenche
-                // une impulsion assez longue pour que le firmware la voie.
-                if etat.maintenu {
-                    self.maintenir(broche);
-                }
-                if etat.clique {
-                    self.presser(broche);
-                }
-            }
-            if commandes.molette_tournee != 0 {
-                self.tourner_molette(commandes.molette_tournee);
-                // La molette garde son elan : les deux fleches de la fenetre
-                // continuent de defiler un instant apres le geste, comme sur la
-                // vraie, qui est crantee mais pas instantanee.
-                self.angle_molette += commandes.molette_tournee as f32 * 24.0;
-            }
-            // Retour au repos, doux, pour que l'animation ne s'arrete pas net.
-            self.angle_molette *= 0.88;
-            if self.angle_molette.abs() < 0.01 {
-                self.angle_molette = 0.0;
-            } else {
-                ctx.request_repaint();
-            }
+            self.rafraichir_la_texture(ctx);
+            self.dessiner_la_console(ctx, ui, available_rect);
         });
 
         // 6. Modals

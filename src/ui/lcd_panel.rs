@@ -249,7 +249,14 @@ impl LcdPanel {
             e.clique |= commandes.bouton_b.clique;
             e
         };
-        commandes.bouton_c = bouton(ui, pos2(centre.x + ecart, ligne), "C");
+        commandes.bouton_c = {
+            // Le clic droit sur l'ecran vaut C : sans cette fusion, le bouton
+            // dessine ecrasait ce que l'ecran avait deja signale.
+            let mut e = bouton(ui, pos2(centre.x + ecart, ligne), "C");
+            e.maintenu |= commandes.bouton_c.maintenu;
+            e.clique |= commandes.bouton_c.clique;
+            e
+        };
 
         // Molette de zoom, sur l'antenne. Sa fenetre transparente porte deux
         // fleches opposees et sert aussi de bouton : un appui long ouvre le
