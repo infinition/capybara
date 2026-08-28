@@ -18,7 +18,7 @@ eclosion, nourrissage, QR code secret, les deux veilles et le reveil materiel,
 sauvegardes persistantes par dump avec vieillissement en temps reel, coque fidele
 suivant l'edition chargee, et les notes que le firmware compose.
 
-**Vitesse : 1,07 fois le temps de la console sur `step`, 1,17 sur `run_frame`**,
+**Vitesse : 1,40 fois le temps de la console sur `step`, 1,37 sur `run_frame`**,
 mesure du 28 aout 2026. Le gouverneur de l'interface la retient a 1,00. Il n'y a
 plus de defaut visible a l'ecran.
 
@@ -41,12 +41,13 @@ pas.
 cargo run --release
 ```
 
-Le dump se charge depuis l'interface. Pour les tests et les sondes, deux
+Le dump se charge depuis l'interface. Pour les tests et les sondes, trois
 variables designent le materiel de travail :
 
 ```bash
 export SONIX_DEVICE_KEY=0x........
 export SONIX_DUMPS=<dossier contenant les .bin>
+export SONIX_ETAT=<chemin d'un .tamastate>   # pour les sondes
 cargo test --release
 ```
 

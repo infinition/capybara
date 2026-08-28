@@ -220,7 +220,7 @@ footer p{max-width:70ch}
   </dl>
 
   <div class="note win" style="margin-top:26px">
-    <p><strong>Révision 5. L'émulateur joue, et il tient le rythme.</strong> Mise en route complète, boutons et molette, horloge qui avance, œuf qui éclot, nourrissage, QR code secret, veille et réveil, sauvegardes persistantes qui survivent à l'extinction du PC, vieillissement en temps réel, coque fidèle suivant l'édition, et le son que la console compose. 75 commits, 16 415 lignes de Rust, 22 sondes, 73 tests. La vitesse était le dernier défaut visible ; elle est passée à 1,17 fois le temps de la console, et le gouverneur la retient désormais à 1,00. Ce qui reste ouvert ne se voit pas à l'écran.</p>
+    <p><strong>Révision 5. L'émulateur joue, et il tient le rythme.</strong> Mise en route complète, boutons et molette, horloge qui avance, œuf qui éclot, nourrissage, QR code secret, veille et réveil, sauvegardes persistantes qui survivent à l'extinction du PC, vieillissement en temps réel, coque fidèle suivant l'édition, et le son que la console compose. 75 commits, 16 415 lignes de Rust, 22 sondes, 73 tests. La vitesse était le dernier défaut visible ; elle est passée à 1,40 fois le temps de la console, et le gouverneur la retient désormais à 1,00. Ce qui reste ouvert ne se voit pas à l'écran.</p>
     <p>Cette révision <strong>ajoute sans retirer</strong>. Les constats des révisions précédentes sont conservés tels quels, y compris ceux que la suite a démentis, avec la mention de ce qui les a remplacés. Un dossier de rétro-ingénierie vaut autant par ses fausses pistes datées que par son état final.</p>
     <p>Six sections sont apparues depuis la révision 3, à mesure que le firmware révélait des morceaux dont je ne soupçonnais pas l'existence : les démentis de la carte périphériques, le catalogue des défauts de cœur, le temps et la veille, le moteur audio, les sauvegardes, et la vitesse.</p>
   </div>
@@ -266,7 +266,7 @@ footer p{max-width:70ch}
     <h3>Depuis la révision 4</h3>
     <p>Une seule journée, le 28 août 2026, mais elle ferme les deux derniers points ouverts.</p>
     <div class="log">
-      <div class="log-row"><code>Vitesse</code><div><b>L'émulation passe devant la console</b><span>1,07 fois le temps réel sur <code>step</code>, 1,17 sur <code>run_frame</code>. Deux tests posés dans le chemin chaud, dont un hachage complet par instruction pour une table de points d'arrêt vide. La sonde ne les voyait pas : elle mesurait la boucle que l'interface n'appelle pas.</span></div></div>
+      <div class="log-row"><code>Vitesse</code><div><b>L'émulation passe devant la console</b><span>1,40 fois le temps réel sur <code>step</code>, 1,37 sur <code>run_frame</code>. Deux tests posés dans le chemin chaud, dont un hachage complet par instruction pour une table de points d'arrêt vide. La sonde ne les voyait pas : elle mesurait la boucle que l'interface n'appelle pas.</span></div></div>
       <div class="log-row"><code>Sécurité</code><div><b>La clé sort de l'historique</b><span>Trois passes, dont deux qui ont échoué en silence. 75 commits réécrits, zéro occurrence restante, 99 fichiers suivis, rien de perdu, tests verts. Les trois pièges sont en section AUD, et ils valent au-delà de ce projet.</span></div></div>
     </div>
 
@@ -279,7 +279,7 @@ footer p{max-width:70ch}
       <div class="log-row"><code>État</code><div><b>Sauvegardes persistantes par dump</b><span>Avec l'horloge de la console, donc un Tamagotchi rangé vieillit. Instantanés séparés pour la mise au point.</span></div></div>
       <div class="log-row"><code>Interface</code><div><b>Coque fidèle et pilotage complet</b><span>Six coques suivant l'édition, molette sur antenne, appui long calibré en temps console, clavier complet, pilotage depuis le navigateur.</span></div></div>
       <div class="log-row"><code>Son</code><div><b>Les notes que le firmware compose</b><span>Tableau des voix suivi note à note dans la boucle d'émulation, hauteur vérifiée à l'oreille contre la console posée à côté.</span></div></div>
-      <div class="log-row"><code>Vitesse</code><div><b>De 0,36 à 1,17 fois le temps réel</b><span>Huit changements mesurés. Les deux derniers étaient invisibles parce que la sonde ne mesurait pas la boucle que l'interface appelle. Section PERF.</span></div></div>
+      <div class="log-row"><code>Vitesse</code><div><b>De 0,36 à 1,40 fois le temps réel</b><span>Huit changements mesurés. Les deux derniers étaient invisibles parce que la sonde ne mesurait pas la boucle que l'interface appelle. Section PERF.</span></div></div>
     </div>
 
     <h3>Séance de reprise du cœur</h3>
@@ -1039,15 +1039,15 @@ heure = (secondes / 3600) % 24, minute = (secondes / 60) % 60</code></pre>
       <table>
         <thead><tr><th>Boucle</th><th>Cycles par seconde</th><th>Fois le temps réel</th></tr></thead>
         <tbody>
-          <tr><td><code>step</code>, le cœur seul</td><td class="hex">102,98 M</td><td>1,07</td></tr>
-          <tr><td><code>run_frame</code>, ce que l'interface appelle</td><td class="hex">112,33 M</td><td>1,17</td></tr>
+          <tr><td><code>step</code>, le cœur seul</td><td class="hex">134 M</td><td>1,40</td></tr>
+          <tr><td><code>run_frame</code>, ce que l'interface appelle</td><td class="hex">131 M</td><td>1,37</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="cap">Water, état 111, cinq secondes. L'horloge de la console avance de 6 à 7 secondes en 5 secondes réelles.</p>
+    <p class="cap">Water, état 111, meilleure de quatre passes. L'horloge de la console avance de 8 secondes en 5 secondes réelles. La dispersion entre passes est de trois centièmes.</p>
 
     <h3>Ce qui a payé</h3>
-    <p>Huit changements, de 0,36 à 1,17. Aucun n'a été gros, et aucun ne se devinait sans mesure.</p>
+    <p>Huit changements, de 0,36 à 1,40. Aucun n'a été gros, et aucun ne se devinait sans mesure.</p>
     <ul>
       <li><strong>Périphériques entretenus par paquets de 256 cycles</strong> au lieu de chaque instruction. C'était sept appels par pas, dont une division 64 bits pour le signal de trame. 256 cycles valent moins de trois microsecondes, cent fois plus fin que la plus courte échéance du firmware.</li>
       <li><strong>Recherche d'interruption conditionnée à un drapeau.</strong> Elle parcourait huit mots avant chaque instruction, alors qu'il n'y a presque jamais rien à prendre.</li>
@@ -1302,7 +1302,7 @@ sha256sum flash.bin
         <div>
           <h3>La vitesse</h3>
           <div class="phase-meta"><span class="chip c-done">fait le 28 août 2026</span></div>
-          <p>1,07 fois le temps réel sur <code>step</code>, 1,17 sur <code>run_frame</code>. Il ne manquait pas vingt-deux pour cent de décodage, il manquait deux tests posés au mauvais endroit dans une boucle que la sonde ne regardait pas. Section PERF.</p>
+          <p>1,40 fois le temps réel sur <code>step</code>, 1,37 sur <code>run_frame</code>. Il ne manquait pas vingt-deux pour cent de décodage, il manquait deux tests posés au mauvais endroit dans une boucle que la sonde ne regardait pas. Section PERF.</p>
         </div>
       </div>
       <div class="phase">

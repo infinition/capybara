@@ -19,8 +19,8 @@ vieillissent en temps reel, coque fidele suivant l'edition chargee.
 
 ## La vitesse
 
-**L'emulation depasse la console depuis le 28 aout 2026 : 1,07 fois le temps
-reel sur `step`, 1,17 sur `run_frame`.** Le regulateur de l'interface la retient
+**L'emulation depasse la console depuis le 28 aout 2026 : 1,40 fois le temps
+reel sur `step`, 1,37 sur `run_frame`.** Le regulateur de l'interface la retient
 maintenant a 1,00. Il n'y a plus de defaut visible a l'ecran.
 
 Mesurer avec :
@@ -33,7 +33,7 @@ La sonde donne les deux boucles. `step` mesure le coeur seul, `run_frame` est ce
 que l'interface appelle vraiment. Longtemps elle ne montrait que `step`, ce qui
 cachait les deux derniers freins.
 
-Le chemin parcouru, de 0,36 a 1,17 :
+Le chemin parcouru, de 0,36 a 1,40 :
 
 - entretenir les peripheriques par paquets de 256 cycles au lieu de chaque
   instruction ;
@@ -93,7 +93,7 @@ d'instruction dans la fenetre XIP.
 
 ## Outils
 
-Douze sondes dans `examples/`, toutes en `<dump.bin> <cle hex> [...]`. Les plus
+Vingt-deux sondes dans `examples/`, toutes en `<dump.bin> <cle hex> [...]`. Les plus
 rentables : `scene_probe` avec `RESET`, `SORTIE_ETAT` et `TRACE_PAS`,
 `temps_probe` pour trouver une boucle morte, `watch_probe` pour arreter sur une
 adresse ou une modification de memoire, `vitesse_probe` pour la vitesse,

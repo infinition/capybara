@@ -17,8 +17,8 @@ Voir `reprise.md`.
 **Il n'y a plus de defaut visible a l'ecran.** La vitesse a longtemps ete le
 dernier : l'emulation plafonnait a 0,78 fois le temps de la console, la planete
 de l'ecran d'accueil oscillait toutes les deux secondes au lieu d'une et les
-melodies trainaient d'autant. Depuis le 28 aout 2026 elle tient 1,07 fois le
-temps reel sur `step` et 1,17 sur `run_frame`, et le regulateur de l'interface la
+melodies trainaient d'autant. Depuis le 28 aout 2026 elle tient 1,40 fois le
+temps reel sur `step` et 1,37 sur `run_frame`, et le regulateur de l'interface la
 retient a 1,00. Voir la section « La vitesse ».
 
 Ce qui reste ouvert ne se voit pas : le peripherique par lequel la console fait
@@ -26,7 +26,8 @@ sortir ses notes n'est toujours pas identifie.
 
 ## Outils
 
-Sept sondes dans `examples/`. Toutes prennent `<dump.bin> <cle hex>`.
+Vingt-deux sondes dans `examples/`. Toutes prennent `<dump.bin> <cle hex>`.
+Les plus utilisees sont detaillees ci-dessous.
 
 - **`boot_probe`** : le couteau suisse. Zones parcourues, adresses les plus
   executees, desassemblage de la boucle chaude, tous les registres touches avec
@@ -277,8 +278,8 @@ pas de molette, avec un reglage de volume et une coupure.
 ## La vitesse
 
 **L'emulateur depasse la console.** Mesure du 28 aout 2026 sur Water, etat 111,
-cinq secondes : 102,98 millions de cycles par seconde sur `step`, soit 1,07 fois
-la vitesse de la console, et 112,33 millions sur `run_frame`, soit 1,17. Une
+quatre passes : 134 millions de cycles par seconde sur `step`, soit 1,40 fois
+la vitesse de la console, et 131 millions sur `run_frame`, soit 1,37. Une
 seconde de console vaut 96 millions de cycles, ce que le firmware declare en
 armant son SysTick a 95999 pour une milliseconde.
 
@@ -288,7 +289,7 @@ les reglages au dessus de « temps reel » ne changeaient rien, la machine donna
 deja tout. Maintenant qu'elle depasse, il fait son travail et retient
 l'emulation a 1,00.
 
-Il a fallu neuf mois de mesures pour passer de 0,36 a 1,17. Ce qui a paye, dans
+Il a fallu neuf mois de mesures pour passer de 0,36 a 1,40. Ce qui a paye, dans
 l'ordre :
 
 - **Les peripheriques sont entretenus par paquets de 256 cycles** au lieu de
