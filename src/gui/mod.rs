@@ -6,6 +6,6 @@ pub mod sprites;
 pub mod widgets;
 
 pub use screen::{VirtualScreen, ZoomLevel};
-pub use shell::{ShellColor, ShellControls, VirtualShell};
+pub use shell::{Palette, ShellColor};
 pub use sprites::{SpriteSheet, SpriteState};
 pub use widgets::{ActiveModal, GuiWidgets};

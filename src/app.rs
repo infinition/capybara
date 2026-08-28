@@ -65,6 +65,9 @@ pub struct TamagotchiApp {
     /// Derniere recopie de la sauvegarde sur le disque. Le jeu ecrit sa flash
     /// souvent ; on espace les ecritures pour ne pas marteler le disque.
     pub derniere_ecriture: std::time::Instant,
+    /// Angle de la molette, en degres cumules. Il ne sert qu'a animer les deux
+    /// fleches de la fenetre transparente, et retombe doucement au repos.
+    pub angle_molette: f32,
 }
 
 impl TamagotchiApp {
@@ -82,7 +85,7 @@ impl TamagotchiApp {
             machine,
             audio,
             i18n,
-            shell_color: ShellColor::OceanBlue,
+            shell_color: ShellColor::BlueWater,
             show_debugger: false,
             hex_base_addr: 0x6001_1000,
             last_frame_time: std::time::Instant::now(),
@@ -107,6 +110,7 @@ impl TamagotchiApp {
             emplacement_choisi: String::new(),
             nouvel_emplacement: String::new(),
             derniere_ecriture: std::time::Instant::now(),
+            angle_molette: 0.0,
         }
     }
 }
@@ -191,6 +195,12 @@ impl TamagotchiApp {
                 // La console reprend sa partie toute seule, comme un vrai
                 // Tamagotchi qu'on rallume. Sans cela il faudrait penser a
                 // choisir un emplacement avant de jouer.
+                self.shell_color = ShellColor::pour_edition(self.machine.edition);
+                self.status_msg = Some(format!(
+                    "{} charge, coque {}",
+                    self.machine.edition.nom(),
+                    self.shell_color.nom()
+                ));
                 self.rafraichir_emplacements();
                 self.ouvrir_emplacement(
                     crate::emulator::sauvegarde::EMPLACEMENT_PAR_DEFAUT.to_string(),
@@ -610,25 +620,26 @@ impl eframe::App for TamagotchiApp {
 
                 ui.separator();
 
-                ui.label("Shell Color:");
-                if ui.selectable_label(self.shell_color == ShellColor::OceanBlue, "Ocean").clicked() {
-                    self.shell_color = ShellColor::OceanBlue;
+                ui.label("Son :");
+                if ui
+                    .selectable_label(self.audio.enabled, if self.audio.enabled { "actif" } else { "coupe" })
+                    .clicked()
+                {
+                    self.audio.enabled = !self.audio.enabled;
                 }
-                if ui.selectable_label(self.shell_color == ShellColor::JungleGreen, "Jungle").clicked() {
-                    self.shell_color = ShellColor::JungleGreen;
-                }
-                if ui.selectable_label(self.shell_color == ShellColor::SunsetPink, "Sunset").clicked() {
-                    self.shell_color = ShellColor::SunsetPink;
-                }
-                if ui.selectable_label(self.shell_color == ShellColor::CyberGrey, "Cyber").clicked() {
-                    self.shell_color = ShellColor::CyberGrey;
-                }
+                ui.add(
+                    egui::Slider::new(&mut self.audio.volume, 0.0..=1.0)
+                        .show_value(false)
+                        .text(""),
+                );
 
                 ui.separator();
 
-                ui.label("Language:");
-                if ui.selectable_label(self.i18n.language() == Language::Fr, "FR").clicked() {
-                    self.i18n.set_language(Language::Fr);
+                ui.label("Shell Color:");
+                for coque in ShellColor::TOUTES {
+                    if ui.selectable_label(self.shell_color == coque, coque.nom()).clicked() {
+                        self.shell_color = coque;
+                    }
                 }
                 if ui.selectable_label(self.i18n.language() == Language::En, "EN").clicked() {
                     self.i18n.set_language(Language::En);
@@ -956,6 +967,7 @@ impl eframe::App for TamagotchiApp {
                 &self.machine.periph.display,
                 self.ecran.as_ref(),
                 self.shell_color,
+                self.angle_molette,
             );
 
             // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
@@ -974,11 +986,26 @@ impl eframe::App for TamagotchiApp {
                 }
                 if etat.clique {
                     self.presser(broche);
+                    // La console est muette tant que le son est coupe dans ses
+                    // reglages ; le retour sonore de l'interface, lui, doit
+                    // repondre a chaque appui.
+                    self.audio.play(SoundEffect::ButtonClick);
                 }
             }
             if commandes.molette_tournee != 0 {
                 self.tourner_molette(commandes.molette_tournee);
                 self.audio.play(SoundEffect::DialTick);
+                // La molette garde son elan : les deux fleches de la fenetre
+                // continuent de defiler un instant apres le geste, comme sur la
+                // vraie, qui est crantee mais pas instantanee.
+                self.angle_molette += commandes.molette_tournee as f32 * 24.0;
+            }
+            // Retour au repos, doux, pour que l'animation ne s'arrete pas net.
+            self.angle_molette *= 0.88;
+            if self.angle_molette.abs() < 0.01 {
+                self.angle_molette = 0.0;
+            } else {
+                ctx.request_repaint();
             }
         });
 

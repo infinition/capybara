@@ -1,5 +1,6 @@
 pub mod aes;
 pub mod cpu;
+pub mod edition;
 pub mod etat;
 pub mod loader;
 pub mod mmu;
@@ -8,6 +9,7 @@ pub mod peripherals;
 pub mod sonix;
 
 pub use cpu::{Cpu, DisassembledInst, Disassembler, Mode, Registers, StepResult};
+pub use edition::Edition;
 pub use loader::{FirmwareLoader, ImageKind, LoadReport, LoadedRegion};
 pub use mmu::{BootRom, InternalSram, LogEntry, MemoryBus, MmioStat, MmioTrace, Pram, SpiFlash};
 pub use peripherals::{
@@ -47,6 +49,8 @@ pub struct Machine {
     pub last_stop: Option<StopReason>,
     /// Empreinte du dump charge, qui range ses sauvegardes a part.
     pub empreinte: Option<String>,
+    /// Edition reconnue, qui donne la couleur de la coque.
+    pub edition: Edition,
     /// Fichier de sauvegarde suivi. Sans lui, la partie ne vit que le temps de
     /// la session, comme avant.
     pub sauvegarde_active: Option<std::path::PathBuf>,
@@ -83,6 +87,7 @@ impl Machine {
             last_report: None,
             last_stop: None,
             empreinte: None,
+            edition: Edition::default(),
             sauvegarde_active: None,
             revision_ecrite: 0,
         }
@@ -351,6 +356,7 @@ impl Machine {
         // ni les memes ressources ni la meme disposition, leurs parties ne se
         // melangent pas.
         self.empreinte = Some(sauvegarde::empreinte(p, &self.bus.flash.reference));
+        self.edition = Edition::depuis_le_nom(p);
         self.sauvegarde_active = None;
         self.revision_ecrite = self.bus.flash.revision;
 

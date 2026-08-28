@@ -197,6 +197,56 @@ flash et le compteur de secondes continue de tourner, donc la partie et l'heure
 reprennent. Le firmware passe alors par son ecran continuer ou effacer, puis par
 la confirmation de la date, deja remplie a l'heure juste.
 
+## La console, telle que Bandai l'a faite
+
+Releve sur le wiki Tamagotchi, page Tamagotchi Paradise, pour que l'interface
+soit fidele plutot que devinee.
+
+**La coque** reprend celle de la Tamagotchi Pix : meme taille, meme forme
+d'oeuf. Sa moitie haute porte un motif de coquille fendue, d'une autre couleur
+que le corps, et s'ouvre sur un port de connexion. Le bord d'ecran porte lui
+aussi un motif de coquille imprime.
+
+**La molette** est ce qui distingue la Paradise. Elle est portee par une antenne
+sur le flanc droit, et sert a zoomer. Sa fenetre transparente laisse voir deux
+fleches opposees imprimees, et fait aussi office de bouton : maintenue, elle
+ouvre le laboratoire ; brievement, elle vaut B dans certains menus.
+
+**Quatre niveaux de zoom**, qui correspondent exactement aux scenes observees :
+
+| Vue | Scene | Fonctions |
+|---|---|---|
+| Space | 29 | horloge, connexion, Tama Stars, deco, voyage, niveau de planete |
+| Field | 30 | poser des jouets, chasse aux oeufs, nettoyer, changer de champ |
+| Tama | 33 | nourrir, jouer, laver |
+| Cell | 32 | statut, espece, et le QR code secret |
+
+**Six coques** sont sorties entre juillet 2025 et juillet 2026 : Pink Land,
+Blue Water et Purple Sky pour la premiere vague, Jade Forest pour la deuxieme,
+Orange Tropics et White Glacier pour la troisieme. Les dumps publies portent les
+noms de champs, ce qui suffit a reconnaitre l'edition : rien dans l'image ne la
+nomme, la table de biomes en `0x978E8` contenant LAND, WATER et SKY dans les
+cinq.
+
+## Le son
+
+Le moteur audio du firmware est cadence a 125 Hz par le SysTick, via
+`0x10079398`, qui compte en `0x180142A0` jusqu'a la periode gardee en
+`0x1800ECDA`. Son banc compte 87 sons, rendus par `0x10015818`.
+
+Et pourtant la console est muette, pour une raison qui ne tient pas au modele.
+Son premier verrou, `0x18014282`, vaut 1 : le moteur est initialise. Le second,
+`0x18014284`, qui marque qu'un son joue, reste a zero dans tous les etats
+observes. Surtout, `jouer_son`, en `0x1001FCB4`, appele depuis une centaine
+d'endroits, n'est jamais atteint en quatre cents millions de pas malgre des
+appuis qui changent de scene. Le son est donc coupe dans les reglages de la
+console elle meme. Aucune page de PWM n'est touchee, et le port 1, qui porte le
+buzzer sur ses broches 11 et 13, n'est jamais ecrit : il n'y a rien a modeliser
+tant que le jeu ne demande rien.
+
+L'interface, elle, sonne : clic sur chaque appui, cran sur chaque pas de
+molette, avec un reglage de volume et une coupure.
+
 ## Le tas et la sauvegarde
 
 Le tas fait 32 Ko, pose en dur par `heap_init(0x18005D70, 0x8000)` en
@@ -230,9 +280,9 @@ somme de controle des deux pages.
 
 ## Ce qui reste a faire
 
-1. **Le son.** Le buzzer est sur P1.11 et P1.13 en PWM. Rien n'est modelise.
-   Le moteur audio est cadence a 125 Hz par le SysTick, via `0x10079398` qui
-   compte en `0x180142A0` jusqu'a la periode gardee en `0x1800ECDA`.
+1. **Le buzzer.** Il faudra d'abord rallumer le son dans les reglages du jeu,
+   puis relever ce que le firmware ecrit : rien n'est modelise, et rien ne peut
+   l'etre tant qu'il ne joue pas.
 2. **La confirmation de la date apres un reveil.** Le firmware la demande a
    chaque rallumage, alors que le compteur de secondes n'a pas ete perdu. Il
    lit pourtant son drapeau de validite en `0x00003760`, qui rend bien vrai, et

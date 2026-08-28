@@ -1,4 +1,4 @@
-use egui::{pos2, vec2, Color32, Rect, Sense, Stroke, TextureHandle, Ui};
+use egui::{pos2, vec2, Color32, Pos2, Rect, Sense, Shape, Stroke, TextureHandle, Ui};
 
 use crate::emulator::DisplayController;
 use crate::gui::ShellColor;
@@ -27,61 +27,137 @@ pub struct Commandes {
     pub molette_tournee: i32,
 }
 
+/// Contour d'un oeuf, du sommet et dans le sens des aiguilles.
+///
+/// La coque de la Paradise reprend celle de la Tamagotchi Pix : un oeuf plus
+/// etroit en haut qu'en bas. Le facteur de largeur suit le cosinus de l'angle,
+/// ce qui resserre le sommet et elargit la base sans casser la convexite, dont
+/// depend le remplissage d'egui.
+fn contour_oeuf(centre: Pos2, largeur: f32, hauteur: f32, cotes: usize) -> Vec<Pos2> {
+    (0..cotes)
+        .map(|i| {
+            let t = i as f32 / cotes as f32 * std::f32::consts::TAU;
+            let resserrement = 1.0 - 0.16 * t.cos();
+            pos2(
+                centre.x + largeur * 0.5 * t.sin() * resserrement,
+                centre.y - hauteur * 0.5 * t.cos(),
+            )
+        })
+        .collect()
+}
+
 impl LcdPanel {
     /// Dessine la console et rend l'etat de ses commandes.
     ///
     /// L'ecran est une texture, pas seize mille rectangles : le tesseler a
     /// chaque image mangeait tout le temps qui devrait aller a l'emulation.
+    ///
+    /// `angle_molette` sert a animer les deux fleches de la fenetre
+    /// transparente. C'est l'appelant qui le garde d'une image a l'autre, la
+    /// molette continuant de tourner un peu apres le geste.
     pub fn render(
         ui: &mut Ui,
         available_rect: Rect,
         display: &DisplayController,
         ecran: Option<&TextureHandle>,
         shell_color: ShellColor,
+        angle_molette: f32,
     ) -> Commandes {
-        let (body_col, shadow_col, accent_col) = shell_color.palette();
+        let couleurs = shell_color.couleurs();
+        let (corps_col, calotte_col, ombre_col, bouton_col) =
+            (couleurs.corps, couleurs.calotte, couleurs.ombre, couleurs.bouton);
         let mut commandes = Commandes::default();
 
         // La coque suit la fenetre, mais l'ecran et les boutons se placent les
         // uns par rapport aux autres : rien ne doit se chevaucher, quelle que
-        // soit la taille.
-        let largeur = (available_rect.width() * 0.88).min(400.0);
-        let hauteur = (available_rect.height() * 0.94).min(620.0);
-        let coque = Rect::from_center_size(available_rect.center(), vec2(largeur, hauteur));
-        let arrondi = largeur * 0.16;
+        // soit la taille. On laisse de la place a droite pour l'antenne.
+        let largeur = (available_rect.width() * 0.72).min(360.0);
+        let hauteur = (available_rect.height() * 0.94).min(560.0);
+        let centre = pos2(available_rect.center().x - largeur * 0.06, available_rect.center().y);
+        let coque = Rect::from_center_size(centre, vec2(largeur, hauteur));
 
-        let painter = ui.painter();
+        // Largeur de l'oeuf a une hauteur donnee, pour poser l'antenne contre
+        // le flanc plutot que contre la boite englobante, ou elle flotterait.
+        let demi_largeur = |y: f32| -> f32 {
+            let t = ((centre.y - y) / (hauteur * 0.5)).clamp(-1.0, 1.0).acos();
+            largeur * 0.5 * t.sin() * (1.0 - 0.16 * t.cos())
+        };
 
-        // Anneau porte-cles, puis corps de la coque.
-        let anneau = pos2(coque.center().x, coque.min.y + 10.0);
-        painter.circle_filled(anneau, 15.0, shadow_col);
-        painter.circle_filled(anneau, 7.0, Color32::from_rgb(240, 240, 240));
-        painter.rect_filled(coque, arrondi, body_col);
-        painter.rect_stroke(coque, arrondi, Stroke::new(5.0_f32, shadow_col));
-
-        painter.text(
-            pos2(coque.center().x, coque.min.y + 38.0),
-            egui::Align2::CENTER_CENTER,
-            "TAMAGOTCHI PARADISE",
-            egui::FontId::proportional(12.0),
-            Color32::from_rgb(255, 240, 180),
+        // Antenne laterale, dessinee avant le corps pour qu'il la recouvre a sa
+        // base. C'est elle qui porte la molette de zoom, propre a la Paradise.
+        let antenne_haut = centre.y - hauteur * 0.26;
+        let antenne_bas = centre.y + hauteur * 0.02;
+        let flanc = demi_largeur((antenne_haut + antenne_bas) * 0.5);
+        let antenne = Rect::from_min_max(
+            pos2(centre.x + flanc - largeur * 0.06, antenne_haut),
+            pos2(centre.x + flanc + largeur * 0.13, antenne_bas),
         );
+        ui.painter().rect_filled(antenne, largeur * 0.05, ombre_col);
+
+        // Corps de l'oeuf, puis sa calotte : la moitie haute de la vraie coque
+        // porte un motif de coquille fendue et n'est pas de la meme couleur.
+        let contour = contour_oeuf(centre, largeur, hauteur, 96);
+        ui.painter().add(Shape::convex_polygon(
+            contour.clone(),
+            corps_col,
+            Stroke::new(3.0, ombre_col),
+        ));
+
+        // La calotte se construit en balayant l'angle de part et d'autre du
+        // sommet, pas en filtrant le contour : un filtre garderait les points
+        // dans l'ordre du tour complet, et la forme obtenue se croiserait.
+        //
+        // La fente passe au tiers haut, au dessus de l'ecran, comme sur la
+        // console : c'est la moitie ouvrante, celle qui cache le port de
+        // connexion.
+        const COS_FENTE: f32 = 0.70;
+        let ligne_fente = centre.y - hauteur * 0.5 * COS_FENTE;
+        let angle_fente = COS_FENTE.acos();
+        let pas_calotte = 48;
+        let mut calotte = Vec::with_capacity(pas_calotte + 1);
+        for i in 0..=pas_calotte {
+            let t = -angle_fente + 2.0 * angle_fente * i as f32 / pas_calotte as f32;
+            let resserrement = 1.0 - 0.16 * t.cos();
+            calotte.push(pos2(
+                centre.x + largeur * 0.5 * t.sin() * resserrement,
+                centre.y - hauteur * 0.5 * t.cos(),
+            ));
+        }
+        ui.painter().add(Shape::convex_polygon(calotte, calotte_col, Stroke::NONE));
+
+        // La fente elle meme : une ligne de dents alternees, la coquille
+        // cassee. Les dents pointant vers le bas sont de la couleur de la
+        // calotte, celles pointant vers le haut de celle du corps.
+        let etendue = largeur * 0.5 * angle_fente.sin() * (1.0 - 0.16 * COS_FENTE);
+        let _ = &demi_largeur;
+        let dents = 11;
+        let pas = etendue * 2.0 / dents as f32;
+        let creux = hauteur * 0.022;
+        for i in 0..dents {
+            let x0 = centre.x - etendue + pas * i as f32;
+            let x1 = x0 + pas;
+            let bas = if i % 2 == 0 { ligne_fente + creux } else { ligne_fente - creux };
+            let couleur = if i % 2 == 0 { calotte_col } else { corps_col };
+            ui.painter().add(Shape::convex_polygon(
+                vec![pos2(x0, ligne_fente), pos2(x1, ligne_fente), pos2((x0 + x1) * 0.5, bas)],
+                couleur,
+                Stroke::NONE,
+            ));
+        }
 
         // L'ecran occupe le haut de la coque, les commandes le bas.
-        let marge = 22.0;
-        let cote = (largeur - 2.0 * marge)
-            .min(hauteur * 0.52)
-            .max(64.0);
-        let ecran_rect = Rect::from_center_size(
-            pos2(coque.center().x, coque.min.y + 58.0 + cote / 2.0),
-            vec2(cote, cote),
-        );
+        let marge = largeur * 0.17;
+        let cote = (largeur - 2.0 * marge).min(hauteur * 0.38).max(64.0);
+        let ecran_rect =
+            Rect::from_center_size(pos2(centre.x, centre.y - hauteur * 0.06), vec2(cote, cote));
 
-        painter.rect_filled(ecran_rect.expand(8.0), 10.0, Color32::from_rgb(226, 228, 234));
-        painter.rect_stroke(ecran_rect.expand(8.0), 10.0, Stroke::new(3.0_f32, shadow_col));
+        // Cadre d'ecran, avec sa couronne de coquille fendue imprimee.
+        let cadre = ecran_rect.expand(cote * 0.10);
+        ui.painter().rect_filled(cadre, cote * 0.10, Color32::from_rgb(248, 249, 252));
+        ui.painter().rect_stroke(cadre, cote * 0.10, Stroke::new(2.5, ombre_col));
         match ecran {
             Some(texture) => {
-                painter.image(
+                ui.painter().image(
                     texture.id(),
                     ecran_rect,
                     Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
@@ -89,20 +165,37 @@ impl LcdPanel {
                 );
             }
             None => {
-                painter.rect_filled(ecran_rect, 0.0, Color32::BLACK);
+                ui.painter().rect_filled(ecran_rect, 0.0, Color32::BLACK);
             }
         }
-        painter.rect_stroke(ecran_rect, 0.0, Stroke::new(1.5_f32, Color32::from_rgb(70, 70, 70)));
+        ui.painter().rect_stroke(ecran_rect, 0.0, Stroke::new(1.5, Color32::from_rgb(60, 60, 66)));
+
+        // Clic sur l'ecran : le bouton gauche vaut A, le droit vaut B. C'est le
+        // geste attendu quand on joue a la souris, sans viser les boutons.
+        let sur_ecran = ui.allocate_rect(ecran_rect, Sense::click_and_drag());
+        if sur_ecran.clicked() {
+            commandes.bouton_a.clique = true;
+        }
+        if sur_ecran.secondary_clicked() {
+            commandes.bouton_b.clique = true;
+        }
+        if sur_ecran.is_pointer_button_down_on() {
+            let (gauche, droit) = ui.input(|i| {
+                (i.pointer.primary_down(), i.pointer.secondary_down())
+            });
+            commandes.bouton_a.maintenu |= gauche;
+            commandes.bouton_b.maintenu |= droit;
+        }
 
         let _ = display;
 
-        // Commandes, sous l'ecran et dans la coque.
-        let rayon = (largeur * 0.055).clamp(14.0, 22.0);
-        let ligne = (ecran_rect.max.y + 8.0 + (coque.max.y - ecran_rect.max.y) * 0.45)
-            .min(coque.max.y - rayon - 16.0);
-        let ecart = (largeur * 0.24).min(72.0);
+        // Trois boutons alignes sous l'ecran, comme sur la console.
+        let rayon = (largeur * 0.062).clamp(14.0, 24.0);
+        let ligne = (cadre.max.y + (coque.max.y - cadre.max.y) * 0.42)
+            .min(coque.max.y - rayon - hauteur * 0.06);
+        let ecart = (largeur * 0.27).min(90.0);
 
-        let bouton = |ui: &mut Ui, centre, etiquette: &str| -> EtatBouton {
+        let bouton = |ui: &mut Ui, centre: Pos2, etiquette: &str| -> EtatBouton {
             let zone = Rect::from_center_size(centre, vec2(rayon * 2.0, rayon * 2.0));
             let reponse = ui.allocate_rect(zone, Sense::click_and_drag());
             // `is_pointer_button_down_on` reste vrai tant que le pointeur est
@@ -111,33 +204,49 @@ impl LcdPanel {
                 maintenu: reponse.is_pointer_button_down_on(),
                 clique: reponse.clicked(),
             };
-            let couleur = if etat.maintenu { shadow_col } else { accent_col };
             let peintre = ui.painter();
-            peintre.circle_filled(centre, rayon, couleur);
-            peintre.circle_stroke(centre, rayon, Stroke::new(2.0_f32, shadow_col));
+            let decalage = if etat.maintenu { 1.5 } else { 0.0 };
+            peintre.circle_filled(pos2(centre.x, centre.y + 2.5), rayon, ombre_col);
+            peintre.circle_filled(
+                pos2(centre.x, centre.y + decalage),
+                rayon,
+                if etat.maintenu { ombre_col } else { bouton_col },
+            );
+            peintre.circle_stroke(
+                pos2(centre.x, centre.y + decalage),
+                rayon,
+                Stroke::new(1.5, ombre_col),
+            );
             peintre.text(
-                centre,
+                pos2(centre.x, centre.y + decalage),
                 egui::Align2::CENTER_CENTER,
                 etiquette,
                 egui::FontId::monospace(13.0),
-                Color32::BLACK,
+                Color32::from_rgb(60, 50, 40),
             );
             etat
         };
 
-        commandes.bouton_a = bouton(ui, pos2(coque.center().x - ecart, ligne), "A");
-        commandes.molette = bouton(ui, pos2(coque.center().x, ligne + 14.0), "OK");
-        commandes.bouton_c = bouton(ui, pos2(coque.center().x + ecart, ligne), "C");
-        commandes.bouton_b = bouton(
-            ui,
-            pos2(coque.center().x, (ligne + 14.0 + rayon * 2.6).min(coque.max.y - rayon - 8.0)),
-            "B",
-        );
+        commandes.bouton_a = {
+            let mut e = bouton(ui, pos2(centre.x - ecart, ligne), "A");
+            e.maintenu |= commandes.bouton_a.maintenu;
+            e.clique |= commandes.bouton_a.clique;
+            e
+        };
+        commandes.bouton_b = {
+            let mut e = bouton(ui, pos2(centre.x, ligne + rayon * 0.5), "B");
+            e.maintenu |= commandes.bouton_b.maintenu;
+            e.clique |= commandes.bouton_b.clique;
+            e
+        };
+        commandes.bouton_c = bouton(ui, pos2(centre.x + ecart, ligne), "C");
 
-        // Molette laterale : elle se tourne a la glissade ou a la roulette.
+        // Molette de zoom, sur l'antenne. Sa fenetre transparente porte deux
+        // fleches opposees et sert aussi de bouton : un appui long ouvre le
+        // laboratoire, un appui bref vaut B dans certains menus.
         let molette = Rect::from_center_size(
-            pos2(coque.max.x - 8.0, ecran_rect.center().y),
-            vec2(24.0, cote * 0.4),
+            pos2(antenne.center().x + antenne.width() * 0.12, antenne.center().y),
+            vec2(antenne.width() * 0.72, antenne.height() * 0.62),
         );
         let reponse = ui.allocate_rect(molette, Sense::click_and_drag());
         if reponse.dragged() {
@@ -146,14 +255,45 @@ impl LcdPanel {
                 commandes.molette_tournee += if dy > 0.0 { 1 } else { -1 };
             }
         }
+        commandes.molette.maintenu = reponse.is_pointer_button_down_on() && !reponse.dragged();
+        commandes.molette.clique = reponse.clicked();
+
         let roulette = ui.input(|i| i.raw_scroll_delta.y);
-        let survol = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| coque.contains(p));
+        let survol = ui
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|p| coque.contains(p) || antenne.contains(p));
         if roulette != 0.0 && survol {
             commandes.molette_tournee += if roulette > 0.0 { 1 } else { -1 };
         }
+
         let peintre = ui.painter();
-        peintre.rect_filled(molette, 5.0, Color32::from_rgb(220, 225, 235));
-        peintre.rect_stroke(molette, 5.0, Stroke::new(2.0_f32, shadow_col));
+        peintre.rect_filled(molette, molette.width() * 0.35, ombre_col);
+        let fenetre = molette.shrink(molette.width() * 0.18);
+        peintre.rect_filled(fenetre, fenetre.width() * 0.3, Color32::from_rgb(238, 246, 252));
+        peintre.rect_stroke(fenetre, fenetre.width() * 0.3, Stroke::new(1.5, ombre_col));
+
+        // Les deux fleches opposees defilent avec l'angle : c'est ce qui donne
+        // la sensation de rotation, la molette n'ayant pas d'aiguille.
+        let hauteur_utile = fenetre.height();
+        let encre = Color32::from_rgb(70, 80, 100);
+        for i in 0..2 {
+            let phase = (angle_molette * 0.02 + i as f32 * 0.5).rem_euclid(1.0);
+            let y = fenetre.min.y + phase * hauteur_utile;
+            let vers_le_haut = i == 0;
+            let d = fenetre.width() * 0.22;
+            let pointe = if vers_le_haut { y - d } else { y + d };
+            if pointe > fenetre.min.y && pointe < fenetre.max.y {
+                peintre.add(Shape::convex_polygon(
+                    vec![
+                        pos2(fenetre.center().x - d, y),
+                        pos2(fenetre.center().x + d, y),
+                        pos2(fenetre.center().x, pointe),
+                    ],
+                    encre,
+                    Stroke::NONE,
+                ));
+            }
+        }
 
         commandes
     }
