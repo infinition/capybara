@@ -522,20 +522,36 @@ impl MemoryBus {
         t: crate::emulator::peripherals::dma::Transfert,
         p: &mut Peripherals,
     ) {
+        use crate::emulator::peripherals::dma::LARGEUR_UNITE;
+        use crate::emulator::peripherals::display::PANNEAU_DONNEES;
+
         const MAX: u32 = 1 << 20;
         let est_peripherique = |a: u32| (0x4000_0000..0x5000_0000).contains(&a);
-        if t.mots == 0 || t.mots > MAX {
+        if t.unites == 0 || t.unites > MAX {
             p.dma.irq_a_lever = true;
             return;
         }
         let mut nvic = Nvic::default();
-        let pas_source = if est_peripherique(t.source) { 0 } else { 4 };
-        let pas_dest = if est_peripherique(t.destination) { 0 } else { 4 };
-        for i in 0..t.mots {
+        let pas_source = if est_peripherique(t.source) { 0 } else { LARGEUR_UNITE };
+        let pas_dest = if est_peripherique(t.destination) { 0 } else { LARGEUR_UNITE };
+        // Une trame poussee vers le panneau est aussi rendue a l'afficheur : le
+        // firmware ne fait jamais ecrire l'ecran par le coeur.
+        let vers_panneau = t.destination == PANNEAU_DONNEES;
+        let mut trame: Vec<u16> = Vec::new();
+        if vers_panneau {
+            trame.reserve(t.unites as usize);
+        }
+        for i in 0..t.unites {
             let src = t.source.wrapping_add(i * pas_source);
             let dst = t.destination.wrapping_add(i * pas_dest);
-            let mot = self.read_u32(src, p, &nvic);
-            self.write_u32(dst, mot, p, &mut nvic);
+            let unite = self.read_u16(src, p, &nvic);
+            if vers_panneau {
+                trame.push(unite);
+            }
+            self.write_u16(dst, unite, p, &mut nvic);
+        }
+        if vers_panneau {
+            p.display.recevoir_trame(&trame);
         }
         p.dma.canaux[t.canal].ctrl &= !crate::emulator::peripherals::dma::DEPART;
         p.dma.irq_a_lever = true;

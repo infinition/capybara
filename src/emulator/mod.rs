@@ -32,6 +32,12 @@ pub struct Machine {
     pub breakpoints: HashSet<u32>,
     pub is_running: bool,
     pub instructions_per_frame: u32,
+    /// Console de debug du firmware, telle qu'elle sortirait sur l'UART.
+    ///
+    /// Dans la boucle de formatage du printf, l'instruction 0x00001070 appelle
+    /// la sortie avec le caractere dans r0. L'intercepter donne le journal
+    /// complet sans modeliser le port serie.
+    pub console: String,
     pub firmware_path: Option<String>,
     /// Cle de la puce, indispensable pour dechiffrer un dump chiffre.
     pub device_key: Option<u32>,
@@ -62,6 +68,7 @@ impl Machine {
             // Sans firmware charge, rien ne tourne.
             is_running: false,
             instructions_per_frame: 20_000,
+            console: String::new(),
             firmware_path: None,
             device_key: None,
             last_report: None,
@@ -91,6 +98,17 @@ impl Machine {
                 self.last_stop = Some(StopReason::Breakpoint(pc));
                 return StepResult::Breakpoint;
             }
+            if pc == Self::SORTIE_CONSOLE {
+                let c = (self.cpu.regs.get_reg(0) & 0xFF) as u8;
+                if c == 10 || (0x20..0x7F).contains(&c) {
+                    self.console.push(c as char);
+                }
+                // Le journal ne sert qu'au diagnostic : on borne sa taille.
+                if self.console.len() > 8000 {
+                    let reste = self.console.split_off(self.console.len() - 4000);
+                    self.console = reste;
+                }
+            }
 
             match self.cpu.step(&mut self.bus, &mut self.periph) {
                 StepResult::Ok(_) => executed += 1,
@@ -114,7 +132,8 @@ impl Machine {
             }
         }
 
-        self.periph.display.sync_from_sram(&self.bus.sram.data);
+        // L'afficheur n'est plus recopie depuis la SRAM : il recoit les trames
+        // que le controleur de transferts lui pousse, comme sur la console.
         StepResult::Ok(executed)
     }
 
@@ -172,6 +191,10 @@ impl Machine {
         }
     }
 
+    /// Instruction qui appelle la sortie caractere du printf de debug, avec le
+    /// caractere dans r0.
+    pub const SORTIE_CONSOLE: u32 = 0x0000_1070;
+
     /// Boutons de la console, avec l'identifiant que le firmware leur donne :
     /// port dans les bits hauts, broche dans les quatre bits bas.
     pub const BOUTON_MOLETTE: u32 = 0x08;
@@ -223,7 +246,8 @@ impl Machine {
 
         self.reset();
         self.is_running = report.bootable;
-        self.periph.display.sync_from_sram(&self.bus.sram.data);
+        // L'afficheur n'est plus recopie depuis la SRAM : il recoit les trames
+        // que le controleur de transferts lui pousse, comme sur la console.
         self.last_report = Some(report.clone());
         Ok(report)
     }

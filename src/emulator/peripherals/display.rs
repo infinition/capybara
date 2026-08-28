@@ -3,6 +3,14 @@ use egui::Color32;
 pub const LCD_WIDTH: usize = 128;
 pub const LCD_HEIGHT: usize = 128;
 
+/// Registre de donnees du panneau, destination des trames poussees par le
+/// controleur de transferts.
+///
+/// Le pilote garde ses adresses dans un descripteur en 0x1801C9C0 : le premier
+/// mot vaut 0x4000E000, et il programme la destination du canal a cette base
+/// plus 0x1C, en 0x00004506.
+pub const PANNEAU_DONNEES: u32 = 0x4000_E01C;
+
 pub struct DisplayController {
     pub ctrl: u32,
     pub fb_base_addr: u32,
@@ -11,6 +19,9 @@ pub struct DisplayController {
     pub vram: Vec<u16>, // 128x128 RGB565 buffer
     pub is_enabled: bool,
     pub dirty: bool,
+    /// Nombre de trames recues du controleur de transferts. Un compteur fige
+    /// est le signe le plus direct d'un blocage.
+    pub trames: u64,
 }
 
 impl Default for DisplayController {
@@ -29,6 +40,7 @@ impl DisplayController {
             vram: vec![0x1084; LCD_WIDTH * LCD_HEIGHT], // Initial retro green-grey tint
             is_enabled: true,
             dirty: true,
+            trames: 0,
         }
     }
 
@@ -64,6 +76,19 @@ impl DisplayController {
                 self.dirty = true;
             }
         }
+    }
+
+    /// Recoit une trame entiere poussee par le controleur de transferts.
+    ///
+    /// C'est le chemin reel de l'afficheur : le firmware ne fait jamais ecrire
+    /// le panneau par le coeur, il programme un canal qui deverse le tampon
+    /// d'image dans le registre de donnees. Une trame plus courte que l'ecran
+    /// n'ecrase que son debut, une trame plus longue est tronquee.
+    pub fn recevoir_trame(&mut self, pixels: &[u16]) {
+        let n = pixels.len().min(self.vram.len());
+        self.vram[..n].copy_from_slice(&pixels[..n]);
+        self.dirty = true;
+        self.trames += 1;
     }
 
     pub fn sync_from_sram(&mut self, sram: &[u8]) {

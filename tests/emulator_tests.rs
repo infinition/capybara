@@ -989,8 +989,11 @@ fn le_canal_de_transfert_recopie_puis_signale_sa_fin() {
     let source = map::SRAM_BASE + 0x400;
     let destination = map::SRAM_BASE + 0x800;
 
+    // Le canal transfere des demi-mots : la source du seul transfert observe
+    // n'est alignee que sur deux octets, et son compte correspond exactement a
+    // une image de 128 x 128 en RGB565.
     for i in 0..8u32 {
-        bus.write_u32(source + 4 * i, 0x1000 + i, &mut periph, &mut nvic);
+        bus.write_u16(source + 2 * i, (0x1000 + i) as u16, &mut periph, &mut nvic);
     }
 
     // Sequence du pilote en 0x000044B8 : compte, destination, source, depart.
@@ -1001,9 +1004,9 @@ fn le_canal_de_transfert_recopie_puis_signale_sa_fin() {
 
     for i in 0..8u32 {
         assert_eq!(
-            bus.read_u32(destination + 4 * i, &mut periph, &nvic),
+            bus.read_u16(destination + 2 * i, &mut periph, &nvic) as u32,
             0x1000 + i,
-            "le canal doit avoir recopie le mot {}",
+            "le canal doit avoir recopie l'unite {}",
             i
         );
     }
@@ -1222,6 +1225,54 @@ fn un_appui_tire_la_broche_du_bouton_vers_le_bas() {
     machine.appuyer(Machine::BOUTON_A);
     assert_eq!(lire(&machine, Machine::BOUTON_C), 1);
     assert_eq!(lire(&machine, Machine::BOUTON_B), 1);
+}
+
+#[test]
+fn le_firmware_reel_pousse_des_trames_vers_le_panneau() {
+    let path = std::path::Path::new(REAL_DUMP_WATER);
+    if !path.exists() {
+        return;
+    }
+    let mut machine = Machine::new();
+    machine.device_key = Some(REAL_DEVICE_KEY);
+    machine.load_firmware_file(path).unwrap();
+    machine.remplacer_la_pile();
+    machine.instructions_per_frame = 1_000_000;
+
+    // L'ecran titre arrive vers deux cent cinquante millions de pas.
+    for _ in 0..400 {
+        machine.run_frame();
+        if machine.periph.display.trames >= 20 {
+            break;
+        }
+    }
+
+    assert!(
+        machine.periph.display.trames >= 20,
+        "le panneau doit recevoir des trames, il en a recu {}",
+        machine.periph.display.trames
+    );
+    // La puce est reconnue : le firmware ne se plaint plus de son fabricant.
+    // Les chiffres de l'identifiant partent par un autre chemin que la sortie
+    // caractere interceptee ici, seul l'entete apparait donc.
+    assert!(
+        machine.console.contains("flash id"),
+        "la console doit annoncer la lecture de l'identifiant, elle dit : {}",
+        machine.console
+    );
+    assert!(
+        !machine.console.contains("unsupport chip"),
+        "le fabricant de la flash doit etre accepte"
+    );
+    assert!(
+        !machine.console.contains("LOW BATTERY"),
+        "la pile ne doit pas etre vue vide"
+    );
+
+    // Une image reellement dessinee porte plus de deux couleurs.
+    let couleurs: std::collections::HashSet<u16> =
+        machine.periph.display.vram.iter().copied().collect();
+    assert!(couleurs.len() > 16, "image trop uniforme : {} couleurs", couleurs.len());
 }
 
 #[test]

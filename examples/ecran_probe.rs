@@ -110,13 +110,12 @@ fn main() {
     }
     println!("  rendu en {} x {}, RGB565", largeur, hauteur);
 
-    let nvic = m.cpu.nvic.clone();
+    // On rend ce que le panneau a recu, pas ce que la SRAM contient : c'est le
+    // chemin reel, celui que l'interface affiche aussi.
+    let vram = m.periph.display.vram.clone();
     let mut donnees = Vec::with_capacity((unites * 3) as usize);
     for i in 0..unites {
-        let a = source + 2 * i;
-        let bas = m.bus.read_u8(a, &mut m.periph, &nvic) as u16;
-        let haut = m.bus.read_u8(a + 1, &mut m.periph, &nvic) as u16;
-        let px = bas | (haut << 8);
+        let px = vram.get(i as usize).copied().unwrap_or(0);
         // RGB565 etendu sur huit bits par composante.
         let r = ((px >> 11) & 0x1F) as u8;
         let v = ((px >> 5) & 0x3F) as u8;

@@ -61,6 +61,15 @@ pub const COMPTE: u32 = 0x14;
 pub const DEPART: u32 = 0x1;
 /// Masque du nombre d'unites, un champ de 22 bits pose par BFI en 0x000044F6.
 pub const MASQUE_COMPTE: u32 = 0x003F_FFFF;
+/// Taille d'une unite transferee, en octets.
+///
+/// Le seul transfert observe pousse 16384 unites depuis 0x180142A6 vers le
+/// registre de donnees de l'afficheur. Deux faits imposent le demi-mot : la
+/// source n'est alignee que sur deux octets, et 16384 demi-mots font exactement
+/// les 32768 octets d'une image de 128 x 128 en RGB565. La largeur est
+/// probablement codee dans le controle ou la configuration du canal, mais aucun
+/// autre transfert n'a encore permis de le verifier.
+pub const LARGEUR_UNITE: u32 = 2;
 
 /// Interruption de fin de transfert. Le vecteur 58 est le seul active au dela
 /// de 32, et son gestionnaire s'adresse au descripteur de ce pilote.
@@ -72,8 +81,8 @@ pub struct Transfert {
     pub canal: usize,
     pub source: u32,
     pub destination: u32,
-    /// Nombre de mots de 32 bits.
-    pub mots: u32,
+    /// Nombre d'unites de `LARGEUR_UNITE` octets.
+    pub unites: u32,
 }
 
 impl Default for DmaController {
@@ -156,7 +165,7 @@ impl DmaController {
                         canal: i,
                         source: c.source,
                         destination: c.destination,
-                        mots: c.compte & MASQUE_COMPTE,
+                        unites: c.compte & MASQUE_COMPTE,
                     });
                 }
             }
