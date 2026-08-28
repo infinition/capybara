@@ -1319,6 +1319,40 @@ fn un_instantane_remet_la_machine_dans_son_etat() {
 }
 
 #[test]
+fn les_chargements_registre_a_extension_de_signe_chargent_vraiment() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let mut nvic = Nvic::default();
+
+    let base = map::SRAM_BASE + 0x100;
+    bus.write_u8(base + 4, 0xF0, &mut periph, &mut nvic);
+    bus.write_u16(base + 8, 0xFFF0, &mut periph, &mut nvic);
+
+    // LDRSB r1, [r1, r2] = 0x5689. Le firmware y lit la borne d'une boucle de
+    // remplissage dans une table de petits entiers signes ; sans chargement, le
+    // registre gardait l'adresse de la table et le remplissage ecrasait la
+    // memoire jusqu'a corrompre ses propres pointeurs.
+    regs.set_reg(1, base);
+    regs.set_reg(2, 4);
+    Thumb16::execute(0x5689, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(1), 0xFFFF_FFF0, "LDRSB doit etendre le signe");
+
+    // LDRSH r3, [r1, r2] = 0x5E8B, avec r1 = base et r2 = 8.
+    regs.set_reg(1, base);
+    regs.set_reg(2, 8);
+    Thumb16::execute(0x5E8B, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(3), 0xFFFF_FFF0, "LDRSH doit etendre le signe");
+
+    // Une valeur positive ne doit pas etre etendue a tort.
+    bus.write_u8(base + 4, 0x7F, &mut periph, &mut nvic);
+    regs.set_reg(1, base);
+    regs.set_reg(2, 4);
+    Thumb16::execute(0x5689, &mut regs, &mut bus, &mut periph, &mut nvic);
+    assert_eq!(regs.get_reg(1), 0x7F);
+}
+
+#[test]
 fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();

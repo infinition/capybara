@@ -439,6 +439,20 @@ impl Thumb16 {
                 let v = bus.read_u8(addr, periph, nvic) as u32;
                 regs.set_reg(rd, v);
             } // LDRB
+            // Les deux formes a extension de signe manquaient, et ne faisaient
+            // rien : le registre gardait sa valeur d'avant. Le firmware lit par
+            // LDRSB la borne d'une boucle de remplissage dans une table de
+            // petits entiers signes ; sans chargement, la borne restait
+            // l'adresse de la table et le remplissage ecrasait la memoire
+            // jusqu'a corrompre ses propres pointeurs.
+            3 => {
+                let v = bus.read_u8(addr, periph, nvic) as i8 as i32 as u32;
+                regs.set_reg(rd, v);
+            } // LDRSB
+            7 => {
+                let v = bus.read_u16(addr, periph, nvic) as i16 as i32 as u32;
+                regs.set_reg(rd, v);
+            } // LDRSH
             _ => {}
         }
         StepResult::Ok(2)

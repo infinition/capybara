@@ -38,6 +38,11 @@ pub struct TamagotchiApp {
     pub partage: std::sync::Arc<std::sync::Mutex<crate::web::Partage>>,
     /// Port du serveur local, quand il a pu demarrer.
     pub port_web: Option<u16>,
+    /// Debit atteint, en pas par seconde. C'est le seul chiffre qui dit si
+    /// l'interface etouffe l'emulation.
+    pub debit: f64,
+    /// Point de depart de la mesure de debit en cours.
+    pub debit_depart: (u64, std::time::Instant),
 }
 
 impl TamagotchiApp {
@@ -56,7 +61,7 @@ impl TamagotchiApp {
             audio,
             i18n,
             shell_color: ShellColor::OceanBlue,
-            show_debugger: true,
+            show_debugger: false,
             hex_base_addr: 0x6001_1000,
             last_frame_time: std::time::Instant::now(),
             load_path_input: String::new(),
@@ -71,6 +76,8 @@ impl TamagotchiApp {
             historique: crate::emulator::etat::Historique::default(),
             partage,
             port_web,
+            debit: 0.0,
+            debit_depart: (0, std::time::Instant::now()),
         }
     }
 }
@@ -217,24 +224,25 @@ impl TamagotchiApp {
         let console: String = self.machine.console.chars().rev().take(600).collect::<Vec<_>>()
             .into_iter().rev().collect();
         format!(
-            "== diagnostic emulateur Tamagotchi Paradise
-             firmware      {}
-             pas executes  {}
-             PC            {:#010x}   mode {}   PRIMASK {}
-             trames ecran  {}
-             etat du jeu   courant {}   transition demandee {}
-             IRQ 0..31     activees {:#010x}  en attente {:#010x}
-             IRQ 32..63    activees {:#010x}  en attente {:#010x}
-             dernier transfert vers l'ecran : {}
-             console du firmware (fin) :
-{}
-",
+            "== diagnostic emulateur Tamagotchi Paradise\n\
+             firmware      {}\n\
+             pas executes  {}   debit {:.1} millions par seconde\n\
+             PC            {:#010x}   mode {}   PRIMASK {}\n\
+             trames ecran  {}   instantanes {}\n\
+             etat du jeu   courant {}   transition demandee {}\n\
+             IRQ 0..31     activees {:#010x}  en attente {:#010x}\n\
+             IRQ 32..63    activees {:#010x}  en attente {:#010x}\n\
+             dernier transfert vers l'ecran : {}\n\
+             console du firmware (fin) :\n\
+             {}\n",
             self.load_path_input,
             self.machine.cpu.cycles,
+            self.debit / 1e6,
             self.machine.cpu.regs.pc,
             mode,
             self.machine.cpu.regs.primask,
             self.machine.periph.display.trames,
+            self.historique.len(),
             etat(0x1800_1BF4),
             etat(0x1800_1BF6),
             n.iser[0],
@@ -328,6 +336,14 @@ impl eframe::App for TamagotchiApp {
             self.historique.suivre(&self.machine);
         }
 
+        // Debit reel, mesure sur une demi-seconde.
+        let ecoule = self.debit_depart.1.elapsed().as_secs_f64();
+        if ecoule >= 0.5 {
+            let faits = self.machine.cpu.cycles.saturating_sub(self.debit_depart.0);
+            self.debit = faits as f64 / ecoule;
+            self.debit_depart = (self.machine.cpu.cycles, std::time::Instant::now());
+        }
+
         // Support Drag and Drop of firmware files onto the emulator
         ctx.input(|i| {
             if let Some(dropped) = i.raw.dropped_files.first() {
@@ -344,7 +360,7 @@ impl eframe::App for TamagotchiApp {
 
                 ui.separator();
 
-                if ui.button(if self.show_debugger { "Hide Debugger" } else { "Show Debugger" }).clicked() {
+                if ui.button(if self.show_debugger { "Masquer l'inspection" } else { "Afficher l'inspection" }).clicked() {
                     self.show_debugger = !self.show_debugger;
                 }
 
@@ -380,8 +396,8 @@ impl eframe::App for TamagotchiApp {
             });
         });
 
-        // 4. Debugger Side Panel
-        if self.show_debugger {
+        // 4. Panneau lateral : l'essentiel toujours, l'inspection sur demande.
+        {
             SidePanel::right("debug_panel")
                 .min_width(420.0)
                 .default_width(480.0)
@@ -419,7 +435,9 @@ impl eframe::App for TamagotchiApp {
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("Vitesse :").strong());
-                            for (nom, ms) in [("Pause", 0u64), ("Normale", 12), ("Rapide", 30)] {
+                            for (nom, ms) in
+                                [("Pause", 0u64), ("Normale", 12), ("Rapide", 40), ("Turbo", 150)]
+                            {
                                 if ui.selectable_label(self.budget_ms == ms, nom).clicked() {
                                     self.budget_ms = ms;
                                 }
@@ -517,6 +535,14 @@ impl eframe::App for TamagotchiApp {
                                 );
                             });
                     });
+
+                    // Les panneaux d'inspection coutent plus cher a dessiner que
+                    // l'emulation n'en gagne a tourner : ils restent replies par
+                    // defaut, et le debit affiche dit tout de suite ce qu'ils
+                    // prennent.
+                    if !self.show_debugger {
+                        return;
+                    }
 
                     ui.separator();
 
