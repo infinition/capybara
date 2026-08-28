@@ -19,6 +19,13 @@ pub struct AudioEngine {
     sink: Option<Arc<Mutex<Sink>>>,
     pub volume: f32,
     pub enabled: bool,
+    /// Voie du buzzer de la console, alimentee en continu.
+    buzzer: Option<Sink>,
+    /// Phase courante du signal carre, gardee d'un morceau a l'autre.
+    ///
+    /// Sans elle, chaque tranche repartirait de zero et l'oreille entendrait un
+    /// claquement a chaque image.
+    phase: f32,
 }
 
 impl AudioEngine {
@@ -37,7 +44,72 @@ impl AudioEngine {
             sink,
             volume: 0.5,
             enabled: true,
+            buzzer: None,
+            phase: 0.0,
         }
+    }
+
+    /// Frequence d'echantillonnage des tranches de buzzer.
+    const TAUX: u32 = 44_100;
+
+    /// Pousse une tranche de buzzer, a partir des voix que le firmware a
+    /// calculees.
+    ///
+    /// Le buzzer de la console est un signal carre : additionner les voix
+    /// actives rend le vrai son, sans avoir a modeliser le peripherique de
+    /// sortie. La phase est gardee entre les tranches, et la file est bornee :
+    /// une image en retard ne doit pas laisser un retard audible.
+    pub fn buzzer(&mut self, voix: &[(f32, f32)], secondes: f32) {
+        if !self.enabled || self.volume <= 0.0 {
+            self.silence_buzzer();
+            return;
+        }
+        if voix.is_empty() {
+            self.silence_buzzer();
+            return;
+        }
+        let Some(handle) = &self.stream_handle else {
+            return;
+        };
+        if self.buzzer.is_none() {
+            self.buzzer = Sink::try_new(handle).ok();
+        }
+        let Some(sink) = &self.buzzer else {
+            return;
+        };
+        // Deux tranches d'avance suffisent : au dela le son trainerait derriere
+        // l'image.
+        if sink.len() > 2 {
+            return;
+        }
+
+        let compte = (Self::TAUX as f32 * secondes).max(1.0) as usize;
+        let mut echantillons = Vec::with_capacity(compte);
+        // Une seule phase pour toutes les voix : le buzzer est unique, il ne
+        // rend qu'un signal. On prend la voix la plus grave comme fondamentale
+        // et on mele les autres a poids egal, ce que fait un haut parleur.
+        let fondamentale = voix.iter().map(|v| v.0).fold(f32::MAX, f32::min);
+        let ampleur = voix.iter().map(|v| v.1).fold(0.0_f32, f32::max);
+        for _ in 0..compte {
+            self.phase += fondamentale / Self::TAUX as f32;
+            if self.phase >= 1.0 {
+                self.phase -= 1.0;
+            }
+            let carre = if self.phase < 0.5 { 1.0 } else { -1.0 };
+            echantillons.push(carre * 0.18 * ampleur * self.volume);
+        }
+        sink.append(SamplesBuffer::new(1, Self::TAUX, echantillons));
+        sink.set_volume(1.0);
+        sink.play();
+    }
+
+    /// Coupe le buzzer et oublie sa phase.
+    pub fn silence_buzzer(&mut self) {
+        if let Some(sink) = &self.buzzer {
+            sink.stop();
+        }
+        self.buzzer = None;
+        self.phase = 0.0;
     }
 
     pub fn play(&self, sfx: SoundEffect) {

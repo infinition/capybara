@@ -177,6 +177,12 @@ pub struct MmioTrace {
     /// Ne journaliser que les ecritures. Une boucle de scrutation noie sinon la
     /// sequence de configuration sous des millions de lectures identiques.
     pub log_ecritures_seules: bool,
+    /// Intervalle de PC dont on journalise les acces, quelle que soit la page.
+    ///
+    /// Une page ne dit pas d'ou vient un acces : quand on cherche par ou un
+    /// module precis parle au materiel, c'est l'appelant qu'il faut filtrer, pas
+    /// l'adresse touchee.
+    pub log_pc: Option<(u32, u32)>,
     pub log: Vec<LogEntry>,
 }
 
@@ -196,7 +202,9 @@ impl MmioTrace {
         if self.log_ecritures_seules && !is_write {
             return;
         }
-        if self.log_page == Some(addr & !0xFFF) && self.log.len() < 60000 {
+        let par_page = self.log_page == Some(addr & !0xFFF);
+        let par_pc = self.log_pc.is_some_and(|(bas, haut)| (bas..haut).contains(&pc));
+        if (par_page || par_pc) && self.log.len() < 60000 {
             self.log.push(LogEntry { pc, addr, is_write, value });
         }
     }

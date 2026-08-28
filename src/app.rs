@@ -582,6 +582,19 @@ impl eframe::App for TamagotchiApp {
         // plus rien, la console retrouve son personnage au prochain lancement.
         self.tenir_la_sauvegarde();
 
+        // Le buzzer de la console. On ne modelise pas le peripherique de sortie,
+        // que le firmware n'atteint pas : on lit les frequences que son moteur
+        // audio a calculees dans ses voix, et on les rend en signal carre, ce
+        // qu'est un buzzer. Une tranche un peu plus longue qu'une image evite
+        // les trous quand l'interface tarde.
+        let voix = self.machine.voix_audio();
+        if voix.is_empty() {
+            self.audio.silence_buzzer();
+        } else {
+            self.audio.buzzer(&voix, 0.03);
+            ctx.request_repaint();
+        }
+
         // Ce que l'interface prend a l'emulation : tout ce qui n'est pas la
         // tranche d'execution, moyenne sur les dernieres images.
         let emulation_ms = debut_emulation.elapsed().as_secs_f64() * 1000.0;

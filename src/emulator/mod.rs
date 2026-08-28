@@ -275,6 +275,74 @@ impl Machine {
     /// caractere dans r0.
     pub const SORTIE_CONSOLE: u32 = 0x0000_1070;
 
+    /// Drapeau pose par le firmware tant qu'un son joue, teste par son moteur
+    /// en `0x1007922C` avant de faire quoi que ce soit.
+    pub const SON_EN_COURS: u32 = 0x1801_4284;
+    /// Tableau des voix du moteur audio, huit entrees de 0x34 octets.
+    ///
+    /// L'allocation, en `0x10022BE2`, indexe ce tableau par le type de son.
+    /// Une voix porte l'horloge du coeur en tete, sa frequence en `+4` et son
+    /// volume en `+0xC`. Releve sur une note reelle : 96000000, puis 1000 Hz a
+    /// volume 100 pour l'une et 637 Hz pour l'autre.
+    pub const VOIX_AUDIO: u32 = 0x1801_C820;
+    pub const TAILLE_VOIX: u32 = 0x34;
+    pub const NOMBRE_VOIX: u32 = 8;
+
+    /// Vrai quand le firmware est en train de jouer un son.
+    pub fn son_en_cours(&self) -> bool {
+        self.lire_sram_u8(Self::SON_EN_COURS) != 0
+    }
+
+    /// Frequences et volumes des voix actives, telles que le firmware les a
+    /// calculees.
+    ///
+    /// Le buzzer de la console est un signal carre : reproduire ces frequences
+    /// rend donc le vrai son, sans avoir a modeliser le peripherique de sortie,
+    /// que le firmware n'atteint pas dans le modele actuel.
+    pub fn voix_audio(&self) -> Vec<(f32, f32)> {
+        if !self.son_en_cours() {
+            return Vec::new();
+        }
+        (0..Self::NOMBRE_VOIX)
+            .filter_map(|i| {
+                let base = Self::VOIX_AUDIO + i * Self::TAILLE_VOIX;
+                // L'octet en `+8` distingue la voix qui joue de celles qui
+                // gardent seulement leur derniere valeur : le tableau reste
+                // rempli au silence, seule celle la est en cours.
+                if self.lire_sram_u8(base + 8) == 0 {
+                    return None;
+                }
+                let frequence = self.lire_sram_u32(base + 4);
+                let volume = self.lire_sram_u32(base + 0xC);
+                // Une frequence hors de la bande audible ne vient pas d'une
+                // note : c'est une voix au repos, ou un champ mal lu.
+                if (20..=12_000).contains(&frequence) && volume > 0 {
+                    Some((frequence as f32, (volume.min(100) as f32) / 100.0))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn lire_sram_u8(&self, adresse: u32) -> u8 {
+        self.bus
+            .sram
+            .data
+            .get((adresse - 0x1800_0000) as usize)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn lire_sram_u32(&self, adresse: u32) -> u32 {
+        let o = (adresse - 0x1800_0000) as usize;
+        let d = &self.bus.sram.data;
+        if o + 4 > d.len() {
+            return 0;
+        }
+        u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
+    }
+
     /// Boutons de la console, avec l'identifiant que le firmware leur donne :
     /// port dans les bits hauts, broche dans les quatre bits bas.
     pub const BOUTON_MOLETTE: u32 = 0x08;

@@ -46,6 +46,11 @@ Sept sondes dans `examples/`. Toutes prennent `<dump.bin> <cle hex>`.
   grand trou disponible, au depart puis au fil du temps.
 - **`alloc_probe`** : compte les prises et les rendus de memoire par appelant et
   par taille, aux deux entrees de l'allocateur.
+- **`partie_probe`** : ecrit un emplacement de sauvegarde depuis un instantane,
+  puis rallume la console dessus. Le cycle complet en une commande.
+- **`son_probe`** : rejoue des appuis jusqu'a ce que le firmware joue une note,
+  puis releve les voix, leur frequence, et tout ce que la console touche pendant
+  ce temps. `MODULE_AUDIO=bas-haut` restreint la trace au code d'un module.
 
 Variables d'environnement :
 
@@ -234,18 +239,32 @@ Le moteur audio du firmware est cadence a 125 Hz par le SysTick, via
 `0x10079398`, qui compte en `0x180142A0` jusqu'a la periode gardee en
 `0x1800ECDA`. Son banc compte 87 sons, rendus par `0x10015818`.
 
-Et pourtant la console est muette, pour une raison qui ne tient pas au modele.
-Son premier verrou, `0x18014282`, vaut 1 : le moteur est initialise. Le second,
-`0x18014284`, qui marque qu'un son joue, reste a zero dans tous les etats
-observes. Surtout, `jouer_son`, en `0x1001FCB4`, appele depuis une centaine
-d'endroits, n'est jamais atteint en quatre cents millions de pas malgre des
-appuis qui changent de scene. Le son est donc coupe dans les reglages de la
-console elle meme. Aucune page de PWM n'est touchee, et le port 1, qui porte le
-buzzer sur ses broches 11 et 13, n'est jamais ecrit : il n'y a rien a modeliser
-tant que le jeu ne demande rien.
+La console joue bien. `jouer_son`, en `0x1001FCB4`, prend un identifiant et un
+volume ; il refuse au dela de 87 sons, charge la melodie depuis la table de
+pointeurs en `0x10087210 + id * 4`, et pose le drapeau `0x18014284` tant qu'elle
+dure. Le premier verrou, `0x18014282`, marque le moteur initialise et vaut 1.
+Il faut jouer plusieurs secondes pour declencher un son : ce n'est pas la
+navigation qui sonne, ce sont les evenements du jeu.
 
-L'interface, elle, sonne : clic sur chaque appui, cran sur chaque pas de
-molette, avec un reglage de volume et une coupure.
+**Le tableau des voix, en `0x1801C820`,** compte huit entrees de `0x34` octets,
+indexees par le type de son a l'allocation, en `0x10022BE2`. Une voix porte
+l'horloge du coeur en tete, `0x05B8D800`, soit 96 MHz, sa frequence en `+4`, un
+temoin d'activite en `+8` et son volume en `+0xC`. Le tableau garde ses valeurs
+une fois le son fini : seul le drapeau `0x18014284` dit ce qui sonne vraiment,
+et seule la voix dont `+8` n'est pas nul est en cours.
+
+Releve sur une note reelle, apres l'appel : 568 Hz, puis 1516, 955 et 758, sur
+environ cent cinquante millisecondes. Une melodie.
+
+**Le peripherique de sortie n'est pas atteint.** Pendant un son, aucun acces
+materiel ne vient du module audio, aucune page de PWM n'est touchee, et le
+port 1, qui porte le buzzer sur ses broches 11 et 13, n'est jamais ecrit. On ne
+le modelise donc pas : l'interface lit les frequences que le moteur a calculees
+et les rend en signal carre, ce qu'est un buzzer. Le son entendu est celui que
+la console a compose.
+
+L'interface sonne aussi pour elle meme : clic sur chaque appui, cran sur chaque
+pas de molette, avec un reglage de volume et une coupure.
 
 ## Le tas et la sauvegarde
 
@@ -280,9 +299,9 @@ somme de controle des deux pages.
 
 ## Ce qui reste a faire
 
-1. **Le buzzer.** Il faudra d'abord rallumer le son dans les reglages du jeu,
-   puis relever ce que le firmware ecrit : rien n'est modelise, et rien ne peut
-   l'etre tant qu'il ne joue pas.
+1. **Le peripherique de sortie du son.** Le moteur calcule ses notes mais
+   n'ecrit sur rien : la sortie reste a trouver. En attendant, l'interface joue
+   les frequences lues dans les voix, ce qui rend le bon son.
 2. **La confirmation de la date apres un reveil.** Le firmware la demande a
    chaque rallumage, alors que le compteur de secondes n'a pas ete perdu. Il
    lit pourtant son drapeau de validite en `0x00003760`, qui rend bien vrai, et
