@@ -72,7 +72,19 @@ impl Machine {
     /// l'instantane reviennent a l'image de reference : sans cela une
     /// sauvegarde faite apres l'instantane survivrait a la restauration.
     pub fn restaurer(&mut self, etat: &Instantane) {
-        let salies: Vec<usize> = self.bus.flash.pages_salies.iter().copied().collect();
+        // L'union des deux ensembles, pas seulement les pages salies par la
+        // machine courante. Une machine qui vient d'etre chargee n'a rien sali :
+        // ne parcourir que ses pages revenait a ignorer toutes celles de
+        // l'instantane, donc a perdre la sauvegarde du jeu et a faire repartir
+        // le firmware sur sa premiere mise en route.
+        let salies: std::collections::BTreeSet<usize> = self
+            .bus
+            .flash
+            .pages_salies
+            .iter()
+            .copied()
+            .chain(etat.pages_flash.keys().copied())
+            .collect();
         for page in salies {
             let debut = page * PAGE_FLASH;
             let fin = (debut + PAGE_FLASH).min(self.bus.flash.data.len());

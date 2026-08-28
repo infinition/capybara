@@ -215,12 +215,38 @@ impl Machine {
         }
     }
 
+    /// Boucle de veille profonde du firmware, en PRAM.
+    ///
+    /// Elle demande la mise hors tension du coeur par le bit 0 de
+    /// `0x45000300`, execute un `WFI`, puis se rebranche sur elle meme sans
+    /// aucune condition de sortie : le saut de `0x00002432` vers `0x000023D0`
+    /// est inconditionnel, et les deux seules interruptions restees autorisees,
+    /// 2 et 3, ont des gestionnaires qui reviennent dans la boucle. Aucune
+    /// sortie logicielle n'existe donc, et le reveil ne peut venir que du
+    /// materiel, qui remet le coeur a zero. C'est ce que reproduit `appuyer`.
+    pub const VEILLE_PROFONDE: std::ops::Range<u32> = 0x0000_23D0..0x0000_2434;
+
+    /// Vrai quand le coeur est gare dans cette boucle.
+    pub fn en_veille_profonde(&self) -> bool {
+        Self::VEILLE_PROFONDE.contains(&self.cpu.regs.pc)
+    }
+
     /// Tire une broche vers le bas, ce que fait un appui.
     ///
     /// Les entrees sont a resistance de tirage : au repos elles se lisent
     /// hautes, un appui les tire bas. C'est la convention que le firmware
     /// attend, verifiee sur les broches 0x20 et 0x21 de l'encodeur.
+    ///
+    /// En veille profonde, l'appui ne tire pas seulement la broche : il rallume
+    /// la console. La memoire vive est effacee par le demarrage du firmware,
+    /// mais la sauvegarde est en flash et l'horloge continue de tourner, donc
+    /// la partie reprend la ou elle en etait.
     pub fn appuyer(&mut self, id: u32) {
+        if self.en_veille_profonde() {
+            self.reset();
+            self.is_running = true;
+            return;
+        }
         let broche = id & 0xF;
         if let Some(port) = self.port_de(id) {
             port.appuyer(broche);
