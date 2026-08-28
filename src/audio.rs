@@ -89,9 +89,10 @@ impl AudioEngine {
         let Some(sink) = &self.buzzer else {
             return;
         };
-        if sink.len() > 3 {
-            return;
-        }
+        // La file n'est pas bornee ici. Jeter une tranche laisse un trou au
+        // milieu d'une melodie, et l'ordre entendu n'est plus celui compose.
+        // La cadence est deja tenue par ailleurs : on pousse autant de son que
+        // de temps reel ecoule, la file ne peut donc pas s'allonger.
 
         let total_echantillons = (Self::TAUX as f32 * secondes) as usize;
         let mut echantillons = Vec::with_capacity(total_echantillons + notes.len());
@@ -172,9 +173,18 @@ impl AudioEngine {
         sink.play();
     }
 
-    /// Coupe le buzzer et oublie sa phase.
+    /// Laisse finir ce qui est en file, puis oublie la voie et sa phase.
+    ///
+    /// Le son a toujours une image ou deux de retard sur l'emulation : ce qui a
+    /// ete pousse pendant la derniere image de la melodie n'est pas encore
+    /// sorti quand le firmware se tait. Couper la voie a cet instant emportait
+    /// la fin de chaque melodie, et ce qu'on entendait n'etait plus la suite
+    /// que la console avait composee.
     pub fn silence_buzzer(&mut self) {
         if let Some(sink) = &self.buzzer {
+            if !sink.empty() {
+                return;
+            }
             sink.stop();
         }
         self.buzzer = None;

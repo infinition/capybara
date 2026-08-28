@@ -1,7 +1,0 @@
-deviceKey = <CLE>
-
-Cle de dechiffrement du firmware Tamagotchi Paradise, commune aux cinq
-editions. Ce fichier n'est pas suivi par git. Pour travailler :
-
-    set SONIX_DEVICE_KEY=<CLE>
-    set SONIX_DUMPS=<dossier des dumps>

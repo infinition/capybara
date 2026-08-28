@@ -79,6 +79,17 @@ pub struct TamagotchiApp {
     /// rien manquer entre deux images.
     pub note_courante: f32,
     pub note_depuis: u64,
+    /// Vrai tant que le firmware jouait a l'image precedente.
+    pub son_jouait: bool,
+    /// Note heritee de la melodie precedente, et cycle jusqu'auquel s'en mefier.
+    ///
+    /// Le tableau de voix garde sa derniere valeur au silence. Quand le
+    /// firmware releve son drapeau de son, il met encore quelques
+    /// millisecondes a ecrire la premiere note : jusque la, la voix annonce
+    /// celle de la melodie precedente, et l'ancienne s'entendait en tete de
+    /// chaque son.
+    pub note_perimee: f32,
+    pub perimee_jusqu: u64,
     /// Notes relevees pendant la tranche d'emulation, avec leur duree en cycles.
     pub notes: Vec<(f32, u64)>,
     /// Cycles dus a la console, en retard a rattraper.
@@ -131,6 +142,9 @@ impl TamagotchiApp {
             angle_molette: 0.0,
             note_courante: 0.0,
             note_depuis: 0,
+            son_jouait: false,
+            note_perimee: 0.0,
+            perimee_jusqu: 0,
             notes: Vec::new(),
             vitesse: 1.0,
             cycles_dus: 0.0,
@@ -505,6 +519,32 @@ impl TamagotchiApp {
             console.trim_end()
         )
     }
+
+    /// Note a jouer, la valeur heritee de la melodie precedente ecartee.
+    ///
+    /// Au moment ou le drapeau de son se leve, la voix porte encore la
+    /// derniere note du son d'avant. On la tient pour du silence tant qu'elle
+    /// n'a pas change, et au plus cinquante millisecondes : passe ce delai
+    /// c'est que le firmware la joue vraiment.
+    fn note_jouee(&mut self) -> f32 {
+        let joue = self.machine.son_en_cours();
+        if joue && !self.son_jouait {
+            self.note_perimee = self.machine.note_courante();
+            self.perimee_jusqu = self.machine.cpu.cycles
+                + crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as u64 / 20;
+        }
+        self.son_jouait = joue;
+
+        let note = self.machine.note_courante();
+        if note > 0.0 && self.machine.cpu.cycles < self.perimee_jusqu {
+            if (note - self.note_perimee).abs() < 0.5 {
+                return 0.0;
+            }
+            // Une autre note est arrivee : la voix est a jour, plus de doute.
+            self.perimee_jusqu = 0;
+        }
+        note
+    }
 }
 
 impl eframe::App for TamagotchiApp {
@@ -634,7 +674,7 @@ impl eframe::App for TamagotchiApp {
                 // de note plusieurs fois en cent cinquante millisecondes, et un
                 // releve par image n'en attraperait que des morceaux, dans le
                 // desordre.
-                let note = self.machine.note_courante();
+                let note = self.note_jouee();
                 if (note - self.note_courante).abs() > 0.5 {
                     let duree = self.machine.cpu.cycles.saturating_sub(self.note_depuis);
                     self.notes.push((self.note_courante, duree));
