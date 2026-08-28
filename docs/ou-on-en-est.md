@@ -5,16 +5,19 @@ attaquer. Le detail materiel est dans `materiel-snc7340.md`.
 
 ## Resume
 
-**Le jeu demarre et repond aux boutons.** Le firmware Water passe son
-identification de flash, sa mesure de pile, initialise son ecran, decode ses
-ressources, affiche son ecran titre, puis son menu de choix de langue. Le bouton
-A fait defiler la selection, le bouton molette valide et fait passer a l'ecran de
-reglage de la date.
+**Le jeu se joue.** Mise en route complete, boutons, menus, molette de zoom,
+horloge qui avance, oeuf qui eclot, nourrissage, QR code secret, veille et
+reveil, sauvegardes persistantes qui survivent a l'extinction de l'ordinateur et
+vieillissement en temps reel, coque fidele suivant l'edition, son de la console.
 
-L'ecran fait 128 x 128 en RGB565. Pres de sept cents trames sont poussees vers
-l'afficheur sur quatre milliards de pas.
+L'ecran fait 128 x 128 en RGB565. La cle de dechiffrement est `<CLE>`,
+commune aux cinq editions.
 
-La cle de dechiffrement est `<CLE>`, commune aux cinq editions.
+**Le seul defaut visible qui reste est la vitesse.** L'emulation tient environ
+0,78 fois le temps de la console : compare a la vraie posee a cote, la planete
+de l'ecran d'accueil oscille toutes les deux secondes au lieu d'une, et les
+melodies trainent d'autant. C'est la meme cause unique pour l'image et pour le
+son. Tout le reste est juste. Voir la section « La vitesse ».
 
 ## Outils
 
@@ -314,6 +317,68 @@ verification et `0x0000B826` pour l'ecriture. La scene de jeu occupe environ
 sauvegarde en attente mene donc a l'assertion. Ce n'est pas le cas d'une partie
 menee depuis le demarrage, ou la sauvegarde tombe a un moment ou la place existe.
 
+## Les sauvegardes persistantes
+
+A ne pas confondre avec les instantanes. Un instantane, `.tamastate`, fige toute
+la machine pour revenir en arriere pendant la mise au point. Une sauvegarde,
+`.tamasave`, ne retient que ce que la console garde vraiment, et survit a
+l'extinction de l'ordinateur.
+
+Elles vivent a cote de l'executable, dans
+`sauvegardes/<empreinte du dump>/<emplacement>.tamasave`. L'empreinte mele le
+nom du fichier et une somme FNV-1a de son contenu : les cinq editions ne se
+melangent pas, et deux copies renommees du meme dump se retrouvent.
+
+Le fichier porte les pages de flash ecrites par le jeu, mais aussi l'horloge :
+le compteur de secondes, tous les registres de la zone systeme, et la date
+d'ecriture. Au chargement, le compteur repart a sa valeur enregistree augmentee
+du temps reellement passe, mesure a l'horloge de l'ordinateur. Un Tamagotchi
+range vieillit ; celui ci aussi.
+
+La zone SN_SYS0 est alimentee en permanence sur la puce et garde son contenu
+coeur eteint : la sauvegarde la restitue entiere, ce qui permet au firmware de
+retrouver la trace de son reveil. Ranger la console revient a l'endormir :
+l'echeance d'alarme est posee a l'instant de l'ecriture, et la relance ressemble
+alors a une sortie de veille. Sans cela le demarrage passait par l'ecran
+continuer ou effacer puis par le reglage de l'heure ; avec, il reprend
+directement, `0` puis `101` puis `28` puis `29`, a l'heure juste.
+
+L'ecriture est automatique, espacee d'une seconde, avec une derniere passe a la
+fermeture de la fenetre. `SpiFlash` porte un compteur d'ecritures pour que
+l'interface sache que la partie a bouge sans comparer seize mega-octets a chaque
+image.
+
+**Piege corrige, a ne pas reintroduire :** `Instantane::restaurer` ne parcourait
+que les pages salies par la machine courante. Une machine fraichement chargee
+n'en a aucune, donc les pages de l'instantane etaient ignorees et la sauvegarde
+perdue a chaque chargement. Il parcourt maintenant l'union des deux ensembles.
+
+## L'interface
+
+La coque suit la vraie console, d'apres le wiki. Corps en oeuf construit en
+balayant l'angle, la largeur suivant le cosinus, ce qui resserre le sommet et
+elargit la base sans casser la convexite dont depend le remplissage d'egui. La
+calotte se construit de la meme facon, de part et d'autre du sommet, et non en
+filtrant le contour complet : un filtre garderait les points dans l'ordre du tour
+entier et la forme se croiserait.
+
+Commandes : trois boutons A, B et C sous l'ecran, et la molette sur l'antenne
+droite. Sa fenetre transparente montre deux fleches opposees qui defilent quand
+on tourne et gardent leur elan ; elle est aussi le bouton de molette, comme sur
+la console. A la souris, le clic gauche sur l'ecran vaut A, le droit vaut B, le
+milieu vaut l'appui de molette, maintien compris dans les trois cas, sans quoi
+l'appui long qui ouvre le laboratoire serait impossible. On ne compte pas
+l'appui de molette pendant qu'on la tourne, sinon chaque cran vaudrait une
+pression.
+
+Six coques, celles que Bandai a sorties : Pink Land, Blue Water et Purple Sky de
+la premiere vague, Jade Forest de la deuxieme, Orange Tropics et White Glacier de
+la troisieme. La coque suit l'edition du dump, reconnue au nom du fichier, et
+reste choisissable a la main. Rien dans l'image ne nomme l'edition.
+
+Le son de l'interface repond a chaque appui et a chaque cran de molette, avec
+une coupure, un volume, et un reglage de hauteur pour le buzzer de la console.
+
 ## La chaine de la mesure de pile
 
 Elle sert de modele pour les prochaines enquetes :
@@ -333,29 +398,67 @@ somme de controle des deux pages.
 
 ## Ce qui reste a faire
 
-1. **Le peripherique de sortie du son.** Le moteur calcule ses notes mais
-   n'ecrit sur rien : la sortie reste a trouver. En attendant, l'interface joue
-   les frequences lues dans les voix, ce qui rend le bon son.
-2. **La confirmation de la date apres un reveil.** Le firmware la demande a
-   chaque rallumage, alors que le compteur de secondes n'a pas ete perdu. Il
-   lit pourtant son drapeau de validite en `0x00003760`, qui rend bien vrai, et
-   le compteur en `0x00003754`. Reste a trouver ce qui lui fait croire que
-   l'heure est a refaire.
-3. **Une execution qui derive de deux octets.** Les instantanes pris a un
-   plantage montrent une adresse de retour a un octet impair de l'instruction
-   reelle, par exemple `0x1006DF3E` la ou le mot commence en `0x1006DF3C`. Le
-   code s'y lit encore, se recale sur les `b .+2` de remplissage, et finit par
-   ecrire des zeros dans la table des vecteurs. L'origine du decalage n'est pas
-   trouvee.
-4. **Les quatre autres editions.** Seule Water a ete menee jusqu'au bout ; Jade
-   affiche son oeuf, les trois autres n'ont pas ete suivies jusqu'a l'image.
+**1. La vitesse, et c'est le seul defaut que l'on voit.** L'emulation tient 0,78
+fois le temps de la console. Il manque environ trente pour cent. La section
+« La vitesse » dit ce qui a paye, ce qui n'a rien donne, et la seule piste
+serieuse restante : le decodage et le corps des instructions.
+
+**2. Le peripherique de sortie du son.** Le moteur du firmware calcule ses notes
+mais n'ecrit sur aucun peripherique. Mesure faite avec `son_probe`, filtre par
+intervalle de PC : aucun acces materiel ne vient du module audio pendant qu'une
+note joue, aucune page de PWM n'est touchee, et le port 1, qui porte le buzzer
+sur ses broches 11 et 13, n'est jamais ecrit. En attendant de trouver par ou il
+sort, l'interface lit les frequences deja calculees dans les voix et les rend en
+signal carre. Le son entendu est donc bien celui que la console compose, mais on
+ne sait toujours pas comment elle le fait sonner.
+
+**3. Les quatre autres editions.** Seule Water a ete menee jusqu'au bout ; Jade
+affiche son oeuf. Earth, Sky et Land n'ont pas ete suivies jusqu'a l'image.
+
+**4. La molette en quadrature.** Elle est modelisee en appuis simples sur les
+broches `0x20` et `0x21`, pas en signal a deux phases decalees.
+
+## Blocages connus, et comment les reconnaitre
+
+**Reprendre un vieil instantane pris en scene de jeu fige la console.** La scene
+occupe 30,9 Ko d'un tas de 32 Ko ; la premiere sauvegarde declenchee par l'avance
+de l'horloge demande 4 Ko, ne les trouve pas, et le firmware saute a son
+assertion en `0x1005B4AC`, qui boucle sur place. On le reconnait tout de suite :
+`temps_probe` montre 97 % du temps passe en `0x1005B4C4`. Ce n'est pas un defaut
+du modele mais un instantane pris dans un etat que la console n'atteint pas
+d'elle meme, capture quand l'horloge etait encore figee. Une partie menee depuis
+le demarrage n'y va pas.
+
+**Le tableau des voix audio reste rempli au silence.** Le lire sans verifier le
+drapeau `0x18014284` et le temoin `+8` de la voix donne un bourdonnement
+permanent.
+
+**Le son part a l'envers si on l'echantillonne a la cadence de l'interface.** Une
+melodie dure cent cinquante millisecondes et change plusieurs fois de note : un
+releve par image n'en attrape que des morceaux, dans un ordre arbitraire. Il faut
+la suivre dans la boucle d'emulation, ce que fait `TamagotchiApp`, et rendre la
+suite d'un bloc.
+
+**Les reglages de vitesse au dessus de « temps reel » ne font rien** tant que la
+mesure reste sous un : la machine donne deja tout. Le diagnostic affiche la
+vitesse atteinte, c'est le chiffre a regarder avant de conclure.
 
 ## Ce qu'il ne faut pas refaire
 
 - Ne pas retoucher au sens du bit de direction du DMA de flash : pose, il va de
   la flash vers la memoire.
 - Ne pas chercher un identifiant JEDEC de trois octets en `0x40022018`.
-- Ne pas supposer que le SysTick cadence la veille : le firmware le desactive
-  explicitement avant de dormir.
+- Ne pas supposer que le SysTick cadence la veille profonde : le firmware le
+  desactive explicitement avant de dormir, et la boucle n'a aucune sortie
+  logicielle.
 - Ne pas conclure d'un desassemblage a froid sans le recouper avec la trace
   d'execution de `watch_probe`.
+- Ne pas conclure que la console est muette sur une fenetre de mesure courte :
+  elle ne joue que sur des evenements de jeu, jamais sur la navigation, et il
+  faut jouer plusieurs secondes avant qu'une note sorte. Une premiere mesure sur
+  quatre cents millions de pas avait conclu a tort au silence.
+- Ne pas chercher a accelerer par les chemins rapides de la memoire vive en 16
+  bits, la recopie de trame en bloc, ou `target-cpu` adapte a la machine : les
+  trois ont ete essayes et mesures, aucun ne donne rien. Le 32 bits, lui, paye.
+- Ne pas doubler la frequence du buzzer : le champ de la voix donne bien des
+  hertz, verifie a l'oreille contre la console posee a cote.

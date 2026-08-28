@@ -492,6 +492,30 @@ impl MemoryBus {
     }
 
     pub fn read_u32(&mut self, addr: u32, periph: &mut Peripherals, nvic: &Nvic) -> u32 {
+        // Chemin rapide des deux memoires. Le mot est la largeur courante d'un
+        // programme ARM, et le chemin general finissait par quatre lectures
+        // d'octet, chacune refaisant tout le decodage d'adresse.
+        if (map::SRAM_BASE..map::SRAM_END).contains(&addr) {
+            let i = (addr - map::SRAM_BASE) as usize;
+            if i + 3 < self.sram.data.len() {
+                return u32::from_le_bytes([
+                    self.sram.data[i],
+                    self.sram.data[i + 1],
+                    self.sram.data[i + 2],
+                    self.sram.data[i + 3],
+                ]);
+            }
+        } else if addr < map::PRAM_END {
+            let i = addr as usize;
+            if i + 3 < self.pram.data.len() {
+                return u32::from_le_bytes([
+                    self.pram.data[i],
+                    self.pram.data[i + 1],
+                    self.pram.data[i + 2],
+                    self.pram.data[i + 3],
+                ]);
+            }
+        }
         // L'alias bit-band tombe dans la plage MMIO : il doit etre resolu avant
         // le dispatch vers les peripheriques, sinon il est pris pour un registre.
         if let Some((target, bit)) = map::bitband_target(addr) {
@@ -512,6 +536,16 @@ impl MemoryBus {
     }
 
     pub fn write_u32(&mut self, addr: u32, val: u32, periph: &mut Peripherals, nvic: &mut Nvic) {
+        // Meme raison qu'en lecture : la memoire vive n'a ni alias bit-band ni
+        // effet de bord, et c'est la qu'atterrit la quasi totalite des mots
+        // ranges par le jeu.
+        if (map::SRAM_BASE..map::SRAM_END).contains(&addr) {
+            let i = (addr - map::SRAM_BASE) as usize;
+            if i + 3 < self.sram.data.len() {
+                self.sram.data[i..i + 4].copy_from_slice(&val.to_le_bytes());
+                return;
+            }
+        }
         if let Some((target, bit)) = map::bitband_target(addr) {
             let mut byte = self.read_u8(target, periph, nvic);
             if val & 1 != 0 {

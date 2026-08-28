@@ -156,7 +156,7 @@ impl Thumb16 {
         }
 
         // Load/Store word/byte immediate: 011 op imm5 rn rd
-        if (w & 0xE000) == 0x6000 || (w & 0xE000) == 0x7000 {
+        if (w & 0xE000) == 0x6000 {
             return Self::exec_ldr_str_imm(w, regs, bus, periph, nvic);
         }
 

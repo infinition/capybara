@@ -75,6 +75,12 @@ pub struct TamagotchiApp {
     /// plus d'images que la fenetre n'en affiche, ce qui saccade en plus d'etre
     /// faux. Zero met en pause.
     pub vitesse: f32,
+    /// Note en cours et cycle ou elle a commence, pour suivre la melodie sans
+    /// rien manquer entre deux images.
+    pub note_courante: f32,
+    pub note_depuis: u64,
+    /// Notes relevees pendant la tranche d'emulation, avec leur duree en cycles.
+    pub notes: Vec<(f32, u64)>,
     /// Cycles dus a la console, en retard a rattraper.
     ///
     /// La dette est bornee : apres un a coup de l'interface, il ne faut pas que
@@ -123,6 +129,9 @@ impl TamagotchiApp {
             nouvel_emplacement: String::new(),
             derniere_ecriture: std::time::Instant::now(),
             angle_molette: 0.0,
+            note_courante: 0.0,
+            note_depuis: 0,
+            notes: Vec::new(),
             vitesse: 1.0,
             cycles_dus: 0.0,
         }
@@ -621,6 +630,17 @@ impl eframe::App for TamagotchiApp {
                 if !matches!(self.machine.run_frame(), crate::emulator::StepResult::Ok(_)) {
                     break;
                 }
+                // La melodie se suit ici, pas une fois par image : elle change
+                // de note plusieurs fois en cent cinquante millisecondes, et un
+                // releve par image n'en attraperait que des morceaux, dans le
+                // desordre.
+                let note = self.machine.note_courante();
+                if (note - self.note_courante).abs() > 0.5 {
+                    let duree = self.machine.cpu.cycles.saturating_sub(self.note_depuis);
+                    self.notes.push((self.note_courante, duree));
+                    self.note_courante = note;
+                    self.note_depuis = self.machine.cpu.cycles;
+                }
             }
             let faits = (self.machine.cpu.cycles - depart) as f64;
             self.cycles_dus = (self.cycles_dus - faits).max(0.0);
@@ -634,17 +654,23 @@ impl eframe::App for TamagotchiApp {
         self.tenir_la_sauvegarde();
 
         // Le buzzer de la console. On ne modelise pas le peripherique de sortie,
-        // que le firmware n'atteint pas : on lit les frequences que son moteur
-        // audio a calculees dans ses voix, et on les rend en signal carre, ce
-        // qu'est un buzzer. Une tranche un peu plus longue qu'une image evite
-        // les trous quand l'interface tarde.
-        let voix = self.machine.voix_audio();
-        if voix.is_empty() {
-            self.audio.silence_buzzer();
-        } else {
-            self.audio.buzzer(&voix, 0.03);
-            ctx.request_repaint();
+        // que le firmware n'atteint pas : on rend les frequences que son moteur
+        // audio a calculees, en signal carre, ce qu'est un buzzer. La suite de
+        // notes relevee pendant la tranche est rendue d'un bloc, a l'echelle du
+        // temps reellement ecoule : l'ordre et les durees relatives sont donc
+        // ceux de la console, meme quand l'emulation traine.
+        let reste = self.machine.cpu.cycles.saturating_sub(self.note_depuis);
+        if reste > 0 {
+            self.notes.push((self.note_courante, reste));
+            self.note_depuis = self.machine.cpu.cycles;
         }
+        if self.notes.iter().any(|n| n.0 > 0.0) {
+            self.audio.buzzer_notes(&self.notes, _dt.max(0.001));
+            ctx.request_repaint();
+        } else {
+            self.audio.silence_buzzer();
+        }
+        self.notes.clear();
 
         // Ce que l'interface prend a l'emulation : tout ce qui n'est pas la
         // tranche d'execution, moyenne sur les dernieres images.

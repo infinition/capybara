@@ -293,6 +293,29 @@ impl Machine {
         self.lire_sram_u8(Self::SON_EN_COURS) != 0
     }
 
+    /// Frequence de la note en cours, zero au silence.
+    ///
+    /// Version sans allocation de `voix_audio`, appelee tres souvent pour
+    /// suivre la melodie note par note au lieu de l'echantillonner a la cadence
+    /// de l'interface, bien trop grossiere : une melodie dure cent cinquante
+    /// millisecondes et l'interface ne rend que soixante images par seconde.
+    pub fn note_courante(&self) -> f32 {
+        if !self.son_en_cours() {
+            return 0.0;
+        }
+        for i in 0..Self::NOMBRE_VOIX {
+            let base = Self::VOIX_AUDIO + i * Self::TAILLE_VOIX;
+            if self.lire_sram_u8(base + 8) == 0 {
+                continue;
+            }
+            let frequence = self.lire_sram_u32(base + 4);
+            if (20..=12_000).contains(&frequence) && self.lire_sram_u32(base + 0xC) > 0 {
+                return frequence as f32;
+            }
+        }
+        0.0
+    }
+
     /// Frequences et volumes des voix actives, telles que le firmware les a
     /// calculees.
     ///

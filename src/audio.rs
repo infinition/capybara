@@ -28,11 +28,11 @@ pub struct AudioEngine {
     phase: f32,
     /// Facteur applique a la frequence lue dans les voix du firmware.
     ///
-    /// Le champ de la voix donne 568 a 1516 Hz sur une note reelle, ce qui est
-    /// grave pour un piezo, dont le rendement culmine entre deux et quatre
-    /// kilohertz ; double, l'intervalle y tombe. Compare a la console posee a
-    /// cote, le son sans facteur sonne une octave trop bas. Le reglage reste
-    /// accessible pour reprendre l'accord a l'oreille.
+    /// Il vaut un : le champ de la voix donne bien la frequence en hertz, 568 a
+    /// 1516 sur une note reelle, verifie a l'oreille contre la console posee a
+    /// cote. Un facteur deux, essaye d'abord parce que ces valeurs semblaient
+    /// graves pour un piezo, sonnait une octave trop haut. Le reglage reste
+    /// accessible pour reprendre l'accord.
     pub hauteur: f32,
 }
 
@@ -54,12 +54,71 @@ impl AudioEngine {
             enabled: true,
             buzzer: None,
             phase: 0.0,
-            hauteur: 2.0,
+            hauteur: 1.0,
         }
     }
 
     /// Frequence d'echantillonnage des tranches de buzzer.
     const TAUX: u32 = 44_100;
+
+    /// Pousse une suite de notes, chacune avec sa duree en cycles de console.
+    ///
+    /// Relever la note une fois par image d'interface ne suffit pas : une
+    /// melodie dure cent cinquante millisecondes et change de note plusieurs
+    /// fois dans cet intervalle. On la suit donc dans la boucle d'emulation, et
+    /// on rend ici la suite complete, remise a l'echelle du temps reellement
+    /// ecoule pour que le son ne s'interrompe pas entre deux images.
+    pub fn buzzer_notes(&mut self, notes: &[(f32, u64)], secondes: f32) {
+        if !self.enabled || self.volume <= 0.0 || notes.is_empty() || secondes <= 0.0 {
+            return;
+        }
+        let total: u64 = notes.iter().map(|n| n.1).sum();
+        if total == 0 {
+            return;
+        }
+        if notes.iter().all(|n| n.0 <= 0.0) {
+            self.silence_buzzer();
+            return;
+        }
+        let Some(handle) = &self.stream_handle else {
+            return;
+        };
+        if self.buzzer.is_none() {
+            self.buzzer = Sink::try_new(handle).ok();
+        }
+        let Some(sink) = &self.buzzer else {
+            return;
+        };
+        if sink.len() > 3 {
+            return;
+        }
+
+        let total_echantillons = (Self::TAUX as f32 * secondes) as usize;
+        let mut echantillons = Vec::with_capacity(total_echantillons + notes.len());
+        for &(frequence, cycles) in notes {
+            let part = cycles as f64 / total as f64;
+            let compte = (total_echantillons as f64 * part) as usize;
+            if frequence <= 0.0 {
+                echantillons.extend(std::iter::repeat(0.0).take(compte));
+                self.phase = 0.0;
+                continue;
+            }
+            let pas = frequence * self.hauteur.max(0.05) / Self::TAUX as f32;
+            for _ in 0..compte {
+                self.phase += pas;
+                if self.phase >= 1.0 {
+                    self.phase -= 1.0;
+                }
+                echantillons.push(if self.phase < 0.5 { 0.18 } else { -0.18 } * self.volume);
+            }
+        }
+        if echantillons.is_empty() {
+            return;
+        }
+        sink.append(SamplesBuffer::new(1, Self::TAUX, echantillons));
+        sink.set_volume(1.0);
+        sink.play();
+    }
 
     /// Pousse une tranche de buzzer, a partir des voix que le firmware a
     /// calculees.
