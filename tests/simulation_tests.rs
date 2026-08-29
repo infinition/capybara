@@ -95,10 +95,25 @@ fn test_flash_inspector_layout() {
 }
 
 #[test]
-fn test_uart_packet_encoding() {
-    let packet = UartBridge::encode_packet(0x42, &[0x01, 0x02, 0x03]);
-    assert_eq!(&packet[0..4], &[0xAB, 0x5D, 0xEB, 0xEF]);
-    assert_eq!(packet[4], 0x42);
+fn test_uart_host_bridge_sync() {
+    let mut bridge = UartBridge::new("COM10", 460800);
+    let mut uart = capybara::emulator::peripherals::UartController::new();
+
+    // Envoi hote vers console
+    bridge.host_write(&[0x11, 0x22, 0x33]);
+    bridge.sync(&mut uart);
+
+    assert_eq!(uart.rx_fifo.len(), 3);
+    assert_eq!(uart.read_reg(0x00), 0x11);
+    assert_eq!(uart.read_reg(0x00), 0x22);
+    assert_eq!(uart.read_reg(0x00), 0x33);
+
+    // Envoi console vers hote
+    uart.write_reg(0x00, 0xAA);
+    uart.write_reg(0x00, 0xBB);
+    bridge.sync(&mut uart);
+
+    assert_eq!(bridge.host_read(), vec![0xAA, 0xBB]);
 }
 
 #[test]

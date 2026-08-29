@@ -273,16 +273,11 @@ fn test_sonix_sys0_osc_ctrl_hide_bit() {
 
 #[test]
 fn test_uart_console_capture() {
-    let mut machine = Machine::new();
+    let mut uart = capybara::emulator::peripherals::UartController::new();
     for c in b"HI!" {
-        machine.bus.write_u32(
-            periph::UART1,
-            *c as u32,
-            &mut machine.periph,
-            &mut machine.cpu.nvic,
-        );
+        uart.write_reg(0x00, *c as u32);
     }
-    assert_eq!(machine.periph.uart.console_history, "HI!");
+    assert_eq!(uart.console_history, "HI!");
 }
 
 #[test]
@@ -1501,54 +1496,48 @@ mod sauvegarde_persistante {
 
 #[test]
 fn test_controleur_spi0_emission_et_etat() {
-    let mut bus = MemoryBus::default();
-    let mut periph = Peripherals::default();
-    let nvic = Nvic::default();
+    let mut spi = capybara::emulator::peripherals::SpiController::default();
 
     // STAT en 0x08 : TXEMPTY (0x01) et RXEMPTY (0x04) = 0x05
-    let stat = bus.read_u32(periph::SPI0 + 0x08, &mut periph, &nvic);
+    let stat = spi.read_reg(0x08);
     assert_eq!(stat & 0x05, 0x05);
 
     // Ecriture d'un mot de donnees ecran en DATA (0x1C)
-    bus.write_u32(periph::SPI0 + 0x1C, 0xF800, &mut periph, &mut Nvic::default());
-    assert_eq!(periph.spi0.tx_fifo.len(), 1);
-    assert_eq!(periph.spi0.total_octets_emis, 2);
+    spi.write_reg(0x1C, 0xF800);
+    assert_eq!(spi.tx_fifo.len(), 1);
+    assert_eq!(spi.total_octets_emis, 2);
 }
 
 #[test]
 fn test_controleur_pmu_reveil_et_drapeaux() {
-    let mut bus = MemoryBus::default();
-    let mut periph = Peripherals::default();
-    let nvic = Nvic::default();
+    let mut pmu = capybara::emulator::peripherals::PmuController::default();
 
     // Ecriture du mode Deep Power Down
-    bus.write_u32(periph::PMU, 1, &mut periph, &mut Nvic::default());
-    assert!(periph.pmu.deep_sleep_active);
+    pmu.write_reg(0x00, 1);
+    assert!(pmu.deep_sleep_active);
 
     // Reveil par broche IO
-    periph.pmu.declencher_reveil_broche();
-    let stat = bus.read_u32(periph::PMU + 0x04, &mut periph, &nvic);
+    pmu.declencher_reveil_broche();
+    let stat = pmu.read_reg(0x04);
     assert_ne!(stat & (1 << 6), 0, "Drapeau broche IO pose");
     assert_ne!(stat & (1 << 7), 0, "Drapeau interruption pose");
-    assert!(!periph.pmu.deep_sleep_active);
+    assert!(!pmu.deep_sleep_active);
 }
 
 #[test]
 fn test_controleur_usb_echange_paquets() {
-    let mut bus = MemoryBus::default();
-    let mut periph = Peripherals::default();
-    let nvic = Nvic::default();
+    let mut usb = capybara::emulator::peripherals::UsbController::default();
 
     // Connexion USB
-    bus.write_u32(periph::USB, 1, &mut periph, &mut Nvic::default());
-    assert!(periph.usb.est_connecte);
+    usb.write_reg(0x00, 1);
+    assert!(usb.est_connecte);
 
     // Injection paquet externe CDC sur EP1
-    periph.usb.injecter_paquet_externe(b"TAMA_CMD");
-    let count = bus.read_u32(periph::USB + 0x24, &mut periph, &nvic);
+    usb.injecter_paquet_externe(b"TAMA_CMD");
+    let count = usb.read_reg(0x24);
     assert_eq!(count, 8);
 
     // Lecture du premier octet
-    let premier = bus.read_u32(periph::USB + 0x34, &mut periph, &nvic);
+    let premier = usb.read_reg(0x34);
     assert_eq!(premier, b'T' as u32);
 }
