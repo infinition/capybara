@@ -106,8 +106,8 @@ pub mod periph {
     pub const CHECKSUM: u32 = 0x4003_8000;
     pub const WDT: u32 = 0x4003_A000;
     /// Timers CT32B0 a CT32B7, une page de 4 Ko chacun (0x40000000 a 0x40007000).
-    pub const TIMERS: u32 = 0x4000_0000;
-    pub const TIMERS_LAST: u32 = 0x4000_7000;
+    pub const TIMERS: u32 = 0x4004_0000;
+    pub const TIMERS_LAST: u32 = 0x4004_6000;
     /// Zone systeme SN_SYS0, porteuse des fusibles FEUSE.
     pub const FUSES: u32 = 0x4500_0000;
 
@@ -733,6 +733,12 @@ impl MemoryBus {
             // que le pilote d'ecran scrute, et l'ecran reste noir quoi qu'on
             // charge. Les rendre a la voie non modelisee, qui rend zero et
             // journalise, est ce qui marche.
+            periph::SAR_ADC0 if crate::emulator::peripherals::SarAdc::handles(off) => {
+                p.adc[0].read_reg(off)
+            }
+            periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
+                p.adc[1].read_reg(off)
+            }
             periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
                 p.pmu.read_reg(off)
             }
@@ -777,6 +783,12 @@ impl MemoryBus {
                 if let Some(c) = p.crc.write_reg(off, val) {
                     self.executer_calcul(c, p);
                 }
+            }
+            periph::SAR_ADC0 if crate::emulator::peripherals::SarAdc::handles(off) => {
+                p.adc[0].write_reg(off, val)
+            }
+            periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
+                p.adc[1].write_reg(off, val)
             }
             periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
                 p.pmu.write_reg(off, val);
