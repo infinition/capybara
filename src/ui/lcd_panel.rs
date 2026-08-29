@@ -184,6 +184,45 @@ fn peindre_texture(morceau: &[Pos2], repere: Rect, texture: egui::TextureId) -> 
     Shape::mesh(maillage)
 }
 
+/// Un ruban entre deux lignes de meme longueur, rendu en triangles.
+///
+/// Sert la ou deux aplats doivent se toucher sans se voir. Deux formes voisines
+/// laissent toujours un lisere : egui adoucit le bord de chacune, et les deux
+/// adoucissements se superposent sans se completer. Un papier pose forme par
+/// forme s'arrete au meme endroit et ne franchit pas la jointure. Un maillage
+/// n'a ni l'un ni l'autre.
+///
+/// Sans `papier`, le ruban est d'un seul aplat. Avec, il porte la texture,
+/// placee comme partout ailleurs d'apres le repere carre de la coque, ce qui la
+/// rend continue d'un morceau au suivant.
+fn ruban(
+    haut: &[Pos2],
+    bas: &[Pos2],
+    couleur: Color32,
+    papier: Option<(egui::TextureId, Rect)>,
+) -> Shape {
+    let mut maillage =
+        egui::Mesh::with_texture(papier.map(|(t, _)| t).unwrap_or_default());
+    for (h, b) in haut.iter().zip(bas.iter()) {
+        for point in [h, b] {
+            maillage.colored_vertex(*point, couleur);
+            if let Some((_, repere)) = papier {
+                let dernier = maillage.vertices.len() - 1;
+                maillage.vertices[dernier].uv = pos2(
+                    (point.x - repere.min.x) / repere.width(),
+                    (point.y - repere.min.y) / repere.height(),
+                );
+            }
+        }
+    }
+    for i in 0..haut.len().min(bas.len()).saturating_sub(1) {
+        let a = (i * 2) as u32;
+        maillage.add_triangle(a, a + 1, a + 2);
+        maillage.add_triangle(a + 1, a + 2, a + 3);
+    }
+    Shape::mesh(maillage)
+}
+
 /// Dessine la dalle avec des coins arrondis.
 ///
 /// `Painter::image` ne pose qu'un rectangle franc. On fabrique donc le maillage
@@ -516,13 +555,21 @@ impl LcdPanel {
             }
         }
 
-        // La fente elle meme : une ligne de dents alternees, la coquille
-        // cassee. Les dents qui pointent vers le bas prolongent la calotte et
-        // portent donc son papier ; celles qui pointent vers le haut y mordent
-        // et portent celui du corps. Peintes a plat, elles restaient vides des
-        // qu'un papier etait pose.
+        // La fente elle meme : la coquille cassee, une ligne brisee entre la
+        // calotte et le corps.
+        //
+        // Elle etait faite de triangles poses cote a cote sur la droite de la
+        // fente, un par dent. Cela laissait un lisere clair tout du long : egui
+        // adoucit le bord de chaque forme, et deux adoucissements qui se
+        // touchent ne se completent pas. Le papier s'arretait au meme endroit,
+        // chaque triangle portant le sien, si bien que les dents restaient
+        // vides et que la droite se voyait au lieu de la dentelure.
+        //
+        // On peint donc la bande d'un seul tenant, en deux rubans separes par
+        // la ligne brisee : au dessus ce qui revient a la calotte, au dessous
+        // ce qui revient au corps. Un maillage n'a pas de bord adouci, et le
+        // papier le traverse sans jointure puisqu'il n'y en a plus.
         let etendue = largeur * 0.5 * angle_fente.sin() * (1.0 - 0.16 * COS_FENTE);
-        let _ = &demi_largeur;
         let dents = 11;
         let pas = etendue * 2.0 / dents as f32;
         let creux = hauteur * 0.022;
@@ -531,30 +578,44 @@ impl LcdPanel {
         } else {
             habits.chapeau
         };
+
+        // La ligne brisee. Elle touche la droite de la fente a chaque bord de
+        // dent, et s'en ecarte de `creux` au milieu, vers le bas une fois sur
+        // deux. C'est la silhouette d'avant, au trait pres.
+        let mut dentelure = Vec::with_capacity(dents * 2 + 1);
         for i in 0..dents {
             let x0 = centre.x - etendue + pas * i as f32;
-            let x1 = x0 + pas;
             let vers_le_bas = i % 2 == 0;
-            let bas = if vers_le_bas { ligne_fente + creux } else { ligne_fente - creux };
-            let dent = vec![
-                pos2(x0, ligne_fente),
-                pos2(x1, ligne_fente),
-                pos2((x0 + x1) * 0.5, bas),
-            ];
-            let (couleur, texture) = if vers_le_bas {
-                (
-                    habillage
-                        .chapeau_couleur
-                        .map(|[r, v, b]| Color32::from_rgb(r, v, b))
-                        .unwrap_or(calotte_col),
-                    texture_calotte,
-                )
-            } else {
-                (corps_col, habits.coque)
-            };
-            ui.painter().add(Shape::convex_polygon(dent.clone(), couleur, Stroke::NONE));
+            dentelure.push(pos2(x0, ligne_fente));
+            dentelure.push(pos2(
+                x0 + pas * 0.5,
+                if vers_le_bas { ligne_fente + creux } else { ligne_fente - creux },
+            ));
+        }
+        dentelure.push(pos2(centre.x + etendue, ligne_fente));
+
+        // Le haut de la bande suit le flanc de l'oeuf : au dessus de la fente
+        // la coque se resserre, et une droite depasserait de la silhouette.
+        let bord_haut = demi_largeur(ligne_fente - creux);
+        let haut: Vec<Pos2> = dentelure
+            .iter()
+            .map(|p| pos2(p.x.clamp(centre.x - bord_haut, centre.x + bord_haut), ligne_fente - creux))
+            .collect();
+        // En dessous la coque s'elargit : rien ne depasse, aucun ajustement.
+        let bas: Vec<Pos2> =
+            dentelure.iter().map(|p| pos2(p.x, ligne_fente + creux)).collect();
+
+        let couleur_calotte = habillage
+            .chapeau_couleur
+            .map(|[r, v, b]| Color32::from_rgb(r, v, b))
+            .unwrap_or(calotte_col);
+        for (haut, bas, couleur, texture) in [
+            (&haut, &dentelure, couleur_calotte, texture_calotte),
+            (&dentelure, &bas, corps_col, habits.coque),
+        ] {
+            ui.painter().add(ruban(haut, bas, couleur, None));
             if let Some(texture) = texture {
-                ui.painter().add(peindre_texture(&dent, repere, texture.id()));
+                ui.painter().add(ruban(haut, bas, Color32::WHITE, Some((texture.id(), repere))));
             }
         }
 
