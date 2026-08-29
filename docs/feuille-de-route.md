@@ -175,6 +175,42 @@ numero ne suffit pas : le firmware attend autre chose en plus. `uart_probe`
 fait cet essai en une commande. A noter que cet essai a ete mene avec les
 numeros decales d'un rang, il est donc a refaire proprement avant de conclure.
 
+**La machine a scenes, telle qu'elle est lue.** Elle vit en `0x000096C8`,
+appelee a chaque tour de la boucle principale depuis `0x000095E4`. Son etat
+tient dans les trois bits bas de `0x18001BFA` :
+
+```text
+  0  entree : lit la scene en 0x18001BF4, cherche son objet par 0x0000C492,
+     ecrit 0xFFFF en 0x18001BF6, puis appelle le gestionnaire +4
+  1  marche : appelle le gestionnaire +8 a chaque tour, puis +12
+  2  sortie et veille, en 0x00009886
+```
+
+L'etat avance par `(etat + 1) & 7` en `0x00009824`, les bits hauts conserves.
+La scene de demarrage, 104, est posee en dur en `0x0000956C`.
+
+**Forcer une scene par la memoire se heurte au tas, pas a la machine a
+scenes.** `scene_forcee_probe` ecrit le numero voulu en `0x18001BF4` et remet
+les trois bits d'etat a zero. La machine obeit : elle entre bien dans la scene
+demandee. Mais l'entree alloue, la scene quittee n'a rien rendu, et
+l'allocateur saute au halt fatal de Jade Forest. Le chemin est net et se relit
+en une commande : marche des blocs en `0x100166DA` et `0x10016704`, saut en
+`0x10016746`, boucle morte `NOP` puis `B` en `0x1005E91C`. Quatre vingt dix
+neuf pour cent du temps y passe.
+
+Forcer plus tot ne sert a rien non plus : avant neuf dixiemes de seconde la
+mise en route ecrase l'ecriture et repart sur `HOME_SPACE`. La fenetre utile
+n'existe pas.
+
+**Par ou continuer, donc.** Il faut que la scene quittee rende sa memoire,
+c'est a dire passer par la sortie que le firmware prevoit plutot que par la
+memoire. Le gestionnaire `+8` rend une valeur non nulle pour demander la
+sortie, et c'est elle qui fait avancer l'etat. Reproduire cela, ou trouver la
+fonction que le menu de mise au point appelle pour changer de scene, est le
+prochain pas. `PSID_DEBUGMENU` en rang 0 est la cible : depuis lui, la
+navigation vers les quatre scenes UART se fait par le firmware lui meme, qui
+gere son tas correctement.
+
 **Ce qui manque cote emulateur, et qui vient avant.** Le port serie n'est pas
 modelise. `src/hw_bridge/uart_pcom.rs` et `src/emulator/peripherals/uart.rs`
 datent d'avant la retro-ingenierie : registres inventes, et jusqu'a des
