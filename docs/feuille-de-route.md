@@ -119,6 +119,26 @@ sans suivre les frontieres d'instruction, il decode donc aussi des donnees. Les
 pages vues moins de cinq fois sont a verifier une par une au desassembleur avant
 d'y croire ; j'ai perdu du temps sur deux d'entre elles.
 
+**Une page tres sollicitee que personne n'a modelisee : `0x4000E000`.** Le
+datasheet l'annonce en I2S4. Releve sur Jade Forest et sur Water, avec le meme
+resultat : une banque entiere y est lue et ecrite en permanence, `+0x00`,
+`+0x04`, `+0x08`, `+0x0C`, `+0x1C`, `+0x20`, `+0x24`, `+0x50`, plus d'un millier
+d'acces par releve, toujours depuis le meme code en memoire programme, autour de
+`0x000052F2`, `0x0000546A`, `0x00005404`, `0x0000548E`, `0x0000532C` et
+`0x00003FDA`. Un canal du controleur de transferts, `0x4000F01C` a `0x4000F028`,
+est mene par le code voisin en `0x00004440`.
+
+Deux choses la rendent interessante. C'est la seule page inconnue de ce poids.
+Et elle est pilotee depuis la memoire programme, alors que la recherche du
+peripherique de son filtrait les acces sur l'intervalle de PC du module audio,
+en `0x1001F000` a `0x10080000` : elle ne pouvait pas la voir. C'est exactement
+le trou de methode qu'on soupconnait.
+
+Ce qu'elle est reste a etablir. Trois lectures possibles, a departager en
+correlant son trafic avec ce qui se passe : sortie du son, liaison vers
+l'afficheur, ou lien serie. La mesure qui tranche est simple : relever son
+trafic pendant qu'une note joue, puis au silence.
+
 **Ce qui ne marche pas, pour ne pas le refaire.** Ecrire le numero de scene
 voulu en `0x18001BF6` ne declenche aucune transition : le diagnostic appelle ce
 mot « transition demandee », c'est une supposition d'une note precedente et
