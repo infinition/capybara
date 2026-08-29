@@ -56,6 +56,43 @@ l'utilisateur installe une fois : elle donne par exemple COM5 et COM6 relies
 dos a dos, l'emulateur ouvre l'un, TamaHome voit l'autre comme un port
 ordinaire. C'est la seule voie sans ecrire de pilote.
 
+**Ce qu'on a trouve dans le firmware, et par ou continuer.**
+
+La table des scenes est decodee : un tableau de descripteurs de vingt huit
+octets, quatre gestionnaires, un pointeur de nom et un numero, cent vingt six
+entrees. `PSID_HOME` y vaut 29, ce que la trace de demarrage confirme, la table
+est donc juste. Les scenes qui nous interessent :
+
+```text
+   1  PSID_DEBUGMENU            17  PSID_DEVELOP_UARTTEST     0x1000C705
+   2  PSID_DEVELOP_COMMONCTRL   18  PSID_DEVELOP_UARTAGEING   0x1000C325
+  24  PSID_DEVELOP_TCP          19  PSID_DEVELOP_UARTBYTE     0x1000C471
+ 113  PSID_TAMASPACE_TUSHIN     20  PSID_DEVELOP_UARTHEADER   0x1000C5C1
+ 125  PSID_TESTMODE             29  PSID_HOME
+```
+
+Le firmware porte aussi un `** UART Monitor Service Ver.%d.%02d **` et des
+entrees de menu `UART BYTE`, `UART AGEING`, `UART TEST` et `TAMA HOME`.
+
+**Le peripherique est probablement en `0x40038000`.** Les bases materielles ne
+sont pas dans les pools litteraux, le firmware les forme en MOVW puis MOVT. En
+decodant ces paires sur la fenetre XIP, cette page ressort douze fois, la seule
+du groupe des communications. Et le code qui s'en sert la scrute bit a bit :
+en `0x100054E2` il lit `0x40038000`, en extrait le bit 4 et branche ; juste
+apres il relit le meme mot et en extrait le bit 9. C'est la forme d'un registre
+d'etat de port serie, pret a emettre et donnee recue.
+
+Or la note heritee donne cette page pour un accelerateur de somme de controle.
+Les deux ne sont pas forcement incompatibles, mais c'est exactement le genre de
+conclusion qu'il faut refaire plutot que croire. C'est le prochain travail :
+lire le reste du pilote autour de `0x100054E0` et relever les offsets de
+donnee, d'etat et de vitesse.
+
+**Ce qui ne marche pas, pour ne pas le refaire.** Ecrire le numero de scene
+voulu en `0x18001BF6` ne declenche aucune transition : le diagnostic appelle ce
+mot « transition demandee », c'est une supposition d'une note precedente et
+elle est fausse. `uart_probe` fait cet essai en une commande.
+
 **Ce qui manque cote emulateur, et qui vient avant.** Le port serie n'est pas
 modelise. `src/hw_bridge/uart_pcom.rs` et `src/emulator/peripherals/uart.rs`
 datent d'avant la retro-ingenierie : registres inventes, et jusqu'a des
