@@ -84,9 +84,36 @@ d'etat de port serie, pret a emettre et donnee recue.
 
 Or la note heritee donne cette page pour un accelerateur de somme de controle.
 Les deux ne sont pas forcement incompatibles, mais c'est exactement le genre de
-conclusion qu'il faut refaire plutot que croire. C'est le prochain travail :
-lire le reste du pilote autour de `0x100054E0` et relever les offsets de
-donnee, d'etat et de vitesse.
+conclusion qu'il faut refaire plutot que croire.
+
+**La banque de registres, relevee.** Le code forme huit adresses exactes, de
+`0x40038000` a `0x4003801C`, toutes depuis un seul bloc entre `0x100054E0` et
+`0x100056F0`. La fonction de configuration se lit sans ambiguite :
+
+```text
+  +0x00  controle. On efface le bit 4 puis le bit 0 avant de toucher au reste,
+         et on repose le bit 4 a la fin : c'est l'autorisation de marche.
+         Le bit 4 et le bit 9 de ce meme mot sont scrutes en 0x100054E2 et
+         0x100054FC, ce sont des temoins d'etat.
+  +0x04  parametre entier, pose depuis la pile
+  +0x08  parametre entier, pose depuis la pile
+  +0x0C  mis a 1 a la configuration
+  +0x10  mis a 1 a la configuration
+  +0x14  format. Bit 0 et bit 1 poses un a un depuis deux parametres, et un
+         champ de cinq bits en 4..8 qui recoit n moins un : c'est un nombre
+         de bits par transfert.
+  +0x18  parametre entier pose d'un bloc, sans masque : la vitesse.
+  +0x1C  touche en 0x10005556
+```
+
+Le champ « n moins un » sur cinq bits vaut pour un port serie comme pour un
+port synchrone : il ne tranche pas a lui seul entre les deux lectures de cette
+page.
+
+**Le prochain pas.** Trouver l'appelant de cette configuration pour lire les
+valeurs passees, en particulier celle de `+0x18`. Une vitesse de 115200 sur une
+horloge a 96 MHz donne un diviseur autour de 833, 460800 en donne 208 : le
+chiffre trouve dira du meme coup la vitesse et confirmera la nature du bloc.
 
 **Ce qui ne marche pas, pour ne pas le refaire.** Ecrire le numero de scene
 voulu en `0x18001BF6` ne declenche aucune transition : le diagnostic appelle ce
