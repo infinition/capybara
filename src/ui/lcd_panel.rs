@@ -391,10 +391,18 @@ impl LcdPanel {
         const COS_FENTE: f32 = 0.70;
         let ligne_fente = centre.y - hauteur * 0.5 * COS_FENTE;
         let angle_fente = COS_FENTE.acos();
+        // Creux des dents. Il sert des ici : la calotte ne descend pas jusqu'a
+        // la droite de la fente mais s'arrete au dessus, et c'est la dentelure
+        // qui finit le travail. Sinon la calotte couvrirait les dents qui
+        // pointent vers le haut, et le papier pose dessous, celui de la fenetre
+        // par exemple, ne s'y verrait pas.
+        let creux = hauteur * 0.022;
+        let cos_haut = (COS_FENTE + creux / (hauteur * 0.5)).min(0.999);
+        let angle_haut = cos_haut.acos();
         let pas_calotte = 48;
         let mut calotte = Vec::with_capacity(pas_calotte + 1);
         for i in 0..=pas_calotte {
-            let t = -angle_fente + 2.0 * angle_fente * i as f32 / pas_calotte as f32;
+            let t = -angle_haut + 2.0 * angle_haut * i as f32 / pas_calotte as f32;
             let resserrement = 1.0 - 0.16 * t.cos();
             calotte.push(pos2(
                 centre.x + largeur * 0.5 * t.sin() * resserrement,
@@ -565,14 +573,18 @@ impl LcdPanel {
         // chaque triangle portant le sien, si bien que les dents restaient
         // vides et que la droite se voyait au lieu de la dentelure.
         //
-        // On peint donc la bande d'un seul tenant, en deux rubans separes par
-        // la ligne brisee : au dessus ce qui revient a la calotte, au dessous
-        // ce qui revient au corps. Un maillage n'a pas de bord adouci, et le
+        // On peint donc d'un seul tenant, en un ruban tendu entre le bas de la
+        // calotte et la ligne brisee. Un maillage n'a pas de bord adouci, et le
         // papier le traverse sans jointure puisqu'il n'y en a plus.
+        //
+        // Le dessous de la ligne n'est pas peint du tout. Le corps, son fond et
+        // le papier de la fenetre sont deja poses a ce moment la : les laisser
+        // paraitre est ce qui remplit les dents qui mordent vers le haut. Les
+        // couvrir d'un aplat de la couleur du corps, comme on le faisait,
+        // rendait ces dents unies quel que soit le papier choisi.
         let etendue = largeur * 0.5 * angle_fente.sin() * (1.0 - 0.16 * COS_FENTE);
         let dents = 11;
         let pas = etendue * 2.0 / dents as f32;
-        let creux = hauteur * 0.022;
         let texture_calotte = if habillage.inclut_le_chapeau {
             habits.coque.or(habits.chapeau)
         } else {
@@ -596,27 +608,31 @@ impl LcdPanel {
 
         // Le haut de la bande suit le flanc de l'oeuf : au dessus de la fente
         // la coque se resserre, et une droite depasserait de la silhouette.
+        //
+        // Les bornes se calculent, donc on ne les donne pas a `clamp` : il
+        // affirme `min <= max` et tombe si l'une des deux est NaN. Le cas
+        // arrive pour de bon, le temps d'une image, quand la fenetre change de
+        // taille au changement de mode : la hauteur disponible vaut alors zero,
+        // `demi_largeur` divise zero par zero et rend NaN. `max` puis `min`
+        // rendent la valeur d'origine dans ce cas, sans rien affirmer.
         let bord_haut = demi_largeur(ligne_fente - creux);
         let haut: Vec<Pos2> = dentelure
             .iter()
-            .map(|p| pos2(p.x.clamp(centre.x - bord_haut, centre.x + bord_haut), ligne_fente - creux))
+            .map(|p| {
+                pos2(
+                    p.x.max(centre.x - bord_haut).min(centre.x + bord_haut),
+                    ligne_fente - creux,
+                )
+            })
             .collect();
-        // En dessous la coque s'elargit : rien ne depasse, aucun ajustement.
-        let bas: Vec<Pos2> =
-            dentelure.iter().map(|p| pos2(p.x, ligne_fente + creux)).collect();
-
         let couleur_calotte = habillage
             .chapeau_couleur
             .map(|[r, v, b]| Color32::from_rgb(r, v, b))
             .unwrap_or(calotte_col);
-        for (haut, bas, couleur, texture) in [
-            (&haut, &dentelure, couleur_calotte, texture_calotte),
-            (&dentelure, &bas, corps_col, habits.coque),
-        ] {
-            ui.painter().add(ruban(haut, bas, couleur, None));
-            if let Some(texture) = texture {
-                ui.painter().add(ruban(haut, bas, Color32::WHITE, Some((texture.id(), repere))));
-            }
+        ui.painter().add(ruban(&haut, &dentelure, couleur_calotte, None));
+        if let Some(texture) = texture_calotte {
+            ui.painter()
+                .add(ruban(&haut, &dentelure, Color32::WHITE, Some((texture.id(), repere))));
         }
 
         // Trois boutons alignes sous l'ecran, comme sur la console.
