@@ -21,12 +21,47 @@ melodies trainaient d'autant. Depuis le 28 aout 2026 elle tient 1,40 fois le
 temps reel sur `step` et 1,37 sur `run_frame`, et le regulateur de l'interface la
 retient a 1,00. Voir la section « La vitesse ».
 
+**Le port serie est trouve.** Il est en `0x4000B000`, page que le datasheet
+annonce en SAR_ADC1. Il reste a le modeliser et a l'ouvrir vers l'exterieur.
+Tout le detail est dans la section « Le port serie » de `feuille-de-route.md`.
+
 Ce qui reste ouvert ne se voit pas : le peripherique par lequel la console fait
-sortir ses notes n'est toujours pas identifie.
+sortir ses notes n'est toujours pas identifie, et le lien serie n'est pas encore
+modelise.
+
+## Ce que la journee du 29 aout 2026 a change
+
+Quatre choses, dont deux qui invalident des conclusions heritees.
+
+**Les numeros de scene etaient tous decales d'un rang.** Le descripteur porte un
+champ qui vaut le rang plus un, et c'est ce champ qu'on prenait pour le numero.
+`table_scenes_probe` extrait la table de n'importe quelle edition sans rien
+executer. Consequence immediate : l'instantane cense montrer l'ecran de
+connexion etait sur `TAMASPACE_DOWNLOAD`, et la mesure faite dessus ne valait
+rien.
+
+**La comparaison d'un etat a lui meme ne trouve jamais rien.** Les releves de
+pages materielles se faisaient avant et apres dans la meme execution : une page
+deja ouverte n'en ressort pas. `mmio_releve_probe` rend un texte fait pour
+`diff`, et c'est en comparant deux executions, l'une en jeu ordinaire et l'autre
+sur le lien ouvert, que la page du port serie est apparue.
+
+**Le bourdonnement de Jade Forest venait d'une adresse en dur.** Le drapeau du
+son avait ete releve sur Water et tenu pour universel. Jade range son bloc audio
+huit octets plus loin, le modele lisait autre chose, le trouvait non nul en
+permanence et faisait sonner une voix sans arret.
+
+**La fente dentelee de la coque etait peinte par dessus le reste.** Onze
+triangles poses cote a cote laissaient un lisere clair, et les dents qui mordent
+vers le haut recevaient un aplat qui masquait le papier pose dessous.
+
+La lecon commune aux quatre : une adresse, un numero ou une couleur releves sur
+une edition ou dans un contexte ne valent que la. Il faut les rechercher, ou au
+moins les eprouver, avant de s'en servir ailleurs.
 
 ## Outils
 
-Vingt-deux sondes dans `examples/`. Toutes prennent `<dump.bin> <cle hex>`.
+Vingt-cinq sondes dans `examples/`. Toutes prennent `<dump.bin> <cle hex>`.
 Les plus utilisees sont detaillees ci-dessous.
 
 - **`boot_probe`** : le couteau suisse. Zones parcourues, adresses les plus
@@ -57,6 +92,20 @@ Les plus utilisees sont detaillees ci-dessous.
   par taille, aux deux entrees de l'allocateur.
 - **`partie_probe`** : ecrit un emplacement de sauvegarde depuis un instantane,
   puis rallume la console dessus. Le cycle complet en une commande.
+- **`mmio_releve_probe`** : rend une ligne par registre materiel touche, triee
+  par adresse, les compteurs arrondis par ordre de grandeur pour que deux
+  releves du meme regime tombent pareil. C'est fait pour etre passe a `diff`
+  entre deux executions. `ENTREES` rejoue des appuis pendant la mesure, ce qui
+  est indispensable pour voir la mise en route d'un peripherique : elle a lieu a
+  l'appui, donc avant la fenetre si l'instantane est pris apres. `MMIO_FORCE`
+  impose une valeur de lecture, `SRAM_DUMP=0x...[:longueur]` rend un morceau de
+  memoire vive. C'est cette sonde qui a trouve le port serie.
+- **`table_scenes_probe`** : extrait la table des scenes d'une edition sans rien
+  executer, en partant des chaines `PSID_` en clair dans l'image. Un motif en
+  troisieme argument filtre par nom.
+- **`scene_forcee_probe`** : ecrit un numero de scene et remet l'etat de la
+  machine a scenes a l'entree. La machine obeit, l'allocateur non : voir la
+  section correspondante de `feuille-de-route.md`.
 - **`son_probe`** : rejoue des appuis jusqu'a ce que le firmware joue une note,
   puis releve les voix, leur frequence, et tout ce que la console touche pendant
   ce temps. `MODULE_AUDIO=bas-haut` restreint la trace au code d'un module.
@@ -107,6 +156,17 @@ de `0x11000` produit du code qui se lit sans erreur et ne veut rien dire.
 **Se mefier d'un modele qui compense un bug du coeur.** Le registre `0x40022014`
 avait ete pris pour un identifiant rendu octet par octet, parce qu'un `CMP.W`
 faux faisait echouer la comparaison qui distingue lecture et ecriture.
+
+**Ne jamais comparer un etat a lui meme.** Relever les pages materielles avant
+puis apres, dans la meme execution, ne peut pas montrer une page deja ouverte.
+La mesure rendait « zero nouvelle page » et on en concluait qu'il n'y avait rien
+a voir. Il faut comparer deux executions, l'une avec et l'autre sans.
+
+**Ne jamais reprendre une adresse d'une edition a l'autre sans l'eprouver.**
+Le drapeau du son, releve sur Water, tombait huit octets a cote sur Jade Forest.
+Les numeros de scene, lus dans le mauvais champ du descripteur, valaient un de
+trop partout. Les deux se sont vus a la lecture directe de la memoire, pas au
+raisonnement.
 
 **Les bugs les plus couteux etaient dans le coeur, pas dans les
 peripheriques.** Un immediat mal etendu, un `ITSTATE` non vide a l'entree en
@@ -228,12 +288,17 @@ ouvre le laboratoire ; brievement, elle vaut B dans certains menus.
 
 **Quatre niveaux de zoom**, qui correspondent exactement aux scenes observees :
 
-| Vue | Scene | Fonctions |
-|---|---|---|
-| Space | 29 | horloge, connexion, Tama Stars, deco, voyage, niveau de planete |
-| Field | 30 | poser des jouets, chasse aux oeufs, nettoyer, changer de champ |
-| Tama | 33 | nourrir, jouer, laver |
-| Cell | 32 | statut, espece, et le QR code secret |
+| Vue | Scene | Nom dans le firmware | Fonctions |
+|---|---|---|---|
+| Space | 29 | `HOME_SPACE` | horloge, connexion, Tama Stars, deco, voyage, niveau de planete |
+| Field | 30 | `HOME_FIELD` | poser des jouets, chasse aux oeufs, nettoyer, changer de champ |
+| Tama | 31 | `HOME_TAMA` | nourrir, jouer, laver |
+| Cell | 32 | `HOME_CELL` | statut, espece, et le QR code secret |
+
+Ces numeros sont les rangs dans la table des scenes, et l'interface les nomme
+maintenant d'elle meme dans le diagnostic. La vue Tama etait notee 33 dans une
+version precedente de ce tableau : c'etait le numero lu dans le mauvais champ du
+descripteur.
 
 **Six coques** sont sorties entre juillet 2025 et juillet 2026 : Pink Land,
 Blue Water et Purple Sky pour la premiere vague, Jade Forest pour la deuxieme,
@@ -447,6 +512,32 @@ somme de controle des deux pages.
 
 ## Ce qui reste a faire
 
+**0. Le port serie, du bloc jusqu'au port COM.** C'est le chantier en cours, et
+il se fait en trois temps. Le detail est dans `feuille-de-route.md`.
+
+*Modeliser le bloc `0x4000B000`.* Le firmware attend le bit 6 de `+0x14` dans
+une boucle qui n'en sort pas, et teste le bit 10 avant. Le poser a un ne suffit
+pas encore : il faut comprendre le bit 10 d'abord. Ensuite viendront `+0x00`,
+`+0x04` et `+0x28`, que le firmware ecrit a l'emission, puis `+0x08`, `+0x0C` et
+`+0x30` en configuration.
+
+*Retrouver 460800 bauds.* La communaute donne ce chiffre, en 3,3 V, sur les
+contacts du flanc. La fonction en `0x000047C4` rend la frequence de l'horloge
+peripherique ; c'est elle que le pilote divise. Le diviseur trouve doit y
+retomber, sinon la lecture du bloc est fausse quelque part.
+
+*Ouvrir un port COM.* Aucune application ne peut declarer un port serie sous
+Windows, c'est un pilote qui le fait, et un pilote doit etre signe pour se
+charger. La voie praticable est une paire de ports virtuels installee une fois,
+com0com ou equivalent : l'emulateur ouvre un bout, TamaHome voit l'autre comme
+un port ordinaire. Sous Linux et macOS un pseudo terminal suffit et ne demande
+rien a personne.
+
+**0 bis. Ce qu'il faut jeter avant de commencer.** `src/hw_bridge/uart_pcom.rs`
+et `src/emulator/peripherals/uart.rs` datent d'avant la retro-ingenierie :
+registres inventes, compteurs d'octets ecrits en dur. Ils ne decrivent pas
+`0x4000B000`. A remplacer, pas a completer.
+
 **1. Le peripherique de sortie du son.** Le moteur du firmware calcule ses notes
 mais n'ecrit sur aucun peripherique. Mesure faite avec `son_probe`, filtre par
 intervalle de PC : aucun acces materiel ne vient du module audio pendant qu'une
@@ -456,8 +547,11 @@ sort, l'interface lit les frequences deja calculees dans les voix et les rend en
 signal carre. Le son entendu est donc bien celui que la console compose, mais on
 ne sait toujours pas comment elle le fait sonner.
 
-**2. Les quatre autres editions.** Seule Water a ete menee jusqu'au bout ; Jade
-affiche son oeuf. Earth, Sky et Land n'ont pas ete suivies jusqu'a l'image.
+**2. Les quatre autres editions.** Water et Jade Forest se jouent, Jade avec son
+son corrige. Earth, Sky et Land n'ont pas ete suivies jusqu'a l'image. Deux
+choses sont a verifier sur chacune plutot qu'a supposer : le decalage du bloc
+audio, huit octets sur Jade et rien sur Water, et sa table des scenes, que
+`table_scenes_probe` sort en une commande.
 
 **3. La molette en quadrature.** Elle est modelisee en appuis simples sur les
 broches `0x20` et `0x21`, pas en signal a deux phases decalees.
@@ -474,8 +568,15 @@ d'elle meme, capture quand l'horloge etait encore figee. Une partie menee depuis
 le demarrage n'y va pas.
 
 **Le tableau des voix audio reste rempli au silence.** Le lire sans verifier le
-drapeau `0x18014284` et le temoin `+8` de la voix donne un bourdonnement
-permanent.
+drapeau du son et le temoin `+8` de la voix donne un bourdonnement permanent.
+
+**Et le drapeau n'est pas au meme endroit selon l'edition.** `0x18014284` sur
+Water, huit octets plus loin sur Jade Forest. Lu au mauvais endroit il rend une
+valeur non nulle qui n'a rien a voir, le modele croit qu'un son joue en
+permanence, et on entend quarante secondes de bourdonnement avant chaque
+melodie. `Machine::decalage_son` porte la correction, et `SRAM_DUMP` de
+`mmio_releve_probe` permet de l'eprouver sur une nouvelle edition : au silence,
+le moteur pret vaut 1 et le drapeau vaut 0 deux octets plus loin.
 
 **Le son part a l'envers si on l'echantillonne a la cadence de l'interface.** Une
 melodie dure cent cinquante millisecondes et change plusieurs fois de note : un
@@ -504,6 +605,20 @@ vitesse atteinte, c'est le chiffre a regarder avant de conclure.
 - Ne pas chercher a accelerer par les chemins rapides de la memoire vive en 16
   bits, la recopie de trame en bloc, ou `target-cpu` adapte a la machine : les
   trois ont ete essayes et mesures, aucun ne donne rien. Le 32 bits, lui, paye.
+- Ne pas prendre le champ `+0x10` d'un descripteur de scene pour le numero de
+  la scene. C'est le rang dans la table qui fait foi, et ce champ vaut le rang
+  plus un. `table_scenes_probe` rend les deux et signale le desaccord.
+- Ne pas relever les pages materielles avant puis apres dans la meme execution
+  pour chercher un peripherique qui s'allume. Une page deja ouverte n'en sort
+  jamais, et la mesure rend « zero nouvelle page » quoi qu'il arrive. Comparer
+  deux executions avec `mmio_releve_probe` et `diff`.
+- Ne pas chercher le port serie en `0x40034000` ni en `0x40020000`, les adresses
+  que le datasheet donne pour UART1 et SPI1 : il est en `0x4000B000`, annonce en
+  SAR_ADC1.
+- Ne pas donner a `clamp` des bornes calculees dans le code de dessin. Il affirme
+  `min <= max` et fait tomber le processus si l'une des deux est NaN, ce qui
+  arrive le temps d'une image quand la fenetre change de taille et que la hauteur
+  disponible passe par zero. `max` puis `min` ne supposent rien.
 - Ne pas lire le champ `+4` d'une voix comme une frequence : c'est une periode,
   la hauteur vaut `1500000 / valeur`. La conclusion inverse avait ete tiree a
   l'oreille et tenue pour acquise ; elle etait fausse, et c'est elle qui faisait
