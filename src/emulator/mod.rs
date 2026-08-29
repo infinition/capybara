@@ -7,6 +7,7 @@ pub mod reprises;
 pub mod mmu;
 pub mod sauvegarde;
 pub mod peripherals;
+pub mod scenes;
 pub mod sonix;
 
 pub use cpu::{Cpu, DisassembledInst, Disassembler, Mode, Registers, StepResult};

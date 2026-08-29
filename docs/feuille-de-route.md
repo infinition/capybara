@@ -134,12 +134,25 @@ plus a jeter. La page n'apparait que lorsque le lien s'ouvre, et elle apparait a
 ce moment la seulement : c'est la mesure qui le dit, pas une lecture de code.
 
 **Comment y arriver a la main**, depuis la vue Space. Le menu de communication
-est la scene 115, `TAMASPACE_TUSHIN`. Il porte quatre entrees : « s'amuser »,
-qui est la visite entre deux consoles, « cadeaux », « planetes », grisee, et
-« telechargement », par ou entrent les objets. `A` deplace le curseur, `B`
-valide, `C` revient. Sur « s'amuser », la scene 116 affiche « connecte deux
-appareils et appuie sur le bouton B sur chacun d'eux ». C'est ce second `B` qui
-ouvre le lien.
+est la scene 115, `TAMASPACE_TUSHIN`. `A` deplace le curseur, `B` valide, `C`
+revient. Ses quatre entrees mènent aux scenes voisines, et chacune correspond a
+un onglet de TamaHome :
+
+| Entree du menu | Scene | Onglet de TamaHome | Ce qui passe |
+|---|---|---|---|
+| s'amuser | 116 `TAMASPACE_PLAY` | Simulate Playdate | la visite entre deux consoles |
+| cadeaux | 117 `TAMASPACE_ITEM` | Built-In Items | les objets du catalogue |
+| planetes | grisee | | |
+| telechargement | 119 `TAMASPACE_DOWNLOAD` | Lab Items | les objets de laboratoire |
+
+Sur « s'amuser », la scene 116 affiche « connecte deux appareils et appuie sur le
+bouton B sur chacun d'eux ». C'est ce second `B` qui ouvre le lien, et c'est le
+geste que TamaHome demande aussi : « press B and wait for the searching screen ».
+Les quatre voies passent vraisemblablement par le meme transport, seul le
+contenu change.
+
+L'onglet « Online Bridge » de TamaHome ne parle pas a la console autrement : il
+relaie le meme flux serie dans une prise reseau pour jouer a deux a distance.
 
 **Ce qui n'apparait qu'a ce moment la**, releve par `mmio_releve_probe` en
 comparant deux executions, l'une en jeu ordinaire, l'autre sur le lien :

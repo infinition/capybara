@@ -219,6 +219,10 @@ pub struct TamagotchiApp {
     /// C'est ce que l'interface prend a l'emulation. Sans ce chiffre, on ne
     /// peut que supposer ou passe le temps.
     pub cout_ui: f64,
+    /// Table des scenes du firmware charge, pour nommer la scene courante dans
+    /// le diagnostic. Elle ne se cherche qu'une fois la fenetre XIP programmee :
+    /// avant cela les pointeurs de noms ne se ramenent a aucun offset.
+    pub table_scenes: Option<crate::emulator::scenes::TableScenes>,
     /// Emplacements de sauvegarde existants pour le dump charge.
     pub emplacements: Vec<String>,
     /// Emplacement suivi, vide quand la partie ne vit que le temps de la
@@ -323,6 +327,7 @@ impl TamagotchiApp {
             debit: 0.0,
             debit_depart: (0, std::time::Instant::now()),
             cout_ui: 0.0,
+            table_scenes: None,
             emplacements: Vec::new(),
             emplacement_choisi: String::new(),
             nouvel_emplacement: String::new(),
@@ -728,6 +733,18 @@ impl TamagotchiApp {
             let b = |i: usize| self.machine.bus.sram.read_u8(o + i) as u32;
             b(0) | (b(1) << 8)
         };
+        // Le nom que le firmware donne lui meme a la scene. Un numero seul ne
+        // dit rien, et il change d'une edition a l'autre : la table est lue
+        // dans l'image chargee, jamais codee en dur.
+        let nom_scene = |numero: u32| -> String {
+            if numero == 0xFFFF {
+                return "(aucune)".to_string();
+            }
+            match self.table_scenes.as_ref().and_then(|t| t.nom(numero as u16)) {
+                Some(nom) => format!("({})", nom),
+                None => String::new(),
+            }
+        };
         let console: String = self.machine.console.chars().rev().take(600).collect::<Vec<_>>()
             .into_iter().rev().collect();
         format!(
@@ -738,7 +755,7 @@ impl TamagotchiApp {
              cout interface {:.1} ms par image\n\
              PC            {:#010x}   mode {}   PRIMASK {}\n\
              trames ecran  {}   instantanes {}\n\
-             etat du jeu   courant {}   transition demandee {}\n\
+             etat du jeu   courant {} {}   transition demandee {} {}\n\
              boutons       {}\n\
              IRQ 0..31     activees {:#010x}  en attente {:#010x}\n\
              IRQ 32..63    activees {:#010x}  en attente {:#010x}\n\
@@ -763,7 +780,9 @@ impl TamagotchiApp {
             self.machine.periph.display.trames,
             self.historique.len(),
             etat(0x1800_1BF4),
+            nom_scene(etat(0x1800_1BF4)),
             etat(0x1800_1BF6),
+            nom_scene(etat(0x1800_1BF6)),
             {
                 // Niveau reel de chaque broche de commande, avec sa direction.
                 // Une entree se lit haute au repos ; si elle est declaree en
@@ -2241,6 +2260,15 @@ impl eframe::App for TamagotchiApp {
             self.audio.silence_buzzer();
         }
         self.notes.clear();
+
+        // La table des scenes, une fois pour toutes, des que la fenetre XIP est
+        // programmee. Avant cela les pointeurs de noms ne visent rien.
+        if self.table_scenes.is_none() && self.machine.periph.xip.is_enabled() {
+            self.table_scenes = crate::emulator::scenes::TableScenes::reperer(
+                &self.machine.bus.flash.data,
+                self.machine.periph.xip.base,
+            );
+        }
 
         // Ce que l'interface prend a l'emulation : tout ce qui n'est pas la
         // tranche d'execution, moyenne sur les dernieres images.
