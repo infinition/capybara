@@ -107,6 +107,57 @@ pub struct Habits<'a> {
     pub chapeau: Option<&'a TextureHandle>,
 }
 
+/// Rogne un polygone convexe sur un autre, convexe lui aussi.
+///
+/// Methode de Sutherland et Hodgman : on coupe le sujet par chaque cote de la
+/// fenetre, l'un apres l'autre. Les deux etant convexes, le resultat l'est
+/// aussi, et egui sait donc le remplir.
+fn rogner_sur(sujet: &[Pos2], fenetre: &[Pos2]) -> Vec<Pos2> {
+    // Sens du contour : le produit vectoriel de deux cotes le donne, et c'est
+    // lui qui dit de quel cote d'une arete se trouve l'interieur.
+    let aire: f32 = fenetre
+        .windows(2)
+        .map(|c| c[0].x * c[1].y - c[1].x * c[0].y)
+        .sum::<f32>()
+        + fenetre.last().map_or(0.0, |d| {
+            let p = fenetre[0];
+            d.x * p.y - p.x * d.y
+        });
+    let sens = if aire >= 0.0 { 1.0 } else { -1.0 };
+
+    let dedans = |p: Pos2, a: Pos2, b: Pos2| -> f32 {
+        sens * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x))
+    };
+    let couper = |p: Pos2, q: Pos2, a: Pos2, b: Pos2| -> Pos2 {
+        let dp = dedans(p, a, b);
+        let dq = dedans(q, a, b);
+        let t = if (dq - dp).abs() < f32::EPSILON { 0.0 } else { dp / (dp - dq) };
+        pos2(p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t)
+    };
+
+    let mut sortie: Vec<Pos2> = sujet.to_vec();
+    for i in 0..fenetre.len() {
+        if sortie.is_empty() {
+            break;
+        }
+        let a = fenetre[i];
+        let b = fenetre[(i + 1) % fenetre.len()];
+        let entree = std::mem::take(&mut sortie);
+        for j in 0..entree.len() {
+            let p = entree[j];
+            let q = entree[(j + 1) % entree.len()];
+            let (dp, dq) = (dedans(p, a, b) <= 0.0, dedans(q, a, b) <= 0.0);
+            if dp {
+                sortie.push(p);
+            }
+            if dp != dq {
+                sortie.push(couper(p, q, a, b));
+            }
+        }
+    }
+    sortie
+}
+
 /// Peint un polygone avec une texture composee dans le repere de la coque.
 ///
 /// egui ne sait pas rogner sur un polygone : on fabrique le maillage a la main,
@@ -205,6 +256,8 @@ impl LcdPanel {
         let rvb = |c: Option<[u8; 3]>, defaut: Color32| {
             c.map(|[r, v, b]| Color32::from_rgb(r, v, b)).unwrap_or(defaut)
         };
+        let corps_col = rvb(habits.reglages.corps_couleur, corps_col);
+        let motif_col = rvb(habits.reglages.motif_couleur, motif_col);
         let mut commandes = Commandes::default();
 
         // La coque suit la fenetre, mais l'ecran et les boutons se placent les
@@ -331,6 +384,14 @@ impl LcdPanel {
         // voient pas, et egui ne sait remplir que du convexe.
         let cadre = fenetre_rect.expand(cote_fenetre * 0.30);
         for morceau in silhouette_fenetre(cadre) {
+            let morceau = if habillage.fenetre_deborde {
+                morceau
+            } else {
+                rogner_sur(&morceau, &contour)
+            };
+            if morceau.len() < 3 {
+                continue;
+            }
             match habits.papier {
                 Some(texture) => {
                     ui.painter()
@@ -594,34 +655,67 @@ impl LcdPanel {
             commandes.molette_tournee += if roulette > 0.0 { 1 } else { -1 };
         }
 
+        // Un tambour cannele vu de cote, dont les stries defilent : c'est ce
+        // qu'est une molette de souris, et cela dit tout de suite dans quel
+        // sens elle tourne. Les deux fleches d'avant ne voulaient rien dire.
         let peintre = ui.painter();
-        peintre.rect_filled(molette, molette.width() * 0.35, ombre_col);
-        let fenetre = molette.shrink(molette.width() * 0.18);
-        peintre.rect_filled(fenetre, fenetre.width() * 0.3, Color32::from_rgb(238, 246, 252));
-        peintre.rect_stroke(fenetre, fenetre.width() * 0.3, Stroke::new(1.5, ombre_col));
+        let teinte = rvb(habits.reglages.molette_couleur, accent_col);
+        let rayon_tambour = molette.width() * 0.34;
+        peintre.rect_filled(molette, rayon_tambour, ombre_col);
+        let tambour = molette.shrink(molette.width() * 0.13);
+        peintre.rect_filled(tambour, tambour.width() * 0.34, teinte);
 
-        // Les deux fleches opposees defilent avec l'angle : c'est ce qui donne
-        // la sensation de rotation, la molette n'ayant pas d'aiguille.
-        let hauteur_utile = fenetre.height();
-        let encre = Color32::from_rgb(70, 80, 100);
-        for i in 0..2 {
-            let phase = (angle_molette * 0.02 + i as f32 * 0.5).rem_euclid(1.0);
-            let y = fenetre.min.y + phase * hauteur_utile;
-            let vers_le_haut = i == 0;
-            let d = fenetre.width() * 0.22;
-            let pointe = if vers_le_haut { y - d } else { y + d };
-            if pointe > fenetre.min.y && pointe < fenetre.max.y {
-                peintre.add(Shape::convex_polygon(
-                    vec![
-                        pos2(fenetre.center().x - d, y),
-                        pos2(fenetre.center().x + d, y),
-                        pos2(fenetre.center().x, pointe),
-                    ],
-                    encre,
-                    Stroke::NONE,
-                ));
+        // Les stries suivent une projection cylindrique : elles se resserrent
+        // aux bords, ce qui donne la rondeur sans rien dessiner de plus.
+        const STRIES: usize = 14;
+        let haut = tambour.min.y;
+        let bas = tambour.max.y;
+        let demi = (bas - haut) * 0.5;
+        let milieu = (haut + bas) * 0.5;
+        let phase = angle_molette * 0.013;
+        for i in 0..STRIES {
+            let t = (i as f32 / STRIES as f32 + phase).rem_euclid(1.0);
+            // Position sur le tour, ramenee sur le diametre visible.
+            let angle = t * std::f32::consts::TAU;
+            let y = milieu - demi * angle.cos();
+            // Ce qui passe derriere le tambour ne se voit pas.
+            if angle.sin() < 0.0 {
+                continue;
             }
+            // Une strie de bord est plus fine et plus pale qu'une du milieu.
+            let vu = angle.sin().abs().max(0.05);
+            let epaisseur = (tambour.width() * 0.10 * vu).max(0.6);
+            peintre.line_segment(
+                [
+                    pos2(tambour.min.x + tambour.width() * 0.16, y),
+                    pos2(tambour.max.x - tambour.width() * 0.16, y),
+                ],
+                Stroke::new(epaisseur, ombre_col.gamma_multiply(0.35 + 0.45 * vu)),
+            );
         }
+
+        // Reflet en haut, ombre en bas : le tambour prend son volume.
+        peintre.rect_filled(
+            Rect::from_min_max(
+                tambour.min,
+                pos2(tambour.max.x, tambour.min.y + tambour.height() * 0.14),
+            ),
+            0.0,
+            Color32::from_rgba_unmultiplied(255, 255, 255, 45),
+        );
+        peintre.rect_filled(
+            Rect::from_min_max(
+                pos2(tambour.min.x, tambour.max.y - tambour.height() * 0.14),
+                tambour.max,
+            ),
+            0.0,
+            Color32::from_rgba_unmultiplied(0, 0, 0, 45),
+        );
+        peintre.rect_stroke(
+            tambour,
+            tambour.width() * 0.34,
+            Stroke::new(1.5, ombre_col),
+        );
 
         commandes
     }

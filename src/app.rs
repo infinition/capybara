@@ -1115,6 +1115,9 @@ impl TamagotchiApp {
         change |= ui
             .add(egui::Slider::new(&mut self.fond.fenetre_dy, -0.4..=0.4).text("haut / bas"))
             .changed();
+        change |= ui
+            .checkbox(&mut self.fond.fenetre_deborde, "peut deborder de la coque")
+            .changed();
         if ui.button("Fenetre d'origine").clicked() {
             self.fond.fenetre_taille = 1.0;
             self.fond.fenetre_dy = 0.0;
@@ -1246,17 +1249,20 @@ impl TamagotchiApp {
 
         ui.separator();
 
-        // --- les commandes
-        ui.label(egui::RichText::new("Commandes").strong());
+        // --- les couleurs de la coque et des commandes
+        ui.label(egui::RichText::new("Couleurs").strong());
         for (etiquette, defaut, champ) in [
-            ("boutons", self.shell_color.couleurs().bouton, 0usize),
-            ("molette", self.shell_color.couleurs().accent, 1),
+            ("corps", self.shell_color.couleurs().corps, 0usize),
+            ("autour de l'ecran", self.shell_color.couleurs().motif, 1),
+            ("boutons", self.shell_color.couleurs().bouton, 2),
+            ("molette", self.shell_color.couleurs().accent, 3),
         ] {
             ui.horizontal(|ui| {
-                let actuel = if champ == 0 {
-                    &mut self.fond.bouton_couleur
-                } else {
-                    &mut self.fond.molette_couleur
+                let actuel = match champ {
+                    0 => &mut self.fond.corps_couleur,
+                    1 => &mut self.fond.motif_couleur,
+                    2 => &mut self.fond.bouton_couleur,
+                    _ => &mut self.fond.molette_couleur,
                 };
                 let mut choisie = actuel.is_some();
                 if ui.checkbox(&mut choisie, etiquette).changed() {

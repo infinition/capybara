@@ -117,6 +117,19 @@ pub struct Habillage {
     pub fenetre_taille: f32,
     #[serde(default)]
     pub fenetre_dy: f32,
+    /// La fenetre peut deborder de la coque. Interdit, elle est rognee sur
+    /// l'oeuf : agrandie, elle sortait sinon du Tamagotchi.
+    #[serde(default)]
+    pub fenetre_deborde: bool,
+
+    /// Couleur du corps de l'oeuf, ce qu'on voit derriere tout le reste.
+    /// Absente, elle suit l'edition.
+    #[serde(default)]
+    pub corps_couleur: Option<[u8; 3]>,
+    /// Couleur de la fenetre autour de l'ecran, quand aucune image ne s'y
+    /// trouve.
+    #[serde(default)]
+    pub motif_couleur: Option<[u8; 3]>,
 
     /// Couleurs des commandes. Absentes, elles suivent la coque.
     #[serde(default)]
@@ -170,6 +183,9 @@ impl Default for Habillage {
             ecran_dy: 0.0,
             fenetre_taille: 1.0,
             fenetre_dy: 0.0,
+            fenetre_deborde: false,
+            corps_couleur: None,
+            motif_couleur: None,
             bouton_couleur: None,
             molette_couleur: None,
         }
