@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Capybara
+Comment=Bare-metal emulator for the Sonix SNC73410
+Exec=capybara
+Icon=capybara
+Terminal=false
+Categories=Game;Emulator;

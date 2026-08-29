@@ -45,3 +45,24 @@ image = { version = "0.25", default-features = false, features = [
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+
+# Paquet Debian, construit par cargo-deb sur le runner Ubuntu. Les dependances
+# sont celles que rodio, rfd et winit reclament a l'execution : le son, la
+# boite de dialogue de fichiers, et le serveur graphique.
+[package.metadata.deb]
+maintainer = "infinition"
+copyright = "2026, infinition"
+license-file = ["LICENSE", "0"]
+extended-description = """
+Emulateur bare-metal du Sonix SNC73410, compatible avec le firmware Tamagotchi
+Paradise. Ne contient aucune donnee de console : il vous faut le dump de votre
+propre appareil et sa cle."""
+section = "games"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/capybara", "usr/bin/", "755"],
+    ["assets/capybara.desktop", "usr/share/applications/", "644"],
+    ["assets/icone.png", "usr/share/icons/hicolor/256x256/apps/capybara.png", "644"],
+    ["README.md", "usr/share/doc/capybara/README.md", "644"],
+]

@@ -1,7 +1,7 @@
 name: Release
 
-# Une etiquette v* publie une release avec l'executable Windows et le journal
-# des commits depuis l'etiquette precedente.
+# Une etiquette v* publie une release avec un paquet par plateforme et le
+# journal des commits depuis l'etiquette precedente.
 on:
   push:
     tags:
@@ -11,8 +11,151 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: windows-latest
+  # Le garde-fou tourne une fois, avant toute construction. La release ne doit
+  # jamais emporter de dump, de sauvegarde ni de cle.
+  verifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aucune donnee de console suivie par git
+        run: |
+          set -e
+          if git ls-files | grep -iE '\.bin$|\.tamastate$|\.tamasave$|cle-device'; then
+            echo "Fichier interdit suivi par git, publication annulee"
+            exit 1
+          fi
+          echo "Aucun fichier interdit"
+
+  construire:
+    needs: verifier
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            cible: x86_64-pc-windows-msvc
+            nom: windows-x64
+          - os: ubuntu-22.04
+            cible: x86_64-unknown-linux-gnu
+            nom: linux-x64
+          # macOS 13 tourne sur Intel, macOS 14 sur Apple Silicon. Deux
+          # constructions natives coutent moins cher a maintenir qu'un binaire
+          # universel assemble a la main.
+          - os: macos-13
+            cible: x86_64-apple-darwin
+            nom: macos-intel
+          - os: macos-14
+            cible: aarch64-apple-darwin
+            nom: macos-apple-silicon
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.cible }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.cible }}
+
+      # rodio reclame ALSA, rfd reclame GTK, et winit les bibliotheques du
+      # serveur graphique. Sans elles la compilation echoue a l'edition de liens.
+      - name: Bibliotheques systeme
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libgtk-3-dev libxkbcommon-dev \
+            libwayland-dev libxcb1-dev libx11-dev libxrandr-dev \
+            libxi-dev libxcursor-dev fuse libfuse2
+
+      - name: Compiler
+        run: cargo build --release --locked --target ${{ matrix.cible }}
+
+      - name: Paquet Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -e
+          mkdir -p paquet
+          cp "target/${{ matrix.cible }}/release/capybara.exe" paquet/
+          cp README.md LICENSE index.html paquet/
+          7z a "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.zip" ./paquet/*
+
+      - name: Paquet Debian et AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -e
+          # cargo-deb lit les metadonnees de Cargo.toml, qui pointent sur
+          # target/release : on lui donne la cible explicitement.
+          cargo install cargo-deb --locked
+          cargo deb --no-build --target ${{ matrix.cible }} --output \
+            "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.deb"
+
+          # AppImage monte a la main plutot que par linuxdeploy : l'arbre est
+          # trivial et les greffons de linuxdeploy cassent souvent en CI.
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications \
+                   AppDir/usr/share/icons/hicolor/256x256/apps
+          cp "target/${{ matrix.cible }}/release/capybara" AppDir/usr/bin/
+          cp assets/capybara.desktop AppDir/usr/share/applications/
+          cp assets/icone.png AppDir/usr/share/icons/hicolor/256x256/apps/capybara.png
+          cp assets/capybara.desktop AppDir/
+          cp assets/icone.png AppDir/capybara.png
+          printf '#!/bin/sh\nexec "$(dirname "$0")/usr/bin/capybara" "$@"\n' > AppDir/AppRun
+          chmod +x AppDir/AppRun
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          # Sans FUSE dans le conteneur, appimagetool doit s'extraire lui meme.
+          ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir \
+            "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.AppImage"
+
+      - name: Paquet macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          # Un bundle .app monte a la main. Il n'est pas signe : voir la note
+          # de la release pour le contournement de Gatekeeper.
+          APP="Capybara.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp "target/${{ matrix.cible }}/release/capybara" "$APP/Contents/MacOS/"
+          cp assets/icone.png "$APP/Contents/Resources/capybara.png"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>Capybara</string>
+            <key>CFBundleDisplayName</key><string>Capybara</string>
+            <key>CFBundleIdentifier</key><string>io.github.infinition.capybara</string>
+            <key>CFBundleExecutable</key><string>capybara</string>
+            <key>CFBundleVersion</key><string>${GITHUB_REF_NAME#v}</string>
+            <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>10.15</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          mkdir -p paquet
+          cp -R "$APP" paquet/
+          cp README.md LICENSE index.html paquet/
+          # ditto plutot que zip : il preserve la structure du bundle.
+          ditto -c -k --sequesterRsrc --keepParent paquet \
+            "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.nom }}
+          path: |
+            capybara-*.zip
+            capybara-*.deb
+            capybara-*.AppImage
+          if-no-files-found: error
+
+  publier:
+    needs: construire
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,36 +163,12 @@ jobs:
           # pas retrouver l'etiquette precedente pour faire le journal.
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Compiler
-        run: cargo build --release --locked
-
-      - name: Verifier qu'aucune donnee de console n'est publiee
-        shell: bash
-        run: |
-          set -e
-          # Garde-fou : la release ne doit jamais emporter de dump, de
-          # sauvegarde ni de cle. Le seul binaire embarque est l'icone.
-          if git ls-files | grep -iE '\.bin$|\.tamastate$|\.tamasave$|cle-device'; then
-            echo "Fichier interdit suivi par git"
-            exit 1
-          fi
-          echo "Aucun fichier interdit"
-
-      - name: Preparer l'archive
-        shell: bash
-        run: |
-          set -e
-          mkdir -p paquet
-          cp target/release/capybara.exe paquet/
-          cp README.md LICENSE index.html paquet/
-          7z a "capybara-${GITHUB_REF_NAME}-windows-x64.zip" ./paquet/*
+      - uses: actions/download-artifact@v4
+        with:
+          path: paquets
+          merge-multiple: true
 
       - name: Journal depuis l'etiquette precedente
-        id: journal
         shell: bash
         run: |
           set -e
@@ -57,19 +176,41 @@ jobs:
           if [ -z "$precedente" ]; then
             echo "Premiere version." > journal.md
             echo "" >> journal.md
-            git log --pretty=format:'- %s' "${GITHUB_REF_NAME}" >> journal.md
+            git log --pretty=format:'- %s' "${GITHUB_REF_NAME}" | head -50 >> journal.md
           else
             echo "Changements depuis \`${precedente}\`." > journal.md
             echo "" >> journal.md
             git log --pretty=format:'- %s' "${precedente}..${GITHUB_REF_NAME}" >> journal.md
           fi
-          echo "" >> journal.md
-          echo "" >> journal.md
-          echo "Capybara ne contient aucune donnee de console. Il vous faut le dump de votre propre appareil et sa cle, lue en SWD." >> journal.md
+          cat >> journal.md <<'NOTE'
 
-      - name: Publier
-        uses: softprops/action-gh-release@v2
+          ## Installation
+
+          | Plateforme | Fichier |
+          |---|---|
+          | Windows | `windows-x64.zip` |
+          | Debian, Ubuntu | `linux-x64.deb` |
+          | Autres Linux | `linux-x64.AppImage`, a rendre executable |
+          | macOS Intel | `macos-intel.zip` |
+          | macOS Apple Silicon | `macos-apple-silicon.zip` |
+
+          Sur macOS le bundle n'est pas signe. Gatekeeper annonce alors que
+          l'application est endommagee, ce qui est faux : c'est le message
+          qu'Apple affiche pour tout binaire telecharge sans signature. Levez la
+          quarantaine une fois :
+
+          ```
+          xattr -cr /Applications/Capybara.app
+          ```
+
+          ## Ce qu'il vous faut
+
+          Capybara ne contient aucune donnee de console. Il vous faut le dump de
+          la flash de votre propre appareil, et sa cle, lue en SWD.
+          NOTE
+
+      - uses: softprops/action-gh-release@v2
         with:
           name: Capybara ${{ github.ref_name }}
           body_path: journal.md
-          files: capybara-${{ github.ref_name }}-windows-x64.zip
+          files: paquets/*
