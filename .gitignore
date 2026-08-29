@@ -9,3 +9,11 @@
 *.bin
 *.tamastate
 *.tamasave
+
+# Fichiers binaires externes et en-tetes tiers.
+*.pack
+
+# Les notes de travail restent locales. Feuille de route, passation, releves
+# materiels : c'est le carnet de l'enquete, pas de la documentation publiee.
+# Le dossier public est index.html.
+/docs/

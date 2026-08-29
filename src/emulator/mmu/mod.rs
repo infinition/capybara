@@ -70,20 +70,24 @@ pub mod periph {
     pub const SYSCTRL0: u32 = 0x4000_4000;
     pub const SYSCTRL1: u32 = 0x4000_5000;
     pub const USB: u32 = 0x4000_7000;
-    /// Les deux convertisseurs a approximations successives.
-    pub const SAR_ADC0: u32 = 0x4000_A000;
-    pub const SAR_ADC1: u32 = 0x4000_B000;
-    pub const I2S4: u32 = 0x4000_E000;
-    /// Controleur de transferts et ses canaux. La figure 4-1 ne nomme pas cette
-    /// page, mais le pilote de l'ecran y programme source, destination et
-    /// nombre d'unites avant de poser son bit de depart.
+    pub const WDT0: u32 = 0x4000_8000;
+    pub const WDT1: u32 = 0x4000_9000;
+    /// Ports serie UART0 et UART1 du microcontroleur Sonix.
+    pub const UART0: u32 = 0x4000_A000;
+    pub const UART1: u32 = 0x4000_B000;
+    /// Ancienne etiquette du datasheet pour UART1.
+    pub const SAR_ADC1: u32 = UART1;
+    pub const SAR_ADC0: u32 = UART0;
+    /// Controleur SPI0 et registre de transmission d'ecran.
+    pub const SPI0: u32 = 0x4000_E000;
+    pub const I2S4: u32 = SPI0;
+    /// Controleur de transferts DMA.
     pub const DMA: u32 = 0x4000_F000;
     pub const I2S2: u32 = 0x4001_2000;
     /// Ports d'entrees-sorties 0 a 2, resolus par la table de broches du
     /// firmware : un identifiant de broche encode `port = id >> 4` et
     /// `pin = id & 15`, et la table en SRAM rend le decalage a ajouter a
-    /// 0x40018000. La figure 4-1 annonce I2S0 en 0x40019000, mais le firmware
-    /// y lit des broches par la fenetre bit-band.
+    /// 0x40018000.
     pub const GPIO_PORT0: u32 = 0x4001_8000;
     pub const GPIO_PORT1: u32 = 0x4001_9000;
     /// Ses broches 0 et 1 sont lues au demarrage.
@@ -93,20 +97,17 @@ pub mod periph {
     pub const FLASH_CTL: u32 = 0x4002_2000;
     pub const IDMA1: u32 = 0x4002_5000;
     pub const IDMA0: u32 = 0x4002_B000;
-    /// Controleur de la fenetre XIP cachee. La figure 4-1 place GPIO2 ici,
-    /// mais le firmware y programme la base de la fenetre 0x10000000.
+    /// Controleur de la fenetre XIP cachee.
     pub const XIP_CTRL: u32 = 0x4002_F000;
     pub const GPIO1: u32 = 0x4003_0000;
     pub const GPIO0: u32 = 0x4003_1000;
     pub const I2C1: u32 = 0x4003_3000;
-    pub const UART1: u32 = 0x4003_4000;
-    /// Accelerateur de somme de controle. La figure 4-1 annonce UART0 ici,
-    /// mais le firmware y programme source, longueur, polynome et resultat.
+    /// Accelerateur de somme de controle.
     pub const CHECKSUM: u32 = 0x4003_8000;
     pub const WDT: u32 = 0x4003_A000;
-    /// Timers CT32B1 a CT32B7, une page de 4 Ko chacun.
-    pub const TIMERS: u32 = 0x4004_0000;
-    pub const TIMERS_LAST: u32 = 0x4004_6000;
+    /// Timers CT32B0 a CT32B7, une page de 4 Ko chacun (0x40000000 a 0x40007000).
+    pub const TIMERS: u32 = 0x4000_0000;
+    pub const TIMERS_LAST: u32 = 0x4000_7000;
     /// Zone systeme SN_SYS0, porteuse des fusibles FEUSE.
     pub const FUSES: u32 = 0x4500_0000;
 
@@ -119,9 +120,9 @@ pub mod periph {
             SYSCTRL0 => "SYSCTRL0",
             SYSCTRL1 => "SYSCTRL1",
             USB => "USB",
-            SAR_ADC0 => "SAR_ADC0",
-            SAR_ADC1 => "SAR_ADC1",
-            I2S4 => "I2S4",
+            UART0 => "UART0",
+            UART1 => "UART1",
+            SPI0 => "SPI0",
             DMA => "DMA",
             I2S2 => "I2S2",
             GPIO_PORT0 => "GPIO_P0",
@@ -135,7 +136,6 @@ pub mod periph {
             GPIO1 => "GPIO1",
             GPIO0 => "GPIO0",
             I2C1 => "I2C1",
-            UART1 => "UART1",
             CHECKSUM => "CHECKSUM",
             WDT => "WDT",
             FUSES => "SN_SYS0",
@@ -727,17 +727,20 @@ impl MemoryBus {
         let off = addr & 0xFFF;
         match page {
             periph::CHECKSUM => p.crc.read_reg(off),
-            periph::UART1 => p.uart.read_reg(off),
+            periph::UART0 | periph::UART1 => p.uart.read_reg(off),
+            periph::SPI0 if crate::emulator::peripherals::SpiController::handles(off) => {
+                p.spi0.read_reg(off)
+            }
+            periph::USB if crate::emulator::peripherals::UsbController::handles(off) => {
+                p.usb.read_reg(off)
+            }
+            periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
+                p.pmu.read_reg(off)
+            }
             periph::GPIO0 => p.gpio.read_reg(off),
             periph::SYSCTRL0 => p.sys.read_reg(off),
             // FEUSE (0x30..0x3f) puis les registres d'horloge/PLL de SN_SYS0.
             periph::FUSES if (0x30..=0x3f).contains(&off) => p.fuses.read_reg(off),
-            periph::SAR_ADC0 if crate::emulator::peripherals::SarAdc::handles(off) => {
-                p.adc[0].read_reg(off)
-            }
-            periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
-                p.adc[1].read_reg(off)
-            }
             periph::WDT if crate::emulator::peripherals::AdcPile::handles(off) => {
                 p.adc_pile.read_reg(off)
             }
@@ -776,7 +779,16 @@ impl MemoryBus {
                     self.executer_calcul(c, p);
                 }
             }
-            periph::UART1 => p.uart.write_reg(off, val),
+            periph::UART0 | periph::UART1 => p.uart.write_reg(off, val),
+            periph::SPI0 if crate::emulator::peripherals::SpiController::handles(off) => {
+                p.spi0.write_reg(off, val);
+            }
+            periph::USB if crate::emulator::peripherals::UsbController::handles(off) => {
+                p.usb.write_reg(off, val);
+            }
+            periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
+                p.pmu.write_reg(off, val);
+            }
             periph::GPIO0 => p.gpio.write_reg(off, val),
             periph::SYSCTRL0 => {
                 if p.sys.write_reg(off, val) {
@@ -784,12 +796,6 @@ impl MemoryBus {
                 }
             }
             periph::FUSES if (0x30..=0x3f).contains(&off) => p.fuses.write_reg(off, val),
-            periph::SAR_ADC0 if crate::emulator::peripherals::SarAdc::handles(off) => {
-                p.adc[0].write_reg(off, val)
-            }
-            periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
-                p.adc[1].write_reg(off, val)
-            }
             periph::FLASH_CTL => {
                 if let Some(t) = p.flashctl.write_reg(off, val) {
                     self.executer_transfert(t, p);

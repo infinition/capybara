@@ -44,7 +44,7 @@ fn main() {
         println!();
     }
 
-    // La PRAM porte le noyau du SDK, dont le compteur de millisecondes du
+    // La PRAM porte le noyau, dont le compteur de millisecondes du
     // SysTick : la chercher en memoire vive seule laissait de cote la moitie
     // des candidats.
     let avant = m.bus.sram.data.clone();

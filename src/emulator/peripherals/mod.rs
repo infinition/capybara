@@ -8,10 +8,13 @@ pub mod adc_pile;
 pub mod tic;
 pub mod dma;
 pub mod gpio_port;
+pub mod pmu;
 pub mod snsys;
+pub mod spi;
 pub mod sys;
 pub mod timers;
 pub mod uart;
+pub mod usb;
 pub mod xip;
 
 pub use adc::SarAdc;
@@ -24,10 +27,13 @@ pub use adc_pile::AdcPile;
 pub use tic::TicSysteme;
 pub use dma::DmaController;
 pub use gpio_port::GpioPort;
+pub use pmu::PmuController;
 pub use snsys::SnSysRegisters;
+pub use spi::SpiController;
 pub use sys::SysRegisters;
 pub use timers::Timers;
 pub use uart::UartController;
+pub use usb::UsbController;
 pub use xip::XipController;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -40,20 +46,22 @@ pub struct Peripherals {
     pub uart: UartController,
     pub timers: Timers,
     pub xip: XipController,
-    /// Les deux convertisseurs, 0x4000A000 et 0x4000B000.
     pub adc: [SarAdc; 2],
     pub flashctl: FlashController,
     pub crc: ChecksumUnit,
-    /// Port 2, celui dont le firmware lit les broches 0 et 1.
     pub adc_pile: AdcPile,
-    /// Ajoute apres coup : les instantanes ecrits avant doivent rester
-    /// relisibles, d'ou la valeur par defaut.
     #[serde(default)]
     pub tic: TicSysteme,
     pub dma: DmaController,
     pub port0: GpioPort,
     pub port1: GpioPort,
     pub port2: GpioPort,
+    #[serde(default)]
+    pub spi0: SpiController,
+    #[serde(default)]
+    pub pmu: PmuController,
+    #[serde(default)]
+    pub usb: UsbController,
 }
 
 impl Default for Peripherals {
@@ -76,6 +84,9 @@ impl Default for Peripherals {
             port0: GpioPort::default(),
             port1: GpioPort::port1(),
             port2: GpioPort::default(),
+            spi0: SpiController::default(),
+            pmu: PmuController::default(),
+            usb: UsbController::default(),
         }
     }
 }

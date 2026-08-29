@@ -571,6 +571,7 @@ impl Machine {
     pub fn appuyer(&mut self, id: u32) {
         if self.en_veille_profonde() {
             self.periph.snsys.declencher_reveil();
+            self.periph.pmu.declencher_reveil_broche();
             self.reveil_materiel();
             return;
         }

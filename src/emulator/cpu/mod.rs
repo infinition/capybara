@@ -211,6 +211,9 @@ impl Cpu {
         if periph.timers.tick(ecoules) {
             self.nvic.request_irq(16);
         }
+        if periph.uart.irq_pending {
+            self.nvic.request_irq(37);
+        }
         // Le compteur de secondes de la zone systeme. C'est la seule source de
         // temps du calendrier du jeu : sans lui la date reste sur celle qui a
         // ete reglee, et rien ne vieillit. Son alarme est ce qui sort la console

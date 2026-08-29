@@ -91,8 +91,7 @@ repository because the work is not finished.
 
 The research dossier is `index.html` at the root: pinout, memory map, Sonix load
 table format, AES key derivation, extraction procedures, and the sixteen ARMv7-M
-decoding faults found by running real code. The working notes are in `docs/`:
-what is established, what is still open, and the traps that cost days.
+decoding faults found by running real code.
 
 ### Support
 
@@ -190,8 +189,7 @@ le depot parce que le travail n'est pas fini.
 Le dossier de recherche est la page `index.html` a la racine : le brochage, la
 carte memoire, le format des load tables Sonix, la derivation de cle AES, les
 procedures d'extraction, et les seize defauts de decodage ARMv7-M trouves en
-faisant tourner du vrai code. Les notes de travail sont dans `docs/` : ce qui
-est etabli, ce qui reste ouvert, et les pieges qui ont coute des jours.
+faisant tourner du vrai code.
 
 ### Soutenir
 

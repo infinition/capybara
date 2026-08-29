@@ -21,7 +21,7 @@
 ///
 /// C'est ce calcul qui valide la sauvegarde. Tant que le resultat restait a
 /// zero, le firmware rejetait ses deux emplacements et affichait la chaine de
-/// repli du SDK, "unsupport chip, please check your flash vender", qui n'a rien
+/// repli, "unsupport chip, please check your flash vender", qui n'a rien
 /// a voir avec le fabricant de la flash.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChecksumUnit {

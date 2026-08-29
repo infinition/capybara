@@ -793,7 +793,7 @@ fn l_accelerateur_calcule_le_crc_de_la_page_de_sauvegarde() {
     // Une page de sauvegarde porte sa propre somme en tete : les deux premiers
     // octets valent le CRC des 4092 suivants, et les deux d'apres son complement.
     // C'est ce controle qui rejetait la sauvegarde tant que l'accelerateur
-    // rendait zero, et le firmware affichait alors la chaine de repli du SDK
+    // rendait zero, et le firmware affichait alors la chaine de repli constructeur
     // "unsupport chip", sans rapport avec le fabricant de la flash.
     const PAGE: usize = 0xEFE000;
     let attendu = u16::from_le_bytes([
@@ -1497,4 +1497,58 @@ mod sauvegarde_persistante {
         m.bus.flash.write_u8(0x1000, 0x33);
         assert_eq!(m.bus.flash.revision, apres_ecriture);
     }
+}
+
+#[test]
+fn test_controleur_spi0_emission_et_etat() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let nvic = Nvic::default();
+
+    // STAT en 0x08 : TXEMPTY (0x01) et RXEMPTY (0x04) = 0x05
+    let stat = bus.read_u32(periph::SPI0 + 0x08, &mut periph, &nvic);
+    assert_eq!(stat & 0x05, 0x05);
+
+    // Ecriture d'un mot de donnees ecran en DATA (0x1C)
+    bus.write_u32(periph::SPI0 + 0x1C, 0xF800, &mut periph, &mut Nvic::default());
+    assert_eq!(periph.spi0.tx_fifo.len(), 1);
+    assert_eq!(periph.spi0.total_octets_emis, 2);
+}
+
+#[test]
+fn test_controleur_pmu_reveil_et_drapeaux() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let nvic = Nvic::default();
+
+    // Ecriture du mode Deep Power Down
+    bus.write_u32(periph::PMU, 1, &mut periph, &mut Nvic::default());
+    assert!(periph.pmu.deep_sleep_active);
+
+    // Reveil par broche IO
+    periph.pmu.declencher_reveil_broche();
+    let stat = bus.read_u32(periph::PMU + 0x04, &mut periph, &nvic);
+    assert_ne!(stat & (1 << 6), 0, "Drapeau broche IO pose");
+    assert_ne!(stat & (1 << 7), 0, "Drapeau interruption pose");
+    assert!(!periph.pmu.deep_sleep_active);
+}
+
+#[test]
+fn test_controleur_usb_echange_paquets() {
+    let mut bus = MemoryBus::default();
+    let mut periph = Peripherals::default();
+    let nvic = Nvic::default();
+
+    // Connexion USB
+    bus.write_u32(periph::USB, 1, &mut periph, &mut Nvic::default());
+    assert!(periph.usb.est_connecte);
+
+    // Injection paquet externe CDC sur EP1
+    periph.usb.injecter_paquet_externe(b"TAMA_CMD");
+    let count = bus.read_u32(periph::USB + 0x24, &mut periph, &nvic);
+    assert_eq!(count, 8);
+
+    // Lecture du premier octet
+    let premier = bus.read_u32(periph::USB + 0x34, &mut periph, &nvic);
+    assert_eq!(premier, b'T' as u32);
 }
