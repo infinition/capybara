@@ -2374,11 +2374,17 @@ impl eframe::App for TamagotchiApp {
         // 4. Panneau lateral : l'essentiel toujours, l'inspection sur demande.
         {
             SidePanel::right("debug_panel")
-                .min_width(420.0)
-                .default_width(480.0)
+                // Redimensionnable, et une largeur minimale qui tient sur un
+                // ecran d'ordinateur portable. A 420 le panneau imposait une
+                // fenetre si large qu'il fallait passer en plein ecran.
+                .resizable(true)
+                .min_width(300.0)
+                .default_width(460.0)
                 .show(ctx, |ui| {
                     ui.add_space(4.0);
-                    ui.horizontal(|ui| {
+                    // La barre d'onglets passe a la ligne quand le panneau est
+                    // etroit, au lieu de deborder hors de la vue.
+                    ui.horizontal_wrapped(|ui| {
                         for (onglet, nom) in [
                             (Onglet::Console, "Console"),
                             (Onglet::Personnalisation, "Personnalisation"),
@@ -2389,6 +2395,15 @@ impl eframe::App for TamagotchiApp {
                         }
                     });
                     ui.separator();
+
+                    // Tout le contenu defile. Sans cela le bas du panneau, les
+                    // points de reprise et les panneaux d'inspection, restait
+                    // hors d'atteinte des que la fenetre n'etait pas en plein
+                    // ecran, et aucune barre ne le laissait deviner.
+                    egui::ScrollArea::vertical()
+                        .id_salt("panneau_lateral")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
 
                     // L'habillage occupe plus de place que le panneau n'en a :
                     // il a son onglet, et il defile.
@@ -2720,6 +2735,7 @@ impl eframe::App for TamagotchiApp {
 
                     // UART Console
                     ConsolePanel::render(ui, &mut self.machine.periph.uart);
+                        });
                 });
         }
 
