@@ -130,6 +130,10 @@ pub struct Habillage {
     /// trouve.
     #[serde(default)]
     pub motif_couleur: Option<[u8; 3]>,
+    /// Couleur des traits : contour de l'oeuf, ombres des reliefs, cerclage des
+    /// boutons. Absente, elle suit l'edition.
+    #[serde(default)]
+    pub bordure_couleur: Option<[u8; 3]>,
 
     /// Couleurs des commandes. Absentes, elles suivent la coque.
     #[serde(default)]
@@ -186,6 +190,7 @@ impl Default for Habillage {
             fenetre_deborde: false,
             corps_couleur: None,
             motif_couleur: None,
+            bordure_couleur: None,
             bouton_couleur: None,
             molette_couleur: None,
         }

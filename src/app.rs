@@ -1254,14 +1254,16 @@ impl TamagotchiApp {
         for (etiquette, defaut, champ) in [
             ("corps", self.shell_color.couleurs().corps, 0usize),
             ("autour de l'ecran", self.shell_color.couleurs().motif, 1),
-            ("boutons", self.shell_color.couleurs().bouton, 2),
-            ("molette", self.shell_color.couleurs().accent, 3),
+            ("traits", self.shell_color.couleurs().ombre, 2),
+            ("boutons", self.shell_color.couleurs().bouton, 3),
+            ("molette", self.shell_color.couleurs().accent, 4),
         ] {
             ui.horizontal(|ui| {
                 let actuel = match champ {
                     0 => &mut self.fond.corps_couleur,
                     1 => &mut self.fond.motif_couleur,
-                    2 => &mut self.fond.bouton_couleur,
+                    2 => &mut self.fond.bordure_couleur,
+                    3 => &mut self.fond.bouton_couleur,
                     _ => &mut self.fond.molette_couleur,
                 };
                 let mut choisie = actuel.is_some();

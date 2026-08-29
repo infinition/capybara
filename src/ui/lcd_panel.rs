@@ -258,6 +258,9 @@ impl LcdPanel {
         };
         let corps_col = rvb(habits.reglages.corps_couleur, corps_col);
         let motif_col = rvb(habits.reglages.motif_couleur, motif_col);
+        // Tous les traits de la coque en decoulent : contour de l'oeuf, ombres
+        // des reliefs, cerclage des boutons, stries de la molette.
+        let ombre_col = rvb(habits.reglages.bordure_couleur, ombre_col);
         let mut commandes = Commandes::default();
 
         // La coque suit la fenetre, mais l'ecran et les boutons se placent les
