@@ -581,6 +581,30 @@ footer p{max-width:70ch}
       <p><strong>Une jumelle en <code>0x4000A000</code>.</strong> Son <code>+0x14</code> est lu au même instant, depuis <code>0x00004DD4</code>, un code voisin de celui de <code>0x4000B000</code>. Deux exemplaires du même bloc, donc, ce qui cadre avec le <code>** UART Monitor Service **</code> que porte le firmware : l'une des deux est vraisemblablement la console de mise au point, l'autre le lien vers l'extérieur.</p>
     </div>
 
+    <h3>Ce qui change d'une édition à l'autre</h3>
+    <p>Les cinq images se ressemblent assez pour donner l'illusion qu'une adresse relevée sur l'une vaut pour les autres. Deux jours ont été perdus à cela, sur deux sujets sans rapport. Rien dans l'image ne nomme l'édition : la table de biomes en <code>0x978E8</code> contient LAND, WATER et SKY dans les cinq, et c'est le nom du fichier qui sert de convention.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Ce qui bouge</th><th>Water, Earth, Sky, Land</th><th>Jade Forest</th><th>Comment le vérifier</th></tr></thead>
+        <tbody>
+          <tr><td>Bloc du moteur audio</td><td>base</td><td>huit octets plus loin</td><td><code>SRAM_DUMP=0x18014280:24</code>, sur un état muet</td></tr>
+          <tr><td>Drapeau « un son joue »</td><td class="hex">0x18014284</td><td class="hex">0x1801428C</td><td>Il vaut 0 au silence, et le moteur prêt vaut 1 deux octets avant</td></tr>
+          <tr><td>Nombre de scènes</td><td>126 sur Earth</td><td>129</td><td><code>table_scenes_probe</code></td></tr>
+          <tr><td>Numéros de scène</td><td colspan="2">Décalés dès le point d'insertion</td><td>Comparer deux éditions avec la même sonde</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Ce qui ne bouge pas, vérifié : la clé de déchiffrement, commune aux cinq. La scène courante en <code>0x18001BF4</code> et tout le bloc de la machine à scènes. Le calendrier en <code>0x18001BA4</code>. Le compteur de secondes en <code>0x45000304</code>. Les scènes 0 à 33, celles du menu de mise au point et des quatre vues de zoom, coïncident entre Earth et Jade ; celles de l'espace de communication, au-delà de 110, non.</p>
+
+    <div class="note warn">
+      <p><strong>Un décalage d'adresse ne se plante pas, il donne une valeur plausible.</strong> Le drapeau du son lu huit octets trop tôt rendait <code>0x70</code> puis <code>0x03</code> : non nul, donc « un son joue », donc un bourdonnement permanent. Un numéro de scène décalé d'un rang désigne une scène voisine qui existe, et la mesure faite dessus a l'air valide. Le seul garde-fou est de vérifier que la valeur lue se comporte comme ce qu'elle est censée être : un booléen ne prend que deux valeurs, un écran de connexion doit ouvrir un périphérique.</p>
+    </div>
+
+    <h3>Deux observations non expliquées</h3>
+    <p>Notées parce qu'un indice non consigné est un indice perdu, pas parce qu'on en tire quoi que ce soit. La page <code>0x40007000</code>, annoncée en USB, reçoit une banque entière au moment où l'on appuie sur <code>B</code>, depuis <code>0x0000B69E</code> et <code>0x0000B71A</code>. Ces deux adresses sont voisines de la routine d'écriture de sauvegarde, et deux registres de la Flash apparaissent au même instant : l'appui déclenche probablement une sauvegarde, sans rapport avec le lien. Le registre <code>0x4000800C</code>, lui, est écrit quelques dizaines de fois par seconde depuis <code>0x0000509A</code>, en jeu ordinaire aussi. Il ne s'allume pas avec le lien.</p>
+
     <h3>Ce qui reste, jusqu'au port COM</h3>
     <p>Trois temps. Modéliser le bloc, en commençant par le bit 10. Retomber sur 460 800 bauds, faute de quoi la lecture est fausse quelque part. Puis l'ouvrir vers l'extérieur.</p>
     <p>Ce dernier point n'est pas une affaire de langage. Aucune application ne peut déclarer un port série sous Windows : c'est un pilote qui le fait, et un pilote doit être signé pour se charger. Rust sait écrire un pilote Windows, mais la signature reste due, et un port série virtuel en mode noyau est un chantier à lui seul. La voie praticable est une paire de ports virtuels installée une fois, com0com ou équivalent : l'émulateur ouvre un bout, TamaHome voit l'autre comme un port ordinaire. Sous Linux et macOS un pseudo terminal suffit et ne demande rien à personne.</p>

@@ -59,6 +59,50 @@ La lecon commune aux quatre : une adresse, un numero ou une couleur releves sur
 une edition ou dans un contexte ne valent que la. Il faut les rechercher, ou au
 moins les eprouver, avant de s'en servir ailleurs.
 
+## Ce qui change d'une edition a l'autre
+
+La section la plus importante de ce document pour qui reprend le travail. Les
+cinq images se ressemblent assez pour donner l'illusion qu'une adresse relevee
+sur l'une vaut pour les autres. Deux jours ont ete perdus a cela, sur deux sujets
+sans rapport. Voici ce qui differe, ce qui ne differe pas, et comment le
+verifier a chaque fois plutot que le supposer.
+
+**Rien dans l'image ne nomme l'edition.** La table de biomes en `0x978E8`
+contient LAND, WATER et SKY dans les cinq. L'edition se reconnait au nom du
+fichier, ce qui suffit pour la coque et le decalage audio, mais reste une
+convention, pas une mesure.
+
+| Ce qui bouge | Water, Earth, Sky, Land | Jade Forest | Comment le verifier |
+|---|---|---|---|
+| Bloc du moteur audio | base | huit octets plus loin | `SRAM_DUMP=0x18014280:24` de `mmio_releve_probe`, sur un etat muet |
+| Drapeau « un son joue » | `0x18014284` | `0x1801428C` | il vaut 0 au silence, et le moteur pret vaut 1 deux octets avant |
+| Nombre de scenes | 126 sur Earth | 129 | `table_scenes_probe` |
+| Numeros de scene | decales des l'insertion | | idem, comparer deux editions |
+| Table des voix | cherchee en memoire | idem | `localiser_les_voix`, deja dynamique |
+
+**Ce qui ne bouge pas, verifie :** la cle de dechiffrement, commune aux cinq. La
+scene courante en `0x18001BF4` et tout le bloc de la machine a scenes, aux memes
+adresses sur Water et sur Jade. Le calendrier en `0x18001BA4`. Le compteur de
+secondes en `0x45000304`.
+
+**Le piege des numeros de scene, en detail.** Le numero est le rang dans la
+table, pas le champ `+0x10` du descripteur, qui vaut le rang plus un. Mais meme
+en lisant le rang, une edition qui insere trois scenes decale tout ce qui suit
+le point d'insertion. Les scenes 0 a 33, celles du menu de mise au point et des
+quatre vues de zoom, coincident entre Earth et Jade ; celles de l'espace de
+communication, au dela de 110, ne coincident pas. Ne jamais recopier un numero
+d'une edition a l'autre : `table_scenes_probe` sort la table de l'image qu'on
+lui donne, en une commande, et un motif en troisieme argument filtre par nom.
+
+**Comment reconnaitre le symptome.** Un decalage d'adresse ne se plante pas, il
+donne une valeur plausible qui ne veut rien dire. Le drapeau du son lu huit
+octets trop tot rendait `0x70` puis `0x03` : non nul, donc « un son joue », donc
+un bourdonnement permanent. Un numero de scene decale d'un rang designe une
+scene voisine qui existe, et la mesure faite dessus a l'air valide. Dans les deux
+cas, le seul garde-fou est de verifier que la valeur lue se comporte comme ce
+qu'elle est censee etre : un booleen ne prend que deux valeurs, une scene de
+connexion doit ouvrir un peripherique.
+
 ## Outils
 
 Vingt-cinq sondes dans `examples/`. Toutes prennent `<dump.bin> <cle hex>`.

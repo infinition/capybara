@@ -204,6 +204,24 @@ bloc, donc, ce qui cadre avec le `** UART Monitor Service **` que porte le
 firmware : l'une des deux est vraisemblablement la console de mise au point,
 l'autre le lien vers l'exterieur.
 
+**Deux choses vues a l'ouverture du lien et non expliquees.** Elles sont notees
+ici parce qu'un indice non consigne est un indice perdu, pas parce qu'on en tire
+quoi que ce soit.
+
+La page `0x40007000`, que le datasheet annonce en USB, recoit une banque entiere
+au moment ou l'on appuie sur `B` : `+0x00`, `+0x08`, `+0x14`, `+0x18`, `+0x1C`,
+`+0x20`, `+0x24`, `+0x34` et `+0x3C`, depuis `0x0000B69E` et `0x0000B71A`. Ces
+deux adresses sont voisines de `0x0000B814`, la routine d'ecriture de
+sauvegarde, et deux registres de la Flash apparaissent au meme instant. La
+lecture la plus economique est donc que l'appui declenche une sauvegarde, et que
+cette page n'a rien a voir avec le lien. A verifier avant d'en faire autre chose.
+
+Le registre `0x4000800C` est ecrit quelques dizaines de fois par seconde depuis
+`0x0000509A`, et il l'est aussi en jeu ordinaire. Il n'est pas modelise et sa
+page n'a pas de nom. Il ne s'allume pas avec le lien, donc il ne fait pas partie
+de cette enquete, mais il reste le seul registre non modelise du regime courant
+avec ceux de `0x4000E000`.
+
 **Ce qui reste a faire dessus.** Modeliser le bloc, en commencant par rendre le
 bit 6 de `+0x14` toujours pose pour debloquer la boucle d'emission, puis relever
 ce que le firmware ecrit en `+0x00`, `+0x04` et `+0x28`. `MMIO_FORCE` suffit
@@ -266,6 +284,59 @@ tient dans les trois bits bas de `0x18001BFA` :
 
 L'etat avance par `(etat + 1) & 7` en `0x00009824`, les bits hauts conserves.
 La scene de demarrage, 104, est posee en dur en `0x0000956C`.
+
+**Le descripteur et l'objet ne sont pas la meme chose, et c'est un piege.** Le
+descripteur, celui que `table_scenes_probe` lit dans l'image, fait vingt huit
+octets : des gestionnaires, un pointeur de nom en `+0x0C`, un compteur en
+`+0x10`. Mais la machine a scenes ne s'en sert pas directement. Elle appelle
+`0x0000C492` avec le numero de scene, qui lui rend un objet, et ce sont les
+champs de cet objet qu'elle appelle :
+
+```text
+  objet +4   entree, appelee une fois a l'etat 0
+  objet +8   boucle, appelee a chaque tour a l'etat 1 ; sa valeur de retour
+             non nulle veut dire « j'ai fini, sors moi de la »
+  objet +12  seconde passe de la boucle, l'affichage selon toute vraisemblance
+  objet +16  demontage, appele a la sortie : c'est lui qui rend la memoire
+```
+
+Lire le descripteur comme s'il portait ces gestionnaires aux memes places mene a
+appeler un pointeur de nom. Les deux dispositions ne coincident pas.
+
+**Demander une transition.** La fonction `0x00001F78` ne fait rien d'autre
+qu'ecrire son argument, un demi mot, en `0x18001BF6` :
+
+```text
+  0x00001F78  SUB sp,#4 ; STRH r0,[sp,#2] ; LDRH r0,[sp,#2]
+  0x00001F82  MOVW r1,#0x1BF4 ; MOVT r1,#0x1800 ; STRH r0,[r1,#2]
+```
+
+Ecrire directement a cette adresse revient donc exactement a l'appeler. Ce n'est
+pas la que l'ancien essai echouait.
+
+**Consommer la transition.** Le bloc `0x0000983E` a `0x00009882`, atteint apres
+l'increment d'etat, fait le travail dans cet ordre :
+
+```text
+  0x0000983E  cherche l'objet de la scene courante par 0x0000C492
+  0x00009856  appelle le gestionnaire +16, le demontage qui rend la memoire
+  0x0000986E  0x18001BF8 recoit la scene courante, qui devient la precedente
+  0x00009872  0x18001BF6, la scene demandee, passe par 0x00001EF0
+  0x0000987A  et devient la scene courante en 0x18001BF4
+  0x0000987C  les trois bits d'etat sont remis a zero, donc a l'entree
+```
+
+**Ce qui commande tout cela**, et c'est la vraie reponse a « pourquoi ecrire en
+`0x18001BF6` ne suffit pas » : le bloc de sortie n'est atteint que si le
+gestionnaire de boucle a rendu une valeur non nulle. Cette valeur est relue en
+`0x000097F2`, dans le mot `sp + 20` du cadre de la machine a scenes. Une sonde
+qui veut forcer une transition proprement doit donc poser 1 dans ce mot au
+passage sur `0x000097F2`, apres avoir ecrit la scene voulue en `0x18001BF6`.
+Le demontage se fait alors tout seul, et le tas ne deborde pas.
+
+`scene_forcee_probe` fait exactement cela ; son mode `BRUTAL=1` garde l'ancienne
+methode, celle qui ecrit la scene de force et tombe sur l'assertion, pour
+pouvoir la refaire et constater la difference.
 
 **Forcer une scene par la memoire se heurte au tas, pas a la machine a
 scenes.** `scene_forcee_probe` ecrit le numero voulu en `0x18001BF4` et remet
