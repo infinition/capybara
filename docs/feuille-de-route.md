@@ -32,6 +32,41 @@ n'ont pas ete suivies jusqu'a l'image.
 
 ### Mode UART, pour parler au monde exterieur
 
+**Ce qu'attend l'outil officieux, releve dans TamaHome 5.0.6.** C'est une
+application .NET Avalonia, `TamaParadiseTool.dll`. Elle embarque
+`System.IO.Ports` et appelle `SerialPort.GetPortNames` : elle liste donc tous
+les ports serie du systeme, sans filtrer sur un identifiant de fabricant, et
+retient le dernier choisi dans son reglage `LastComPort`. N'importe quel port
+fait donc l'affaire.
+
+Son service de communication porte `deviceComm`, `configureComm`,
+`getActiveComm` et un type `TcpComm`, mais ce dernier sert au relais en ligne,
+`OnlineRelayBridge` avec ses pompes `PumpSerialToSocket` et
+`PumpSocketToSerial` : c'est le flux serie qui est renvoye dans une prise
+reseau pour jouer a deux, pas une seconde voie vers l'appareil. Le transport
+vers la console reste le port serie.
+
+L'echange lui meme s'appelle une visite : `PlaydateWireData`,
+`ParsePlaydateData`, `SendPlaydate`, `PlaydateIdentity`.
+
+**L'obstacle, a savoir avant de commencer.** Windows n'enumere en COMxxx que ce
+qu'un pilote declare. Aucune application ne peut creer un port serie toute
+seule. Il faut donc une paire de ports virtuels, com0com ou equivalent, que
+l'utilisateur installe une fois : elle donne par exemple COM5 et COM6 relies
+dos a dos, l'emulateur ouvre l'un, TamaHome voit l'autre comme un port
+ordinaire. C'est la seule voie sans ecrire de pilote.
+
+**Ce qui manque cote emulateur, et qui vient avant.** Le port serie n'est pas
+modelise. `src/hw_bridge/uart_pcom.rs` et `src/emulator/peripherals/uart.rs`
+datent d'avant la retro-ingenierie : registres inventes, et jusqu'a des
+compteurs d'octets ecrits en dur. A jeter plutot qu'a completer.
+
+Et le peripherique n'est pas identifie. Mesure sur une partie ordinaire :
+aucune page serie n'est touchee, ni UART1 en `0x40034000`, ni SPI1, ni I2C1.
+C'est attendu, le lien ne s'ouvre que dans le menu de connexion. Le premier
+travail est donc d'atteindre ce menu avec `scene_probe` et de regarder quelle
+page s'allume, exactement comme pour le buzzer.
+
 Le port serie de la console sert a trois choses, par difficulte croissante.
 
 - **Les logiciels PCOM.** Le firmware parle deja un protocole sur ce port ;
