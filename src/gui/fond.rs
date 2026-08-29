@@ -64,9 +64,13 @@ pub struct Habillage {
     #[serde(default)]
     pub masque_cadrage: Cadrage,
 
-    /// Le papier couvre la coque entiere et non la seule fenetre.
+    /// Fond de la coque entiere, sous la fenetre et derriere tout le reste.
+    /// C'est une couche a part : elle et le papier de la fenetre se voient
+    /// ensemble, l'une derriere l'autre.
     #[serde(default)]
-    pub couvre_tout: bool,
+    pub coque_fichier: String,
+    #[serde(default)]
+    pub coque_cadrage: Cadrage,
     /// La calotte, la moitie haute de la coque, est couverte elle aussi.
     #[serde(default)]
     pub inclut_le_chapeau: bool,
@@ -101,12 +105,18 @@ pub struct Habillage {
     #[serde(default = "couleur_vitre_par_defaut")]
     pub vitre_couleur: [u8; 3],
 
-    /// Taille de la dalle, en facteur de celle de la console.
+    /// Taille de la dalle seule, en facteur de celle de la console.
     #[serde(default = "un")]
     pub ecran_taille: f32,
     /// Position verticale de la dalle, en fraction de la hauteur de coque.
     #[serde(default)]
     pub ecran_dy: f32,
+    /// Taille de la fenetre transparente autour de la dalle. Elle a ses propres
+    /// reglages : agrandir l'ecran ne doit pas agrandir son cadre.
+    #[serde(default = "un")]
+    pub fenetre_taille: f32,
+    #[serde(default)]
+    pub fenetre_dy: f32,
 
     /// Couleurs des commandes. Absentes, elles suivent la coque.
     #[serde(default)]
@@ -143,7 +153,8 @@ impl Default for Habillage {
             papier: Cadrage::default(),
             masque: String::new(),
             masque_cadrage: Cadrage::default(),
-            couvre_tout: false,
+            coque_fichier: String::new(),
+            coque_cadrage: Cadrage::default(),
             inclut_le_chapeau: false,
             chapeau_fichier: String::new(),
             chapeau_cadrage: Cadrage::default(),
@@ -157,6 +168,8 @@ impl Default for Habillage {
             vitre_couleur: couleur_vitre_par_defaut(),
             ecran_taille: 1.0,
             ecran_dy: 0.0,
+            fenetre_taille: 1.0,
+            fenetre_dy: 0.0,
             bouton_couleur: None,
             molette_couleur: None,
         }
@@ -189,6 +202,11 @@ impl Habillage {
         {
             habillage.chapeau_fichier.clear();
         }
+        if !habillage.coque_fichier.is_empty()
+            && !dossier.join(&habillage.coque_fichier).is_file()
+        {
+            habillage.coque_fichier.clear();
+        }
         habillage
     }
 
@@ -206,6 +224,16 @@ impl Habillage {
         }
         self.fichier.clear();
         self.papier.recentrer();
+        self.ecrire(dossier);
+    }
+
+    /// Retire le fond de coque.
+    pub fn retirer_le_fond(&mut self, dossier: &Path) {
+        if !self.coque_fichier.is_empty() {
+            let _ = std::fs::remove_file(dossier.join(&self.coque_fichier));
+        }
+        self.coque_fichier.clear();
+        self.coque_cadrage.recentrer();
         self.ecrire(dossier);
     }
 

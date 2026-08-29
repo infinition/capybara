@@ -99,7 +99,9 @@ fn silhouette_fenetre(cadre: Rect) -> Vec<Vec<Pos2>> {
 /// repere carre de la coque : le panneau n'a plus qu'a les poser.
 pub struct Habits<'a> {
     pub reglages: &'a crate::gui::fond::Habillage,
-    /// Papier de la fenetre, ou de la coque entiere.
+    /// Fond de la coque entiere, derriere tout le reste.
+    pub coque: Option<&'a TextureHandle>,
+    /// Papier de la fenetre transparente, autour de l'ecran.
     pub papier: Option<&'a TextureHandle>,
     /// Papier propre a la calotte, quand elle a le sien.
     pub chapeau: Option<&'a TextureHandle>,
@@ -275,14 +277,10 @@ impl LcdPanel {
             Stroke::new(3.0, ombre_col),
         ));
 
-        // Le papier peut couvrir la coque entiere. Il est pose ici, sur le
-        // corps : ce qui vient apres, calotte et fenetre, le recouvre ou non
-        // selon les reglages, ce qui suffit a tout ordonner.
-        if habillage.couvre_tout {
-            if let Some(texture) = habits.papier {
-                ui.painter()
-                    .add(peindre_texture(&contour, repere, texture.id()));
-            }
+        // Le fond de coque, pose sur le corps. Tout ce qui suit passe devant.
+        if let Some(texture) = habits.coque {
+            ui.painter()
+                .add(peindre_texture(&contour, repere, texture.id()));
         }
 
         // La calotte se construit en balayant l'angle de part et d'autre du
@@ -305,53 +303,21 @@ impl LcdPanel {
                 centre.y - hauteur * 0.5 * t.cos(),
             ));
         }
-        // Couverte par le papier general, la calotte n'est pas repeinte : c'est
-        // ce qui la laisse apparaitre. Sinon elle prend sa couleur, la sienne
-        // ou celle de la coque, puis son propre papier s'il y en a un.
-        let chapeau_couvert = habillage.couvre_tout && habillage.inclut_le_chapeau;
-        if !chapeau_couvert {
-            let couleur = habillage
-                .chapeau_couleur
-                .map(|[r, v, b]| Color32::from_rgb(r, v, b))
-                .unwrap_or(calotte_col);
-            ui.painter().add(Shape::convex_polygon(calotte.clone(), couleur, Stroke::NONE));
-            if let Some(texture) = habits.chapeau {
-                ui.painter()
-                    .add(peindre_texture(&calotte, repere, texture.id()));
-            }
-        }
-
-        // La fente elle meme : une ligne de dents alternees, la coquille
-        // cassee. Les dents pointant vers le bas sont de la couleur de la
-        // calotte, celles pointant vers le haut de celle du corps.
-        let etendue = largeur * 0.5 * angle_fente.sin() * (1.0 - 0.16 * COS_FENTE);
-        let _ = &demi_largeur;
-        let dents = 11;
-        let pas = etendue * 2.0 / dents as f32;
-        let creux = hauteur * 0.022;
-        for i in 0..dents {
-            let x0 = centre.x - etendue + pas * i as f32;
-            let x1 = x0 + pas;
-            let bas = if i % 2 == 0 { ligne_fente + creux } else { ligne_fente - creux };
-            let couleur = if i % 2 == 0 { calotte_col } else { corps_col };
-            ui.painter().add(Shape::convex_polygon(
-                vec![pos2(x0, ligne_fente), pos2(x1, ligne_fente), pos2((x0 + x1) * 0.5, bas)],
-                couleur,
-                Stroke::NONE,
-            ));
-        }
-
         // L'ecran occupe le haut de la coque, les commandes le bas.
         let marge = largeur * 0.17;
-        let cote = ((largeur - 2.0 * marge).min(hauteur * 0.38).max(64.0)
-            * habillage.ecran_taille.clamp(0.4, 1.8))
-            .min(largeur * 0.98);
+        let base = (largeur - 2.0 * marge).min(hauteur * 0.38).max(64.0);
+        let cote = (base * habillage.ecran_taille.clamp(0.3, 2.0)).min(largeur * 0.98);
+        let milieu = centre.y - hauteur * 0.04;
         let ecran_rect = Rect::from_center_size(
-            pos2(
-                centre.x,
-                centre.y - hauteur * 0.04 + hauteur * habillage.ecran_dy.clamp(-0.4, 0.4),
-            ),
+            pos2(centre.x, milieu + hauteur * habillage.ecran_dy.clamp(-0.4, 0.4)),
             vec2(cote, cote),
+        );
+        // La fenetre transparente ne suit pas la dalle : elle a sa taille et sa
+        // position propres, sans quoi agrandir l'ecran agrandirait son cadre.
+        let cote_fenetre = (base * habillage.fenetre_taille.clamp(0.3, 2.2)).min(largeur * 1.1);
+        let fenetre_rect = Rect::from_center_size(
+            pos2(centre.x, milieu + hauteur * habillage.fenetre_dy.clamp(-0.4, 0.4)),
+            vec2(cote_fenetre, cote_fenetre),
         );
 
         // La fenetre transparente qui entoure l'ecran. Ce n'est pas un cadre :
@@ -363,21 +329,15 @@ impl LcdPanel {
         // reculent. On la compose donc de morceaux convexes de la meme
         // couleur, poses l'un sur l'autre. Sans trait, les jointures ne se
         // voient pas, et egui ne sait remplir que du convexe.
-        let cadre = ecran_rect.expand(cote * 0.30);
-        if !habillage.couvre_tout {
-            for morceau in silhouette_fenetre(cadre) {
-                match habits.papier {
-                    Some(texture) => {
-                        ui.painter()
-                            .add(peindre_texture(&morceau, repere, texture.id()));
-                    }
-                    None => {
-                        ui.painter().add(Shape::convex_polygon(
-                            morceau,
-                            motif_col,
-                            Stroke::NONE,
-                        ));
-                    }
+        let cadre = fenetre_rect.expand(cote_fenetre * 0.30);
+        for morceau in silhouette_fenetre(cadre) {
+            match habits.papier {
+                Some(texture) => {
+                    ui.painter()
+                        .add(peindre_texture(&morceau, repere, texture.id()));
+                }
+                None => {
+                    ui.painter().add(Shape::convex_polygon(morceau, motif_col, Stroke::NONE));
                 }
             }
         }
@@ -466,6 +426,70 @@ impl LcdPanel {
         }
 
         let _ = display;
+
+        // La calotte passe en dernier, au dessus de la fenetre et de l'ecran :
+        // sur la vraie console c'est une demi coque qui recouvre l'avant, et
+        // une fenetre agrandie doit passer dessous et non par dessus.
+        {
+            let couleur = habillage
+                .chapeau_couleur
+                .map(|[r, v, b]| Color32::from_rgb(r, v, b))
+                .unwrap_or(calotte_col);
+            ui.painter().add(Shape::convex_polygon(calotte.clone(), couleur, Stroke::NONE));
+            // Incluse dans le fond de coque, elle en porte la suite ; sinon
+            // elle prend son propre papier s'il y en a un.
+            let texture = if habillage.inclut_le_chapeau {
+                habits.coque.or(habits.chapeau)
+            } else {
+                habits.chapeau
+            };
+            if let Some(texture) = texture {
+                ui.painter()
+                    .add(peindre_texture(&calotte, repere, texture.id()));
+            }
+        }
+
+        // La fente elle meme : une ligne de dents alternees, la coquille
+        // cassee. Les dents qui pointent vers le bas prolongent la calotte et
+        // portent donc son papier ; celles qui pointent vers le haut y mordent
+        // et portent celui du corps. Peintes a plat, elles restaient vides des
+        // qu'un papier etait pose.
+        let etendue = largeur * 0.5 * angle_fente.sin() * (1.0 - 0.16 * COS_FENTE);
+        let _ = &demi_largeur;
+        let dents = 11;
+        let pas = etendue * 2.0 / dents as f32;
+        let creux = hauteur * 0.022;
+        let texture_calotte = if habillage.inclut_le_chapeau {
+            habits.coque.or(habits.chapeau)
+        } else {
+            habits.chapeau
+        };
+        for i in 0..dents {
+            let x0 = centre.x - etendue + pas * i as f32;
+            let x1 = x0 + pas;
+            let vers_le_bas = i % 2 == 0;
+            let bas = if vers_le_bas { ligne_fente + creux } else { ligne_fente - creux };
+            let dent = vec![
+                pos2(x0, ligne_fente),
+                pos2(x1, ligne_fente),
+                pos2((x0 + x1) * 0.5, bas),
+            ];
+            let (couleur, texture) = if vers_le_bas {
+                (
+                    habillage
+                        .chapeau_couleur
+                        .map(|[r, v, b]| Color32::from_rgb(r, v, b))
+                        .unwrap_or(calotte_col),
+                    texture_calotte,
+                )
+            } else {
+                (corps_col, habits.coque)
+            };
+            ui.painter().add(Shape::convex_polygon(dent.clone(), couleur, Stroke::NONE));
+            if let Some(texture) = texture {
+                ui.painter().add(peindre_texture(&dent, repere, texture.id()));
+            }
+        }
 
         // Trois boutons alignes sous l'ecran, comme sur la console.
         let rayon = (largeur * 0.062).clamp(14.0, 24.0);

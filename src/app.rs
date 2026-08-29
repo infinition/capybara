@@ -186,6 +186,8 @@ pub struct TamagotchiApp {
     fond_texture: Option<egui::TextureHandle>,
     /// Texture du papier propre a la calotte.
     chapeau_texture: Option<egui::TextureHandle>,
+    /// Texture du fond de coque.
+    coque_texture: Option<egui::TextureHandle>,
     /// Nom en cours de saisie pour une nouvelle sauvegarde.
     ///
     /// `Some` tant que la fenetre de saisie est ouverte. Un menu contextuel ne
@@ -310,6 +312,7 @@ impl TamagotchiApp {
             fond: crate::gui::fond::Habillage::default(),
             fond_texture: None,
             chapeau_texture: None,
+            coque_texture: None,
             papier_a_relire: true,
             saisie_sauvegarde: None,
             partage,
@@ -879,6 +882,7 @@ impl TamagotchiApp {
         // qu'a les poser.
         let habits = crate::ui::lcd_panel::Habits {
             reglages: &self.fond,
+            coque: self.coque_texture.as_ref(),
             papier: self.fond_texture.as_ref(),
             chapeau: self.chapeau_texture.as_ref(),
         };
@@ -940,6 +944,7 @@ impl TamagotchiApp {
         self.fond = crate::gui::fond::Habillage::default();
         self.fond_texture = None;
         self.chapeau_texture = None;
+        self.coque_texture = None;
         let Some(dossier) = self.dossier_du_papier() else {
             return;
         };
@@ -977,6 +982,13 @@ impl TamagotchiApp {
             let image = fond::composer(&papier, &self.fond.chapeau_cadrage, None);
             ctx.load_texture("papier_chapeau", image, egui::TextureOptions::LINEAR)
         });
+
+        // Le fond de coque n'a pas de masque : c'est la forme de l'oeuf qui le
+        // borne, et le masque sert a decouper le papier autour de l'ecran.
+        self.coque_texture = charger(&self.fond.coque_fichier).map(|papier| {
+            let image = fond::composer(&papier, &self.fond.coque_cadrage, None);
+            ctx.load_texture("fond_coque", image, egui::TextureOptions::LINEAR)
+        });
     }
 
     /// Habillage de la coque : papiers, masque, mot imprime, vitre, couleurs.
@@ -992,10 +1004,47 @@ impl TamagotchiApp {
         let mut change = false;
         let mut recomposer = false;
 
-        // --- le papier
+        // --- le fond de coque
+        ui.label(egui::RichText::new("Fond de la coque").strong());
         ui.horizontal(|ui| {
             if ui
-                .button("Papier...")
+                .button("Image...")
+                .on_hover_text("Couvre l'oeuf entier, derriere tout le reste")
+                .clicked()
+            {
+                if let Some(chemin) = choisir_une_image() {
+                    match crate::gui::fond::adopter_image(&chemin, &dossier, "coque") {
+                        Ok(nom) => {
+                            self.fond.coque_fichier = nom;
+                            self.fond.coque_cadrage = Default::default();
+                            change = true;
+                            recomposer = true;
+                        }
+                        Err(e) => self.status_msg = Some(format!("Image refusee : {}", e)),
+                    }
+                }
+            }
+            if !self.fond.coque_fichier.is_empty() && ui.button("Retirer").clicked() {
+                self.fond.retirer_le_fond(&dossier);
+                recomposer = true;
+            }
+        });
+        if !self.fond.coque_fichier.is_empty() {
+            let (c, r) = cadrage_reglable(ui, &mut self.fond.coque_cadrage, "fond");
+            change |= c;
+            recomposer |= r;
+            change |= ui
+                .checkbox(&mut self.fond.inclut_le_chapeau, "monte jusque sur le chapeau")
+                .changed();
+        }
+
+        ui.separator();
+
+        // --- le papier autour de l'ecran
+        ui.label(egui::RichText::new("Autour de l'ecran").strong());
+        ui.horizontal(|ui| {
+            if ui
+                .button("Image...")
                 .on_hover_text(
                     "L'image se glisse sous la fenetre transparente, comme le papier \
                      imprime de la vraie console.",
@@ -1023,25 +1072,16 @@ impl TamagotchiApp {
             let (c, r) = cadrage_reglable(ui, &mut self.fond.papier, "papier");
             change |= c;
             recomposer |= r;
-            change |= ui
-                .checkbox(&mut self.fond.couvre_tout, "Couvrir toute la coque")
-                .changed();
-            if self.fond.couvre_tout {
-                change |= ui
-                    .checkbox(&mut self.fond.inclut_le_chapeau, "y compris le chapeau")
-                    .changed();
-            }
         }
 
-        ui.separator();
-
-        // --- le masque de decoupe
+        // --- le masque, qui decoupe ce papier la
         ui.horizontal(|ui| {
             if ui
                 .button("Masque...")
                 .on_hover_text(
-                    "Image en noir et blanc : le noir laisse voir le papier, le blanc \
-                     le cache, et ce qui est hors de l'image est cache aussi.",
+                    "Decoupe l'image autour de l'ecran. Noir et blanc : le noir laisse \
+                     voir l'image, le blanc la cache, et ce qui est hors de l'image est \
+                     cache aussi.",
                 )
                 .clicked()
             {
@@ -1068,10 +1108,23 @@ impl TamagotchiApp {
             recomposer |= r;
         }
 
+        // La fenetre elle meme, taille et position, independamment de l'ecran.
+        change |= ui
+            .add(egui::Slider::new(&mut self.fond.fenetre_taille, 0.3..=2.2).text("taille"))
+            .changed();
+        change |= ui
+            .add(egui::Slider::new(&mut self.fond.fenetre_dy, -0.4..=0.4).text("haut / bas"))
+            .changed();
+        if ui.button("Fenetre d'origine").clicked() {
+            self.fond.fenetre_taille = 1.0;
+            self.fond.fenetre_dy = 0.0;
+            change = true;
+        }
+
         ui.separator();
 
         // --- le chapeau, quand il n'est pas couvert par le papier general
-        if !(self.fond.couvre_tout && self.fond.inclut_le_chapeau) {
+        if !(!self.fond.coque_fichier.is_empty() && self.fond.inclut_le_chapeau) {
             ui.label(egui::RichText::new("Chapeau").strong());
             ui.horizontal(|ui| {
                 let mut teinte = self.fond.chapeau_couleur.is_some();
@@ -1180,7 +1233,7 @@ impl TamagotchiApp {
         // --- la dalle
         ui.label(egui::RichText::new("Ecran").strong());
         change |= ui
-            .add(egui::Slider::new(&mut self.fond.ecran_taille, 0.4..=1.8).text("taille"))
+            .add(egui::Slider::new(&mut self.fond.ecran_taille, 0.3..=2.0).text("taille"))
             .changed();
         change |= ui
             .add(egui::Slider::new(&mut self.fond.ecran_dy, -0.4..=0.4).text("haut / bas"))
