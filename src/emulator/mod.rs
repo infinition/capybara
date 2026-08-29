@@ -309,7 +309,45 @@ impl Machine {
 
     /// Drapeau pose par le firmware tant qu'un son joue, teste par son moteur
     /// en `0x1007922C` avant de faire quoi que ce soit.
+    ///
+    /// Adresse relevee sur Water. Elle ne vaut pas pour toutes les editions :
+    /// voir `decalage_son`, qui la corrige.
     pub const SON_EN_COURS: u32 = 0x1801_4284;
+
+    /// Deplacement du bloc du moteur audio par rapport a l'adresse relevee sur
+    /// Water.
+    ///
+    /// Jade Forest range ce bloc huit octets plus loin. Mesure faite en lisant
+    /// la memoire sur deux etats muets, un menu et l'ecran d'accueil :
+    ///
+    /// ```text
+    ///   0x18014280  00 00 00 00 | 70 8a 00 00 | 01 01 01 00
+    ///                80 81 82 83   84 85 86 87   88 89 8a 8b
+    /// ```
+    ///
+    /// `0x18014284` y vaut `0x70` puis `0x03` alors que la console est muette,
+    /// et change de valeur : ce n'est pas un booleen, c'est autre chose. Huit
+    /// octets plus loin tout retombe juste, `0x1801428A` a 1 pour le moteur
+    /// pret et `0x1801428C` a 0 pour le silence.
+    ///
+    /// Sans cette correction le modele lisait une adresse qui n'est pas le
+    /// drapeau, la trouvait non nulle en permanence, et tenait une voix pour
+    /// active sans arret : c'est le bourdonnement de quarante secondes en tete
+    /// des sons de Jade Forest.
+    ///
+    /// L'edition se reconnait au nom du fichier, comme la coque : rien dans
+    /// l'image ne la nomme. Une edition inconnue garde l'adresse de Water.
+    pub fn decalage_son(edition: Edition) -> u32 {
+        match edition {
+            Edition::JadeForest => 8,
+            _ => 0,
+        }
+    }
+
+    /// L'adresse du drapeau pour l'edition chargee.
+    pub fn adresse_son_en_cours(&self) -> u32 {
+        Self::SON_EN_COURS + Self::decalage_son(self.edition)
+    }
     /// Tableau des voix du moteur audio, huit entrees de 0x34 octets.
     ///
     /// L'allocation, en `0x10022BE2`, indexe ce tableau par le type de son.
@@ -369,7 +407,7 @@ impl Machine {
 
     /// Vrai quand le firmware est en train de jouer un son.
     pub fn son_en_cours(&self) -> bool {
-        self.lire_sram_u8(Self::SON_EN_COURS) != 0
+        self.lire_sram_u8(self.adresse_son_en_cours()) != 0
     }
 
     /// Cherche le tableau des voix en memoire vive et retient ses adresses.

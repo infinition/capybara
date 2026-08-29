@@ -114,6 +114,22 @@ fn main() {
     .and_then(|t| t.nom(scene).map(str::to_string))
     .unwrap_or_else(|| "?".to_string());
     println!("# scene {} {}", scene, nom);
+
+    // SRAM_DUMP=0x...[:longueur] rend un morceau de memoire vive apres la
+    // mesure. Sert a eprouver une adresse tenue pour acquise, celles du son en
+    // particulier : elles ont ete relevees sur Earth et Jade Forest decale sa
+    // zone de travail.
+    if let Ok(v) = std::env::var("SRAM_DUMP") {
+        let (adr, long) = v.split_once(':').unwrap_or((v.as_str(), "32"));
+        if let Ok(adr) = u32::from_str_radix(adr.trim().trim_start_matches("0x"), 16) {
+            let long: usize = long.parse().unwrap_or(32);
+            let o = (adr - 0x1800_0000) as usize;
+            let octets: Vec<String> = (0..long)
+                .map(|i| format!("{:02x}", m.bus.sram.data.get(o + i).copied().unwrap_or(0)))
+                .collect();
+            println!("# {:#010x}  {}", adr, octets.join(" "));
+        }
+    }
     println!("# {} secondes de temps console", secondes);
     let mut v: Vec<_> = m.bus.mmio_trace.all.iter().map(|(a, s)| (*a, *s)).collect();
     v.sort_by_key(|(a, _)| *a);

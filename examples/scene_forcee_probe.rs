@@ -38,6 +38,12 @@ const TRANSITION: u32 = 0x1800_1BF6;
 const PRECEDENTE: u32 = 0x1800_1BF8;
 const ETAT_MACHINE: u32 = 0x1800_1BFA;
 
+/// L'instruction qui relit ce que le gestionnaire de boucle a rendu. Une valeur
+/// non nulle veut dire « j'ai fini, sors moi de la ». Le mot est en `sp + 20`.
+const TEST_SORTIE: u32 = 0x0000_97F2;
+/// Deplacement du mot rendu dans le cadre de la machine a scenes.
+const RENDU: u32 = 20;
+
 fn main() {
     let mut a = std::env::args().skip(1);
     let path = a.next().expect("dump.bin");
@@ -79,14 +85,22 @@ fn main() {
         avant.len()
     );
 
-    // La scene voulue, et l'etat remis a l'entree.
-    let quittee = lire16(&m, SCENE);
-    ecrire16(&mut m, PRECEDENTE, quittee);
-    ecrire16(&mut m, SCENE, cible);
-    ecrire16(&mut m, TRANSITION, 0xFFFF);
-    let drapeaux = lire8(&m, ETAT_MACHINE) & !7;
-    ecrire8(&mut m, ETAT_MACHINE, drapeaux);
-    println!("== scene {} demandee, etat remis a l'entree\n", cible);
+    // BRUTAL=1 ecrit la scene et remet l'etat a l'entree. La machine obeit,
+    // mais la scene quittee n'a rien rendu et l'allocateur saute au halt. Garde
+    // pour memoire, et pour eprouver a nouveau si la sortie propre casse.
+    let brutal = std::env::var("BRUTAL").is_ok();
+    ecrire16(&mut m, TRANSITION, cible);
+    if brutal {
+        let quittee = lire16(&m, SCENE);
+        ecrire16(&mut m, PRECEDENTE, quittee);
+        ecrire16(&mut m, SCENE, cible);
+        ecrire16(&mut m, TRANSITION, 0xFFFF);
+        let drapeaux = lire8(&m, ETAT_MACHINE) & !7;
+        ecrire8(&mut m, ETAT_MACHINE, drapeaux);
+        println!("== scene {} posee de force, etat remis a l'entree\n", cible);
+    } else {
+        println!("== scene {} demandee, sortie de la scene courante forcee\n", cible);
+    }
 
     // ARRET=0x... fige la trace a la premiere arrivee sur une adresse. Par
     // defaut c'est l'entree du halt fatal de Jade Forest.
@@ -95,6 +109,7 @@ fn main() {
         .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
         .or(Some(0x1005_E904));
     let mut suivi = Suivi::new(arret);
+    suivi.forcer_sortie = !brutal;
     let mut atteinte = false;
     for etape in 1..=(secondes.ceil() as u32) {
         avancer_en_comptant(&mut m, 1.0, &mut suivi);
@@ -202,6 +217,10 @@ struct Suivi {
     trace: std::collections::VecDeque<u32>,
     /// La trace figee a l'instant de l'arrivee, et le LR qui allait avec.
     capture: Option<(Vec<u32>, u32)>,
+    /// Reste a poser le rendu de sortie sur le prochain passage du test.
+    forcer_sortie: bool,
+    /// Le pas ou la sortie a ete posee.
+    sortie_posee: Option<u64>,
 }
 
 impl Suivi {
@@ -211,6 +230,8 @@ impl Suivi {
             arret,
             trace: std::collections::VecDeque::new(),
             capture: None,
+            forcer_sortie: false,
+            sortie_posee: None,
         }
     }
 }
@@ -226,6 +247,18 @@ fn avancer_en_comptant(m: &mut Machine, secondes: f64, s: &mut Suivi) {
             *s.compte.entry(pc).or_insert(0) += 1;
         }
         n += 1;
+        // Le seul geste de la sonde : dire une fois au gestionnaire de scenes
+        // que la scene courante a fini. Tout le reste, le demontage qui rend la
+        // memoire et la bascule vers la scene demandee, est fait par le
+        // firmware lui meme.
+        if s.forcer_sortie && pc == TEST_SORTIE {
+            let o = (m.cpu.regs.get_sp() + RENDU - 0x1800_0000) as usize;
+            if o + 4 <= m.bus.sram.data.len() {
+                m.bus.sram.data[o..o + 4].copy_from_slice(&1u32.to_le_bytes());
+                s.forcer_sortie = false;
+                s.sortie_posee = Some(m.cpu.cycles);
+            }
+        }
         if s.capture.is_none() {
             s.trace.push_back(pc);
             if s.trace.len() > 60 {
