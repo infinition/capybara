@@ -1275,6 +1275,23 @@ impl TamagotchiApp {
             });
         }
 
+        ui.separator();
+        if ui
+            .button("Tout remettre par defaut")
+            .on_hover_text(
+                "Rend a la coque son apparence d'origine. Les images importees sont                  effacees.",
+            )
+            .clicked()
+        {
+            self.fond.retirer_le_fond(&dossier);
+            self.fond.retirer_le_papier(&dossier);
+            self.fond.retirer_le_masque(&dossier);
+            self.fond.retirer_le_chapeau(&dossier);
+            self.fond = crate::gui::fond::Habillage::default();
+            change = true;
+            recomposer = true;
+        }
+
         if change || recomposer {
             self.fond.ecrire(&dossier);
         }
@@ -1798,13 +1815,14 @@ impl TamagotchiApp {
 
                 // Clic droit sur la coque : le menu de la fenetre.
                 let mut mode_voulu = None;
-                // Le menu est referme : la prochaine ouverture repart repliee.
-                if !ctx.memory(|m| m.any_popup_open()) {
-                    self.section_menu = None;
-                }
                 // Sortie du champ pour la duree du menu : la fermeture qui
                 // suit ne peut pas emprunter `self` deux fois.
                 let mut section_ouverte = self.section_menu;
+                // Vrai tant que le menu est dessine. C'est le seul temoin sur
+                // par lequel savoir qu'il est ouvert : `any_popup_open` ne
+                // compte pas les menus contextuels, s'y fier remettait la
+                // section a zero a chaque image et rien ne se depliait plus.
+                let mut menu_dessine = false;
                 let mut console_voulue = None;
                 let mut zoom_voulu = None;
                 let mut point_voulu = None;
@@ -1816,6 +1834,7 @@ impl TamagotchiApp {
                 let mut basculer_le_dessus = false;
                 let mut ouvrir_la_saisie = false;
                 fond.context_menu(|ui| {
+                    menu_dessine = true;
                     // Des sections qui se deplient sur place, et non des sous
                     // menus. La fenetre du mode jeu fait quatre cents pixels de
                     // large : un sous menu n'y tient pas a droite, egui le
@@ -1969,7 +1988,8 @@ impl TamagotchiApp {
                 if ouvrir_la_saisie {
                     self.saisie_sauvegarde = Some(String::new());
                 }
-                self.section_menu = section_ouverte;
+                // Menu referme : la prochaine ouverture repart repliee.
+                self.section_menu = if menu_dessine { section_ouverte } else { None };
                 if let Some(nom) = partie_voulue {
                     self.ouvrir_emplacement(nom);
                 }
