@@ -59,20 +59,40 @@ ordinaire. C'est la seule voie sans ecrire de pilote.
 **Ce qu'on a trouve dans le firmware, et par ou continuer.**
 
 La table des scenes est decodee : un tableau de descripteurs de vingt huit
-octets, quatre gestionnaires, un pointeur de nom et un numero, cent vingt six
-entrees. `PSID_HOME` y vaut 29, ce que la trace de demarrage confirme, la table
-est donc juste. Les scenes qui nous interessent :
+octets, quatre gestionnaires, un pointeur de nom et un compteur. `table_scenes_probe`
+l'extrait de n'importe quelle edition sans rien executer, en partant des chaines
+`PSID_` qui sont en clair dans l'image. Sur Jade Forest elle est en `0x1008128c`
+et compte cent vingt neuf entrees.
+
+**Le numero de scene est le rang dans le tableau, pas le champ `+0x10`.** Ce
+champ vaut le rang plus un partout, et le prendre pour le numero decale tout
+d'une unite. C'est l'erreur qui a fait conclure a tort sur l'ecran de connexion.
+Deux mesures tranchent, et elles concordent :
+
+- La mise en route d'une partie neuve donne `0`, `104`, `105`, `109`, `113`. En
+  rang cela se lit `STARTUP`, `INITIAL_LOGO`, `LANGUAGE`, `SYSTEM_POWERDOWN`,
+  soit l'extinction apres vingt et une secondes sans appui sur le choix de la
+  langue. Au champ `+0x10`, la premiere scene serait `OSEWAGAME_04`.
+- Les vues de zoom relevees a l'oeil, 29, 30 et 32, tombent en rang sur
+  `HOME_SPACE`, `HOME_FIELD` et `HOME_CELL`.
+
+Les scenes qui nous interessent, en rang, sur Jade Forest :
 
 ```text
-   1  PSID_DEBUGMENU            17  PSID_DEVELOP_UARTTEST     0x1000C705
-   2  PSID_DEVELOP_COMMONCTRL   18  PSID_DEVELOP_UARTAGEING   0x1000C325
-  24  PSID_DEVELOP_TCP          19  PSID_DEVELOP_UARTBYTE     0x1000C471
- 113  PSID_TAMASPACE_TUSHIN     20  PSID_DEVELOP_UARTHEADER   0x1000C5C1
- 125  PSID_TESTMODE             29  PSID_HOME
+   0  PSID_DEBUGMENU            16  PSID_DEVELOP_UARTTEST
+  23  PSID_DEVELOP_TCP          17  PSID_DEVELOP_UARTAGEING
+  28  PSID_HOME                 18  PSID_DEVELOP_UARTBYTE
+ 115  PSID_TAMASPACE_TUSHIN     19  PSID_DEVELOP_UARTHEADER
+ 121  PSID_TAMASPACE_RANK      127  PSID_TESTMODE
 ```
 
 Le firmware porte aussi un `** UART Monitor Service Ver.%d.%02d **` et des
 entrees de menu `UART BYTE`, `UART AGEING`, `UART TEST` et `TAMA HOME`.
+
+**Les quatre scenes UART sont des scenes de developpement.** Elles ne dependent
+d'aucun avancement dans le jeu, contrairement a `TAMASPACE_TUSHIN` que le niveau
+de planete verrouille. Y entrer reglerait la question du peripherique sans avoir
+a jouer, et `PSID_DEBUGMENU` en rang 0 est le menu qui y mene.
 
 **`0x40038000` n'est pas le port serie.** J'ai cru le contraire une heure
 durant : la page ressort douze fois dans la fenetre XIP, seule de son groupe,
@@ -141,24 +161,19 @@ la cadence d'affichage et non celle du son : c'est vraisemblablement l'interface
 serie de la dalle, pas le buzzer. A confirmer en relevant son trafic pendant
 qu'une note joue puis au silence, mais il ne faut pas s'emballer dessus.
 
-**L'ecran de connexion ne reveille aucun peripherique nouveau.** Mesure faite
-sur un instantane pris pendant que la console attendait sur cet ecran : les
-memes onze pages qu'en jeu ordinaire, aux memes cadences. Deux lectures
-possibles, et rien ne les departage encore : le lien serie passe par un bloc
-deja sollicite, ou l'instantane n'est pas ou l'on croit.
-
-**Attention aux numeros de scene d'une edition a l'autre.** Ceux du tableau
-ci-dessus viennent de l'image Earth. Sur Jade Forest, dont on sait deja que la
-zone de travail est decalee de huit octets, l'instantane pris sur l'ecran de
-connexion donne 119 en `0x18001BF4`, ce qui vaudrait `PSID_TAMASPACE_RANK` dans
-la numerotation d'Earth. Avant de conclure quoi que ce soit sur Jade, il faut
-extraire sa propre table.
+**L'ecran de connexion ne reveille aucun peripherique nouveau, et la mesure ne
+vaut rien.** L'instantane portait 119 en `0x18001BF4`, pris pour
+`PSID_TAMASPACE_RANK` en numerotation d'Earth. Avec la table de Jade et le rang
+comme numero, 119 est `PSID_TAMASPACE_DOWNLOAD`. La console n'etait donc pas sur
+l'ecran de connexion, et le releve des onze pages ne dit rien du lien serie. A
+refaire une fois `TAMASPACE_TUSHIN`, rang 115, reellement atteint.
 
 **Ce qui ne marche pas, pour ne pas le refaire.** Ecrire le numero de scene
 voulu en `0x18001BF6` ne declenche aucune transition. Ce mot vaut `0xFFFF` au
 repos, ce qui ressemble bien a « aucune transition demandee », mais y poser un
 numero ne suffit pas : le firmware attend autre chose en plus. `uart_probe`
-fait cet essai en une commande.
+fait cet essai en une commande. A noter que cet essai a ete mene avec les
+numeros decales d'un rang, il est donc a refaire proprement avant de conclure.
 
 **Ce qui manque cote emulateur, et qui vient avant.** Le port serie n'est pas
 modelise. `src/hw_bridge/uart_pcom.rs` et `src/emulator/peripherals/uart.rs`
