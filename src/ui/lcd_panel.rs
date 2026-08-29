@@ -112,26 +112,29 @@ pub struct Habits<'a> {
 /// Methode de Sutherland et Hodgman : on coupe le sujet par chaque cote de la
 /// fenetre, l'un apres l'autre. Les deux etant convexes, le resultat l'est
 /// aussi, et egui sait donc le remplir.
+///
+/// Le sens du contour n'est pas suppose : on le deduit en regardant de quel
+/// cote de la premiere arete tombe le centre de la fenetre. Le deduire du signe
+/// de l'aire demande de savoir dans quel sens l'ordonnee croit, et se tromper
+/// rogne tout.
 fn rogner_sur(sujet: &[Pos2], fenetre: &[Pos2]) -> Vec<Pos2> {
-    // Sens du contour : le produit vectoriel de deux cotes le donne, et c'est
-    // lui qui dit de quel cote d'une arete se trouve l'interieur.
-    let aire: f32 = fenetre
-        .windows(2)
-        .map(|c| c[0].x * c[1].y - c[1].x * c[0].y)
-        .sum::<f32>()
-        + fenetre.last().map_or(0.0, |d| {
-            let p = fenetre[0];
-            d.x * p.y - p.x * d.y
-        });
-    let sens = if aire >= 0.0 { 1.0 } else { -1.0 };
-
-    let dedans = |p: Pos2, a: Pos2, b: Pos2| -> f32 {
-        sens * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x))
+    if sujet.len() < 3 || fenetre.len() < 3 {
+        return sujet.to_vec();
+    }
+    let cote = |p: Pos2, a: Pos2, b: Pos2| -> f32 {
+        (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
     };
+    let centre = {
+        let n = fenetre.len() as f32;
+        let (sx, sy) = fenetre.iter().fold((0.0, 0.0), |(x, y), p| (x + p.x, y + p.y));
+        pos2(sx / n, sy / n)
+    };
+    let sens = if cote(centre, fenetre[0], fenetre[1]) >= 0.0 { 1.0 } else { -1.0 };
+    let dedans = |p: Pos2, a: Pos2, b: Pos2| sens * cote(p, a, b) >= 0.0;
     let couper = |p: Pos2, q: Pos2, a: Pos2, b: Pos2| -> Pos2 {
-        let dp = dedans(p, a, b);
-        let dq = dedans(q, a, b);
-        let t = if (dq - dp).abs() < f32::EPSILON { 0.0 } else { dp / (dp - dq) };
+        let dp = sens * cote(p, a, b);
+        let dq = sens * cote(q, a, b);
+        let t = if (dp - dq).abs() < f32::EPSILON { 0.0 } else { dp / (dp - dq) };
         pos2(p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t)
     };
 
@@ -146,7 +149,7 @@ fn rogner_sur(sujet: &[Pos2], fenetre: &[Pos2]) -> Vec<Pos2> {
         for j in 0..entree.len() {
             let p = entree[j];
             let q = entree[(j + 1) % entree.len()];
-            let (dp, dq) = (dedans(p, a, b) <= 0.0, dedans(q, a, b) <= 0.0);
+            let (dp, dq) = (dedans(p, a, b), dedans(q, a, b));
             if dp {
                 sortie.push(p);
             }
@@ -658,67 +661,65 @@ impl LcdPanel {
             commandes.molette_tournee += if roulette > 0.0 { 1 } else { -1 };
         }
 
-        // Un tambour cannele vu de cote, dont les stries defilent : c'est ce
-        // qu'est une molette de souris, et cela dit tout de suite dans quel
-        // sens elle tourne. Les deux fleches d'avant ne voulaient rien dire.
+        // Une roue vue de cote, dans son logement. Le logement garde la
+        // couleur des traits pour que la roue s'en detache ; la roue porte des
+        // stries qui defilent, resserrees en haut et en bas comme le sont les
+        // cannelures d'un cylindre qu'on regarde de profil. Les deux fleches
+        // d'avant ne disaient rien du sens.
         let peintre = ui.painter();
         let teinte = rvb(habits.reglages.molette_couleur, accent_col);
-        let rayon_tambour = molette.width() * 0.34;
-        peintre.rect_filled(molette, rayon_tambour, ombre_col);
-        let tambour = molette.shrink(molette.width() * 0.13);
-        peintre.rect_filled(tambour, tambour.width() * 0.34, teinte);
 
-        // Les stries suivent une projection cylindrique : elles se resserrent
-        // aux bords, ce qui donne la rondeur sans rien dessiner de plus.
-        const STRIES: usize = 14;
-        let haut = tambour.min.y;
-        let bas = tambour.max.y;
-        let demi = (bas - haut) * 0.5;
-        let milieu = (haut + bas) * 0.5;
-        let phase = angle_molette * 0.013;
+        // Logement.
+        peintre.rect_filled(molette, molette.width() * 0.36, ombre_col);
+
+        // Roue.
+        let roue = molette.shrink2(vec2(molette.width() * 0.16, molette.height() * 0.07));
+        let arrondi = roue.width() * 0.42;
+        peintre.rect_filled(roue, arrondi, teinte);
+
+        // Stries. L'angle balaie la demi rotation visible, et la position
+        // verticale suit son cosinus : elles se resserrent aux extremites.
+        const STRIES: usize = 9;
+        let milieu = roue.center().y;
+        let demi = roue.height() * 0.5;
+        let phase = (angle_molette * 0.012).rem_euclid(1.0);
+        let x0 = roue.min.x + roue.width() * 0.20;
+        let x1 = roue.max.x - roue.width() * 0.20;
         for i in 0..STRIES {
-            let t = (i as f32 / STRIES as f32 + phase).rem_euclid(1.0);
-            // Position sur le tour, ramenee sur le diametre visible.
-            let angle = t * std::f32::consts::TAU;
-            let y = milieu - demi * angle.cos();
-            // Ce qui passe derriere le tambour ne se voit pas.
-            if angle.sin() < 0.0 {
-                continue;
-            }
-            // Une strie de bord est plus fine et plus pale qu'une du milieu.
-            let vu = angle.sin().abs().max(0.05);
-            let epaisseur = (tambour.width() * 0.10 * vu).max(0.6);
+            let t = (i as f32 + phase) / STRIES as f32;
+            let angle = t * std::f32::consts::PI;
+            let y = milieu - demi * angle.cos() * 0.92;
+            // Au centre la strie est large et franche, au bord elle s'efface.
+            let vu = angle.sin();
             peintre.line_segment(
-                [
-                    pos2(tambour.min.x + tambour.width() * 0.16, y),
-                    pos2(tambour.max.x - tambour.width() * 0.16, y),
-                ],
-                Stroke::new(epaisseur, ombre_col.gamma_multiply(0.35 + 0.45 * vu)),
+                [pos2(x0, y), pos2(x1, y)],
+                Stroke::new(
+                    (roue.width() * 0.11 * vu).max(0.7),
+                    ombre_col.gamma_multiply(0.25 + 0.55 * vu),
+                ),
             );
         }
 
-        // Reflet en haut, ombre en bas : le tambour prend son volume.
-        peintre.rect_filled(
-            Rect::from_min_max(
-                tambour.min,
-                pos2(tambour.max.x, tambour.min.y + tambour.height() * 0.14),
-            ),
-            0.0,
-            Color32::from_rgba_unmultiplied(255, 255, 255, 45),
-        );
-        peintre.rect_filled(
-            Rect::from_min_max(
-                pos2(tambour.min.x, tambour.max.y - tambour.height() * 0.14),
-                tambour.max,
-            ),
-            0.0,
-            Color32::from_rgba_unmultiplied(0, 0, 0, 45),
-        );
-        peintre.rect_stroke(
-            tambour,
-            tambour.width() * 0.34,
-            Stroke::new(1.5, ombre_col),
-        );
+        // Un creux en haut et en bas, la ou la roue rentre dans son logement.
+        for (haut, alpha) in [(true, 70u8), (false, 55)] {
+            let bande = if haut {
+                Rect::from_min_max(
+                    roue.min,
+                    pos2(roue.max.x, roue.min.y + roue.height() * 0.16),
+                )
+            } else {
+                Rect::from_min_max(
+                    pos2(roue.min.x, roue.max.y - roue.height() * 0.16),
+                    roue.max,
+                )
+            };
+            peintre.rect_filled(
+                bande,
+                arrondi * 0.5,
+                Color32::from_rgba_unmultiplied(0, 0, 0, alpha),
+            );
+        }
+        peintre.rect_stroke(roue, arrondi, Stroke::new(1.5, ombre_col));
 
         commandes
     }
