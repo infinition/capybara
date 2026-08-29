@@ -240,6 +240,7 @@ footer p{max-width:70ch}
       <a href="#pastilles"><span>PAD</span>Pastilles de test</a>
       <a href="#adressage"><span>MEM</span>Carte mémoire</a>
       <a href="#peripheriques"><span>PER</span>Démentis matériels</a>
+      <a href="#serie"><span>SER</span>Le port série</a>
       <a href="#flash"><span>MAP</span>Layout Flash</a>
       <a href="#loadtable"><span>TAB</span>Load table Sonix</a>
       <a href="#crypto"><span>CRY</span>Déchiffrement</a>
@@ -261,7 +262,18 @@ footer p{max-width:70ch}
   <!-- ===== JOURNAL ===== -->
   <section id="journal">
     <div class="sec-head"><span class="sec-code">LOG</span><h2>Journal des avancées</h2></div>
-    <p class="sec-intro">Tout est sur la branche <code>feat/real-firmware-boot</code>. Je liste du plus récent au plus ancien. À ce jour, 16 415 lignes de Rust, 22 sondes et 73 tests.</p>
+    <p class="sec-intro">Tout est sur la branche <code>feat/real-firmware-boot</code>. Je liste du plus récent au plus ancien. À ce jour, 25 sondes et 73 tests.</p>
+
+    <h3>Depuis la révision 5</h3>
+    <p>Le 29 août 2026. Le port série trouvé, et trois conclusions héritées retournées.</p>
+    <div class="log">
+      <div class="log-row"><code>Série</code><div><b>Le port série est en 0x4000B000</b><span>Trouvé par comparaison de deux exécutions, pas par lecture de code. La page n'apparaît qu'à l'ouverture du lien, et seulement là. Banque relevée, état en <code>+0x14</code> avec l'émetteur prêt au bit 6, contrôle de ligne en <code>+0x0C</code>. Section SER.</span></div></div>
+      <div class="log-row"><code>Méthode</code><div><b>Comparer un état à lui-même ne trouve jamais rien</b><span>Les relevés notaient les pages touchées avant puis après dans la même exécution. Une page déjà ouverte n'en ressort pas, et la mesure rendait « zéro nouvelle page » quoi qu'il arrive. <code>mmio_releve_probe</code> rend un texte fait pour <code>diff</code>.</span></div></div>
+      <div class="log-row"><code>Scènes</code><div><b>Les numéros étaient tous décalés d'un rang</b><span>Le descripteur porte un champ qui vaut le rang plus un, et c'est ce champ qu'on prenait pour le numéro. L'instantané censé montrer l'écran de connexion était en fait sur <code>TAMASPACE_DOWNLOAD</code> : la mesure faite dessus ne valait rien. <code>table_scenes_probe</code> extrait la table de n'importe quelle édition sans rien exécuter, et l'interface nomme désormais la scène courante.</span></div></div>
+      <div class="log-row"><code>Son</code><div><b>Le bourdonnement de Jade Forest</b><span>Quarante secondes de Sol3 avant chaque mélodie. L'adresse du drapeau « un son joue » avait été relevée sur Water et tenue pour universelle ; Jade range son bloc audio huit octets plus loin. Le modèle lisait autre chose, le trouvait non nul en permanence, et tenait une voix pour active sans arrêt.</span></div></div>
+      <div class="log-row"><code>Interface</code><div><b>La fente dentelée peinte d'un seul tenant</b><span>Onze triangles posés côte à côte laissaient un liseré clair : egui adoucit le bord de chaque forme, et deux adoucissements qui se touchent ne se complètent pas. Les dents qui mordent vers le haut recevaient en plus un aplat qui masquait le papier posé dessous. La calotte s'arrête maintenant à la dentelure et laisse paraître.</span></div></div>
+      <div class="log-row"><code>Robustesse</code><div><b>Un clamp qui fermait l'application</b><span><code>clamp</code> affirme <code>min &lt;= max</code>. Au changement de mode il y a une image où la hauteur disponible vaut zéro : une division zéro sur zéro rendait NaN, l'assertion tombait et le processus avec. Ne pas donner de bornes calculées à <code>clamp</code> dans du code de dessin.</span></div></div>
+    </div>
 
     <h3>Depuis la révision 4</h3>
     <p>Le 28 août 2026. Deux chantiers, la vitesse et la clé.</p>
@@ -479,6 +491,7 @@ footer p{max-width:70ch}
           <tr><td class="hex">0x40019000</td><td>I2S0</td><td><strong>Port d'entrées-sorties numéro 1</strong></td></tr>
           <tr><td class="hex">0x4003A000</td><td>Chien de garde</td><td><strong>Convertisseur de la mesure de pile.</strong> Dix bits calés au rang 6, conversions enchaînées sur l'IRQ 9</td></tr>
           <tr><td class="hex">0x4000A000</td><td>SAR ADC</td><td><strong>Sortie console de débogage</strong></td></tr>
+          <tr><td class="hex">0x4000B000</td><td>SAR ADC 1</td><td><strong>Le port série des prongs.</strong> Sixième étiquette démentie, et la plus coûteuse : on l'a cherché des mois durant aux deux adresses que le datasheet donne pour UART1 et SPI1. Voir section SER</td></tr>
         </tbody>
       </table>
     </div>
@@ -504,6 +517,75 @@ footer p{max-width:70ch}
     <div class="note warn">
       <p><strong>Le verrou de démarrage n'était pas là où on le croyait.</strong> Une note antérieure jugeait que le message <code>unsupport chip, please check your flash vender</code> était du texte de repli sans conséquence. C'était une boucle sans sortie, et le véritable verrou. Ne jamais reprendre une conclusion héritée sans la refaire.</p>
     </div>
+  </section>
+
+  <!-- ===== SERIE ===== -->
+  <section id="serie">
+    <div class="sec-head"><span class="sec-code">SER</span><h2>Le port série</h2></div>
+    <p class="sec-intro">Trouvé le 29 août 2026, après des mois passés à le chercher au mauvais endroit. Il est en <code>0x4000B000</code>, la page que le datasheet annonce en SAR ADC 1. Ce n'est pas une lecture de code qui l'a désigné, c'est une mesure.</p>
+
+    <div class="note warn">
+      <p><strong>La méthode comptait plus que la trouvaille.</strong> Les relevés précédents comparaient un état à lui-même : on notait les pages matérielles touchées avant, puis après, dans la même exécution. Une page déjà ouverte n'en ressort jamais, et la mesure rendait « zéro nouvelle page » quoi qu'il arrive. En comparant deux exécutions distinctes, l'une en jeu ordinaire et l'autre sur le lien ouvert, la page est apparue du premier coup.</p>
+    </div>
+
+    <h3>Comment ouvrir le lien à la main</h3>
+    <p>Depuis la vue Space. Le menu de communication est la scène 115, <code>TAMASPACE_TUSHIN</code>. <code>A</code> déplace le curseur, <code>B</code> valide, <code>C</code> revient. Chacune de ses quatre entrées correspond à un onglet de TamaHome.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Entrée du menu</th><th class="hex">Scène</th><th>Onglet TamaHome</th><th>Ce qui passe</th></tr></thead>
+        <tbody>
+          <tr><td>S'amuser</td><td class="hex">116</td><td>Simulate Playdate</td><td>La visite entre deux consoles</td></tr>
+          <tr><td>Cadeaux</td><td class="hex">117</td><td>Built-In Items</td><td>Les objets du catalogue</td></tr>
+          <tr><td>Planètes</td><td class="hex">non relevée</td><td>aucun</td><td>Grisée dans le menu</td></tr>
+          <tr><td>Téléchargement</td><td class="hex">119</td><td>Lab Items</td><td>Les objets de laboratoire</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Sur « s'amuser », la scène 116 affiche <em>connecte deux appareils et appuie sur le bouton B sur chacun d'eux</em>. C'est ce second <code>B</code> qui ouvre le lien, et c'est le geste que TamaHome demande aussi. Les quatre voies passent vraisemblablement par le même transport, seul le contenu change. L'onglet Online Bridge ne parle pas à la console autrement : il relaie le même flux série dans une prise réseau pour jouer à deux à distance.</p>
+
+    <h3>La banque de registres</h3>
+    <p>Ce qui n'apparaît qu'à l'ouverture du lien, et seulement à ce moment-là.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th class="hex">Offset</th><th>Lectures</th><th>Écritures</th><th class="hex">Premier PC</th><th>Rôle</th></tr></thead>
+        <tbody>
+          <tr><td class="hex">+0x00</td><td>rares</td><td>rares</td><td class="hex">0x00004E42</td><td>Écrit en dernier à l'émission</td></tr>
+          <tr><td class="hex">+0x04</td><td>rares</td><td>rares</td><td class="hex">0x00004E3C</td><td>Écrit juste avant</td></tr>
+          <tr><td class="hex">+0x08</td><td>unités</td><td>unités</td><td class="hex">0x00004C26</td><td>Configuration</td></tr>
+          <tr><td class="hex">+0x0C</td><td>unités</td><td>unités</td><td class="hex">0x00004B9C</td><td><strong>Contrôle de ligne</strong></td></tr>
+          <tr><td class="hex">+0x14</td><td><strong>des dizaines de milliers par seconde</strong></td><td>jamais</td><td class="hex">0x00004EC0</td><td><strong>État</strong></td></tr>
+          <tr><td class="hex">+0x28</td><td>rares</td><td>rares</td><td class="hex">0x00004E36</td><td>Écrit en premier à l'émission</td></tr>
+          <tr><td class="hex">+0x30</td><td>unités</td><td>unités</td><td class="hex">0x00004C60</td><td>Configuration</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>L'état, en <code>+0x14</code></h3>
+    <p>Deux bits sont lus, et rien d'autre.</p>
+<pre><code>0x00004EC0  LDR r0,[base,#0x14] ; UBFX r0,r0,#10,#1 ; CMP r0,#1
+0x00004EDA  LDR r0,[base,#0x14] ; LSLS r0,r0,#25 ; BMI ; sinon boucle</code></pre>
+    <p>Le second est une boucle qui ne sort que sur le <strong>bit 6</strong>, la forme habituelle d'un témoin « émetteur prêt ». Le <strong>bit 10</strong> est testé une fois avant. La page n'étant pas modélisée, elle rend zéro, le bit 6 ne monte jamais et le firmware tourne en rond : c'est exactement ce qu'on observe, des dizaines de milliers de lectures par seconde et rien d'autre. Poser le bit 6 à un ne suffit pas encore à débloquer la suite, il faut comprendre le bit 10 d'abord.</p>
+
+    <h3>Le contrôle de ligne, en <code>+0x0C</code></h3>
+<pre><code>0x00004B9C  LDR r0,[base,#0x0C] ; BFI r0,r2,#0,#2 ; STR   bits 0 et 1
+0x00004BAA  LDR r0,[base,#0x0C] ; BIC #4 ; ORR r2 LSL #2  bit 2</code></pre>
+    <p>Deux bits posés d'un coup, puis un bit isolé. C'est la forme d'une longueur de mot suivie d'un témoin de parité ou de bit d'arrêt.</p>
+
+    <h3>La cadence</h3>
+    <p>La fonction en <code>0x000047C4</code> rend la fréquence de l'horloge périphérique : les trois bits bas de <code>0x4500000C</code> choisissent la source par une table de sauts, dont une branche vaut douze millions, puis <code>0x45000010</code> porte un décalage à droite. C'est cette valeur qu'un pilote divise pour obtenir ses bauds, et c'est là qu'il faudra retomber sur les 460 800 que la communauté annonce, en 3,3 V, sur les contacts du flanc.</p>
+
+    <div class="note">
+      <p><strong>Une jumelle en <code>0x4000A000</code>.</strong> Son <code>+0x14</code> est lu au même instant, depuis <code>0x00004DD4</code>, un code voisin de celui de <code>0x4000B000</code>. Deux exemplaires du même bloc, donc, ce qui cadre avec le <code>** UART Monitor Service **</code> que porte le firmware : l'une des deux est vraisemblablement la console de mise au point, l'autre le lien vers l'extérieur.</p>
+    </div>
+
+    <h3>Ce qui reste, jusqu'au port COM</h3>
+    <p>Trois temps. Modéliser le bloc, en commençant par le bit 10. Retomber sur 460 800 bauds, faute de quoi la lecture est fausse quelque part. Puis l'ouvrir vers l'extérieur.</p>
+    <p>Ce dernier point n'est pas une affaire de langage. Aucune application ne peut déclarer un port série sous Windows : c'est un pilote qui le fait, et un pilote doit être signé pour se charger. Rust sait écrire un pilote Windows, mais la signature reste due, et un port série virtuel en mode noyau est un chantier à lui seul. La voie praticable est une paire de ports virtuels installée une fois, com0com ou équivalent : l'émulateur ouvre un bout, TamaHome voit l'autre comme un port ordinaire. Sous Linux et macOS un pseudo terminal suffit et ne demande rien à personne.</p>
+
+    <p class="cap">À jeter avant de commencer : <code>src/hw_bridge/uart_pcom.rs</code> et <code>src/emulator/peripherals/uart.rs</code> datent d'avant la rétro-ingénierie. Registres inventés, compteurs d'octets écrits en dur. Ils ne décrivent pas <code>0x4000B000</code>.</p>
   </section>
 
   <!-- ===== FLASH ===== -->
