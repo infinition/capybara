@@ -3,6 +3,40 @@
 Ce qui reste a faire. L'etat courant est dans `ou-on-en-est.md`, le point
 d'entree pour reprendre dans `reprise.md`.
 
+## L'interface, ce qui reste avant une version publiable
+
+Fait le 29 aout 2026 : le panneau lateral defile d'un seul bloc, il est
+redimensionnable et sa largeur minimale descend a 300, la barre d'onglets passe
+a la ligne, et le contenu se repartit sur quatre onglets, Console, Sauvegardes,
+Inspection et Personnalisation. L'executable porte son icone. Avant, le bas du
+panneau etait hors d'atteinte sans plein ecran et aucune barre ne le laissait
+deviner.
+
+Ce qui reste, du plus gros au plus petit.
+
+**La traduction, et c'est le gros morceau.** Le module `i18n` existe, avec
+`i18n/fr.json` et `i18n/en.json` a quatre-vingt-treize cles chacun, mais il
+n'est branche que sur trente-cinq appels dans `gui/widgets.rs` et huit dans
+`app.rs`. Or `app.rs` porte a lui seul environ deux cent trente chaines ecrites
+en dur, sans compter `ui/lcd_panel.rs`. Poser un bouton de bascule avant d'avoir
+migre ces chaines donnerait une interface a moitie traduite, ce qui est pire que
+pas de bouton du tout. L'ordre a tenir : sortir les chaines vers les deux
+fichiers, puis brancher le bouton, l'anglais par defaut, le choix garde dans le
+fichier de reglages.
+
+**L'onglet Personnalisation.** Il aligne ses reglages a plat, sans regroupement
+ni intitules explicites. A decouper en sections nommees, avec un intitule qui dit
+ce que le reglage fait plutot que ce qu'il est.
+
+**Un onglet de reglages.** La vitesse est dans le panneau lateral, le volume et
+la hauteur dans la barre du haut. Les trois vont ensemble.
+
+**L'ecran d'accueil.** Fonctionnel, pas soigne.
+
+**La barre systeme.** Afficher, fermer, demarrer avec Windows. Demande une
+dependance de plus, `tray-icon`, et pour le demarrage automatique une entree
+dans la base de registres sous `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+
 ## Defauts connus
 
 **Un bourdonnement en tete des sons de Jade Forest.** Releve a la sonde :
