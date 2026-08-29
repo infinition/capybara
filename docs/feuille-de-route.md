@@ -127,17 +127,82 @@ modelise :
 type CH341A ou CH347. Cela vient de la communaute, pas de notre mesure, mais
 c'est une valeur precise a confronter au diviseur qu'on trouvera.
 
-**Le peripherique reste a identifier.** Un balayage des paires MOVW puis MOVT
-sur les seize mega-octets donne les pages que le firmware forme : les ports
-d'entrees-sorties, le controleur de flash, les convertisseurs, le controleur de
-transferts, la fenetre XIP, la zone systeme, l'alias bit-band, et le bloc
-ci-dessus. Ni `0x40034000` ni `0x40020000`, les deux adresses que le datasheet
-donne pour UART1 et SPI1.
+## Le port serie, trouve
 
-Attention en refaisant ce balayage : il avance de deux octets en deux octets
-sans suivre les frontieres d'instruction, il decode donc aussi des donnees. Les
-pages vues moins de cinq fois sont a verifier une par une au desassembleur avant
-d'y croire ; j'ai perdu du temps sur deux d'entre elles.
+**Il est en `0x4000B000`.** Le datasheet l'annonce en SAR_ADC1, une etiquette de
+plus a jeter. La page n'apparait que lorsque le lien s'ouvre, et elle apparait a
+ce moment la seulement : c'est la mesure qui le dit, pas une lecture de code.
+
+**Comment y arriver a la main**, depuis la vue Space. Le menu de communication
+est la scene 115, `TAMASPACE_TUSHIN`. Il porte quatre entrees : « s'amuser »,
+qui est la visite entre deux consoles, « cadeaux », « planetes », grisee, et
+« telechargement », par ou entrent les objets. `A` deplace le curseur, `B`
+valide, `C` revient. Sur « s'amuser », la scene 116 affiche « connecte deux
+appareils et appuie sur le bouton B sur chacun d'eux ». C'est ce second `B` qui
+ouvre le lien.
+
+**Ce qui n'apparait qu'a ce moment la**, releve par `mmio_releve_probe` en
+comparant deux executions, l'une en jeu ordinaire, l'autre sur le lien :
+
+```text
+  0x4000B000  +0x00  ecrit en dernier a l'emission, depuis 0x00004E42
+  0x4000B000  +0x04  ecrit juste avant, depuis 0x00004E3C
+  0x4000B000  +0x08  configuration, depuis 0x00004C26
+  0x4000B000  +0x0C  controle de ligne, depuis 0x00004B9C
+  0x4000B000  +0x14  etat, scrute des dizaines de milliers de fois par
+                     seconde depuis 0x00004EC0, jamais ecrit
+  0x4000B000  +0x28  ecrit en premier a l'emission, depuis 0x00004E36
+  0x4000B000  +0x30  configuration, depuis 0x00004C60
+```
+
+**Le registre d'etat, `+0x14`.** Deux bits sont lus, et rien d'autre.
+
+```text
+  0x00004EC0  LDR r0,[base,#0x14] ; UBFX r0,r0,#10,#1 ; CMP r0,#1
+  0x00004EDA  LDR r0,[base,#0x14] ; LSLS r0,r0,#25 ; BMI ; sinon boucle
+```
+
+Le second est une boucle qui ne sort que sur le **bit 6**, la forme habituelle
+d'un « emetteur pret ». Le **bit 10** est teste une fois avant. La page n'etant
+pas modelisee, elle rend zero, le bit 6 ne monte jamais et le firmware tourne en
+rond : c'est ce qu'on observe, des dizaines de milliers de lectures par seconde
+et rien d'autre.
+
+**Le controle de ligne, `+0x0C`.** Deux champs, poses depuis une structure de
+reglages :
+
+```text
+  0x00004B9C  LDR r0,[base,#0x0C] ; BFI r0,r2,#0,#2 ; STR   bits 0 et 1
+  0x00004BAA  LDR r0,[base,#0x0C] ; BIC #4 ; ORR r2 LSL #2  bit 2
+```
+
+Deux bits puis un bit isole, c'est la forme d'une longueur de mot et d'un
+temoin de parite ou de bit d'arret.
+
+**La cadence.** La fonction en `0x000047C4` rend la frequence de l'horloge
+peripherique : les trois bits bas de `0x4500000C` choisissent la source, par une
+table de sauts, dont une branche vaut douze millions ; `0x45000010` porte
+ensuite un decalage a droite. C'est cette valeur qu'un pilote divise pour
+obtenir ses bauds, et c'est la qu'il faudra retomber sur les 460800 annonces.
+
+**Une jumelle en `0x4000A000`.** Son `+0x14` est lu au meme moment, depuis
+`0x00004DD4`, un code voisin de celui de `0x4000B000`. Deux exemplaires du meme
+bloc, donc, ce qui cadre avec le `** UART Monitor Service **` que porte le
+firmware : l'une des deux est vraisemblablement la console de mise au point,
+l'autre le lien vers l'exterieur.
+
+**Ce qui reste a faire dessus.** Modeliser le bloc, en commencant par rendre le
+bit 6 de `+0x14` toujours pose pour debloquer la boucle d'emission, puis relever
+ce que le firmware ecrit en `+0x00`, `+0x04` et `+0x28`. `MMIO_FORCE` suffit
+pour le premier essai, mais il ne suffit pas seul : force a `0x40`, le firmware
+ne progresse pas encore, il faut donc comprendre le bit 10 avant.
+
+**Attention aux balayages de pages.** Le balayage des paires MOVW puis MOVT sur
+les seize mega-octets ne voyait pas `0x4000B000`, parce que l'adresse ne se
+forme pas par une paire immediate mais se lit dans une structure. Il avance en
+plus de deux octets en deux octets sans suivre les frontieres d'instruction,
+donc il decode aussi des donnees. La comparaison de deux executions, elle, ne
+suppose rien : c'est ce qui a trouve la page.
 
 **Une page tres sollicitee que personne n'a modelisee : `0x4000E000`.** Le
 datasheet l'annonce en I2S4. Releve sur Jade Forest et sur Water, avec le meme
