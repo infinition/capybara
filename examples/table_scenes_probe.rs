@@ -22,7 +22,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use tamagotchi_paradise_rs::emulator::Machine;
+use capybara::emulator::Machine;
 
 /// Une entree de la table, telle qu'on la lit.
 struct Scene {

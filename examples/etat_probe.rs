@@ -7,8 +7,8 @@
 //! C'est le moyen le plus court d'examiner un blocage signale par un joueur :
 //! il n'y a pas a refaire toute la mise en route du jeu.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::{Machine, StepResult};
 
 fn main() {
     let mut a = std::env::args().skip(1);

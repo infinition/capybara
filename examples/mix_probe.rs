@@ -1,6 +1,6 @@
 //! Temporaire : distribution des instructions executees, pour guider le decodage.
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::{Machine, StepResult};
 
 fn main() {
     let mut a = std::env::args().skip(1);

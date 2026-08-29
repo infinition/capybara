@@ -8,8 +8,8 @@
 //! pilote les programme en 0x000044B8 avant de poser son bit de depart.
 
 use std::io::Write;
-use tamagotchi_paradise_rs::emulator::peripherals::dma;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::peripherals::dma;
+use capybara::emulator::{Machine, StepResult};
 
 /// Instruction qui pose le bit de depart du canal, en PRAM.
 const DEPART_CANAL: u32 = 0x0000_4576;

@@ -7,9 +7,9 @@
 //! seconde de console vaut 96 millions de cycles, ce que le firmware declare en
 //! armant son SysTick a 95999 pour une milliseconde.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::peripherals::snsys::CYCLES_PAR_SECONDE;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::peripherals::snsys::CYCLES_PAR_SECONDE;
+use capybara::emulator::{Machine, StepResult};
 
 fn main() {
     let mut a = std::env::args().skip(1);

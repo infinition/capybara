@@ -3,8 +3,8 @@
 //!
 //! Usage : cargo run --release --example irq_probe -- <dump.bin> <cle hex> [budget]
 
-use tamagotchi_paradise_rs::emulator::cpu::registers::Mode;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::cpu::registers::Mode;
+use capybara::emulator::{Machine, StepResult};
 
 fn main() {
     let mut a = std::env::args().skip(1);

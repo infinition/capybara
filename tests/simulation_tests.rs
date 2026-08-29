@@ -1,12 +1,12 @@
-use tamagotchi_paradise_rs::core::evolution::{EvolutionManager, GrowthStage, Species};
-use tamagotchi_paradise_rs::core::garden::ParadiseIsland;
-use tamagotchi_paradise_rs::core::items::get_default_catalog;
-use tamagotchi_paradise_rs::core::minigames::{BerryCatchState, ParadiseWheelState};
-use tamagotchi_paradise_rs::core::pet::{Pet, PetActionFeedback};
-use tamagotchi_paradise_rs::core::secrets::{SecretCodeManager, SecretReward};
-use tamagotchi_paradise_rs::hw_bridge::flash_map::FlashInspector;
-use tamagotchi_paradise_rs::hw_bridge::uart_pcom::UartBridge;
-use tamagotchi_paradise_rs::i18n::{I18n, Language};
+use capybara::core::evolution::{EvolutionManager, GrowthStage, Species};
+use capybara::core::garden::ParadiseIsland;
+use capybara::core::items::get_default_catalog;
+use capybara::core::minigames::{BerryCatchState, ParadiseWheelState};
+use capybara::core::pet::{Pet, PetActionFeedback};
+use capybara::core::secrets::{SecretCodeManager, SecretReward};
+use capybara::hw_bridge::flash_map::FlashInspector;
+use capybara::hw_bridge::uart_pcom::UartBridge;
+use capybara::i18n::{I18n, Language};
 
 #[test]
 fn test_pet_lifecycle_and_feeding() {

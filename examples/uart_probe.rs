@@ -26,8 +26,8 @@
 
 use std::collections::BTreeSet;
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::{Machine, StepResult};
 
 const SECONDE: f64 = 96_000_000.0;
 const SCENE: u32 = 0x1800_1BF4;
@@ -83,7 +83,7 @@ fn main() {
             println!(
                 "      {:#010x}  {}",
                 page,
-                tamagotchi_paradise_rs::emulator::mmu::periph::name_of(*page)
+                capybara::emulator::mmu::periph::name_of(*page)
             );
         }
         if scene == cible {
@@ -105,7 +105,7 @@ fn main() {
         println!(
             "  {:#010x}  {:<10} lectures {:>8}  ecritures {:>8}  derniere {:#010x}  premier PC {:#010x}",
             adresse,
-            tamagotchi_paradise_rs::emulator::mmu::periph::name_of(adresse & !0xFFF),
+            capybara::emulator::mmu::periph::name_of(adresse & !0xFFF),
             s.reads,
             s.writes,
             s.last_write,

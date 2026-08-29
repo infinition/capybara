@@ -8,8 +8,8 @@
 //!
 //! Usage : cargo run --release --example race_probe -- <dump.bin> <cle hex>
 
-use tamagotchi_paradise_rs::emulator::peripherals::crc::{ChecksumUnit, POLY_ARC_REFLECHI};
-use tamagotchi_paradise_rs::emulator::{Machine, Mode, StepResult};
+use capybara::emulator::peripherals::crc::{ChecksumUnit, POLY_ARC_REFLECHI};
+use capybara::emulator::{Machine, Mode, StepResult};
 
 /// Zone ou vit l'etat du jeu, celle que le firmware sauvegarde.
 const ETAT: u32 = 0x1800_0BA0;

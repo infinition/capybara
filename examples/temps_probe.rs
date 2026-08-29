@@ -9,8 +9,8 @@
 //! modelise pas. Cette sonde tranche : elle nomme les registres scrutes et le
 //! code qui les scrute.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::{Machine, StepResult};
 
 /// Cycles du coeur pour une seconde de temps console, le SysTick etant arme a
 /// 95999 pour une milliseconde.
@@ -79,7 +79,7 @@ fn main() {
     // Compter les entrees en exception par l'adresse du gestionnaire : le coeur
     // ne tient pas l'IPSR, seul le passage en mode Handler est observable.
     let mut entrees = std::collections::BTreeMap::<u32, u64>::new();
-    let mut en_handler = matches!(m.cpu.regs.mode, tamagotchi_paradise_rs::emulator::Mode::Handler);
+    let mut en_handler = matches!(m.cpu.regs.mode, capybara::emulator::Mode::Handler);
     // Histogramme des adresses executees : une boucle morte s'y voit tout de
     // suite, la ou les compteurs de peripheriques ne disent rien.
     let mut chaud = std::collections::BTreeMap::<u32, u64>::new();
@@ -113,7 +113,7 @@ fn main() {
             break;
         }
         let maintenant =
-            matches!(m.cpu.regs.mode, tamagotchi_paradise_rs::emulator::Mode::Handler);
+            matches!(m.cpu.regs.mode, capybara::emulator::Mode::Handler);
         if maintenant && !en_handler {
             *entrees.entry(m.cpu.regs.pc).or_default() += 1;
         }

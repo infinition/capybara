@@ -1,0 +1,75 @@
+name: Release
+
+# Une etiquette v* publie une release avec l'executable Windows et le journal
+# des commits depuis l'etiquette precedente.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tout l'historique et toutes les etiquettes : sans cela on ne peut
+          # pas retrouver l'etiquette precedente pour faire le journal.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compiler
+        run: cargo build --release --locked
+
+      - name: Verifier qu'aucune donnee de console n'est publiee
+        shell: bash
+        run: |
+          set -e
+          # Garde-fou : la release ne doit jamais emporter de dump, de
+          # sauvegarde ni de cle. Le seul binaire embarque est l'icone.
+          if git ls-files | grep -iE '\.bin$|\.tamastate$|\.tamasave$|cle-device'; then
+            echo "Fichier interdit suivi par git"
+            exit 1
+          fi
+          echo "Aucun fichier interdit"
+
+      - name: Preparer l'archive
+        shell: bash
+        run: |
+          set -e
+          mkdir -p paquet
+          cp target/release/capybara.exe paquet/
+          cp README.md LICENSE index.html paquet/
+          7z a "capybara-${GITHUB_REF_NAME}-windows-x64.zip" ./paquet/*
+
+      - name: Journal depuis l'etiquette precedente
+        id: journal
+        shell: bash
+        run: |
+          set -e
+          precedente=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -z "$precedente" ]; then
+            echo "Premiere version." > journal.md
+            echo "" >> journal.md
+            git log --pretty=format:'- %s' "${GITHUB_REF_NAME}" >> journal.md
+          else
+            echo "Changements depuis \`${precedente}\`." > journal.md
+            echo "" >> journal.md
+            git log --pretty=format:'- %s' "${precedente}..${GITHUB_REF_NAME}" >> journal.md
+          fi
+          echo "" >> journal.md
+          echo "" >> journal.md
+          echo "Capybara ne contient aucune donnee de console. Il vous faut le dump de votre propre appareil et sa cle, lue en SWD." >> journal.md
+
+      - name: Publier
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Capybara ${{ github.ref_name }}
+          body_path: journal.md
+          files: capybara-${{ github.ref_name }}-windows-x64.zip

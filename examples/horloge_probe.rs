@@ -8,8 +8,8 @@
 //! tenu en logiciel. Le seul moyen de trouver ou, c'est de comparer la memoire
 //! avant et apres une duree connue.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::{Machine, StepResult};
 
 /// Cycles du coeur pour une seconde de temps console, le SysTick etant arme a
 /// 95999 pour une milliseconde.

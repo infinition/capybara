@@ -10,8 +10,8 @@
 //! cette signature. La sonde rend les adresses candidates et le pas entre
 //! elles, ce qui donne la base et la taille d'une entree.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::{Machine, StepResult};
 
 const SECONDE: f64 = 96_000_000.0;
 const HORLOGE: u32 = 0x05B8_D800;

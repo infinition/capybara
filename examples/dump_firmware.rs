@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use tamagotchi_paradise_rs::emulator::Machine;
+use capybara::emulator::Machine;
 
 fn main() {
     let mut args = std::env::args().skip(1);

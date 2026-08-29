@@ -1,10 +1,10 @@
-use tamagotchi_paradise_rs::emulator::cpu::registers::Registers;
-use tamagotchi_paradise_rs::emulator::cpu::thumb16::{StepResult, Thumb16};
-use tamagotchi_paradise_rs::emulator::cpu::thumb32::Thumb32;
-use tamagotchi_paradise_rs::emulator::cpu::Nvic;
-use tamagotchi_paradise_rs::emulator::mmu::{map, periph, MemoryBus};
-use tamagotchi_paradise_rs::emulator::peripherals::Peripherals;
-use tamagotchi_paradise_rs::emulator::Machine;
+use capybara::emulator::cpu::registers::Registers;
+use capybara::emulator::cpu::thumb16::{StepResult, Thumb16};
+use capybara::emulator::cpu::thumb32::Thumb32;
+use capybara::emulator::cpu::Nvic;
+use capybara::emulator::mmu::{map, periph, MemoryBus};
+use capybara::emulator::peripherals::Peripherals;
+use capybara::emulator::Machine;
 
 /// Dump de la console de l'auteur, absent du depot. Les tests qui en dependent
 /// sont neutres quand il n'est pas la.
@@ -751,7 +751,7 @@ fn lire_r15_rend_le_pc_architectural() {
 
 #[test]
 fn le_retour_d_exception_restaure_le_contexte() {
-    use tamagotchi_paradise_rs::emulator::Mode;
+    use capybara::emulator::Mode;
 
     let mut machine = Machine::new();
     machine.bus.pram.load(&[0u8; 256]);
@@ -944,7 +944,7 @@ fn le_port_relit_ses_sorties_et_le_niveau_de_ses_entrees() {
 #[test]
 fn le_te_de_l_ecran_bat_sur_la_broche_dix_du_port_un() {
     let mut periph = Peripherals::default();
-    let demi = tamagotchi_paradise_rs::emulator::peripherals::gpio_port::TE_DEMI_PERIODE;
+    let demi = capybara::emulator::peripherals::gpio_port::TE_DEMI_PERIODE;
 
     let etat = |p: &Peripherals| (p.port1.read_reg(0) >> 10) & 1;
     let depart = etat(&periph);
@@ -956,7 +956,7 @@ fn le_te_de_l_ecran_bat_sur_la_broche_dix_du_port_un() {
 
 #[test]
 fn le_front_du_te_leve_une_interruption_quand_elle_est_autorisee() {
-    use tamagotchi_paradise_rs::emulator::peripherals::gpio_port::{TE_DEMI_PERIODE, TE_PIN};
+    use capybara::emulator::peripherals::gpio_port::{TE_DEMI_PERIODE, TE_PIN};
     let mut periph = Peripherals::default();
     let demi = TE_DEMI_PERIODE as u32;
 
@@ -981,7 +981,7 @@ fn le_front_du_te_leve_une_interruption_quand_elle_est_autorisee() {
 
 #[test]
 fn le_canal_de_transfert_recopie_puis_signale_sa_fin() {
-    use tamagotchi_paradise_rs::emulator::peripherals::dma;
+    use capybara::emulator::peripherals::dma;
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();
     let mut nvic = Nvic::default();
@@ -1080,7 +1080,7 @@ fn le_registre_de_configuration_de_la_flash_se_relit() {
 
 #[test]
 fn le_convertisseur_de_pile_rend_son_echantillon_et_enchaine() {
-    use tamagotchi_paradise_rs::emulator::peripherals::adc_pile;
+    use capybara::emulator::peripherals::adc_pile;
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();
     let mut nvic = Nvic::default();
@@ -1425,8 +1425,8 @@ fn les_entrees_du_port_2_sont_hautes_au_repos() {
 // s'eteint. A ne pas confondre avec les instantanes, qui figent toute la
 // machine pour la mise au point.
 mod sauvegarde_persistante {
-    use tamagotchi_paradise_rs::emulator::sauvegarde::Sauvegarde;
-    use tamagotchi_paradise_rs::emulator::Machine;
+    use capybara::emulator::sauvegarde::Sauvegarde;
+    use capybara::emulator::Machine;
 
     /// Les pages ecrites par le jeu font l'aller retour sans perte.
     #[test]

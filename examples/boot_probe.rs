@@ -6,7 +6,7 @@
 //! registres non modelises qu'il touche avant de caler.
 
 use std::collections::BTreeMap;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult, StopReason};
+use capybara::emulator::{Machine, StepResult, StopReason};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -44,7 +44,7 @@ fn main() {
     // ETAT=chemin.tamastate repart d'un instantane pris dans l'interface, ce qui
     // evite de rejouer toute la mise en route du jeu.
     if let Ok(chemin) = std::env::var("ETAT") {
-        match tamagotchi_paradise_rs::emulator::etat::Instantane::lire(
+        match capybara::emulator::etat::Instantane::lire(
             std::path::Path::new(&chemin),
         ) {
             Ok(etat) => {
@@ -253,7 +253,7 @@ fn main() {
     // Le mode compte autant que PRIMASK : notre coeur ne prend une exception
     // que depuis le mode Thread, donc un retour d'exception manque se voit ici.
     let mode = match m.cpu.regs.mode {
-        tamagotchi_paradise_rs::emulator::cpu::registers::Mode::Thread => "Thread",
+        capybara::emulator::cpu::registers::Mode::Thread => "Thread",
         _ => "Handler",
     };
     println!("  VTOR={:#010x}  PRIMASK={}  mode={}", n.vtor, m.cpu.regs.primask, mode);

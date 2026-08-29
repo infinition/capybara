@@ -1,7 +1,10 @@
 [package]
-name = "tamagotchi-paradise-rs"
+name = "capybara"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-only"
+description = "Emulateur bare-metal du Sonix SNC73410, compatible avec le firmware Tamagotchi Paradise"
+repository = "https://github.com/infinition/capybara"
 
 [dependencies]
 # Moteur wgpu et non glow. Sur Windows, le compositeur du bureau ignore la

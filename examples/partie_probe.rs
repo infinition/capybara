@@ -9,9 +9,9 @@
 //! jouee". Sans lui, la sonde se contente d'ouvrir l'emplacement et de faire
 //! demarrer la console dessus, ce que fait l'interface au lancement.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::sauvegarde::{self, Sauvegarde};
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::sauvegarde::{self, Sauvegarde};
+use capybara::emulator::{Machine, StepResult};
 
 const SECONDE: f64 = 96_000_000.0;
 

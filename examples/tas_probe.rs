@@ -9,8 +9,8 @@
 //! aucun trou ne convient il saute a l'assertion de 0x1005B4AC, qui boucle sur
 //! place. Cette sonde dit s'il reste de la place, et ou elle est partie.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::{Machine, StepResult};
 
 const SECONDE: f64 = 96_000_000.0;
 

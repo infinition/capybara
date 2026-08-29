@@ -4,7 +4,7 @@
 //! Usage : cargo run --release --example clock_probe -- <dump.bin> <deviceKey hex>
 
 use std::collections::BTreeMap;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::{Machine, StepResult};
 
 fn main() {
     let mut args = std::env::args().skip(1);

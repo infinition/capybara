@@ -4,7 +4,7 @@
 //! Usage : cargo run --release --example dis_probe --
 //!             <dump.bin> <cle hex> <adresse hex> [nombre d'instructions]
 
-use tamagotchi_paradise_rs::emulator::Machine;
+use capybara::emulator::Machine;
 
 fn main() {
     let mut a = std::env::args().skip(1);

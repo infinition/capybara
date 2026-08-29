@@ -10,8 +10,8 @@
 //! ce que la console touche a partir de la. Le buzzer se signale ainsi tout
 //! seul, sans avoir a deviner sa page.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::{Machine, StepResult};
 
 const SECONDE: f64 = 96_000_000.0;
 /// Entree de `jouer_son(identifiant, volume)`.

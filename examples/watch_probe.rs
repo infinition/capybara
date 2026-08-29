@@ -4,7 +4,7 @@
 //! Usage : cargo run --release --example watch_probe --
 //!             <dump.bin> <cle hex> <adresse hex> [visite] [budget]
 
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::{Machine, StepResult};
 
 fn main() {
     let mut a = std::env::args().skip(1);
@@ -35,7 +35,7 @@ fn main() {
     // ETAT=chemin.tamastate repart d'un instantane pris dans l'interface. Cela
     // evite de rejouer toute la mise en route du jeu pour atteindre un blocage.
     if let Ok(chemin) = std::env::var("ETAT") {
-        match tamagotchi_paradise_rs::emulator::etat::Instantane::lire(
+        match capybara::emulator::etat::Instantane::lire(
             std::path::Path::new(&chemin),
         ) {
             Ok(etat) => {

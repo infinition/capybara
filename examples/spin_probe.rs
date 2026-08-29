@@ -4,7 +4,7 @@
 //! Usage : cargo run --release --example spin_probe -- <dump.bin> <cle hex>
 
 use std::collections::HashMap;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::{Machine, StepResult};
 
 fn main() {
     let mut args = std::env::args().skip(1);

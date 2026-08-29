@@ -9,8 +9,8 @@
 //! entend est donc l'ordre et le rythme de la vraie machine, sans rien devoir a
 //! la cadence d'affichage.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::{Machine, StepResult};
 
 const SECONDE: f64 = 96_000_000.0;
 const TAUX: u32 = 44_100;

@@ -12,9 +12,9 @@
 //! a lui meme, en relevant les pages avant et apres dans la meme execution. Une
 //! page deja ouverte n'y ressort jamais. Ici on compare deux executions.
 
-use tamagotchi_paradise_rs::emulator::etat::Instantane;
-use tamagotchi_paradise_rs::emulator::mmu::periph;
-use tamagotchi_paradise_rs::emulator::{Machine, StepResult};
+use capybara::emulator::etat::Instantane;
+use capybara::emulator::mmu::periph;
+use capybara::emulator::{Machine, StepResult};
 
 const SECONDE: f64 = 96_000_000.0;
 const SCENE: u32 = 0x1800_1BF4;
@@ -107,7 +107,7 @@ fn main() {
         horloge = (m.cpu.cycles - depart) as f64 / SECONDE;
     }
 
-    let nom = tamagotchi_paradise_rs::emulator::scenes::TableScenes::reperer(
+    let nom = capybara::emulator::scenes::TableScenes::reperer(
         &m.bus.flash.data,
         m.periph.xip.base,
     )
@@ -146,7 +146,7 @@ fn main() {
     println!("# {} registres sur {} pages", v.len(), pages(&v));
 }
 
-fn pages(v: &[(u32, tamagotchi_paradise_rs::emulator::mmu::MmioStat)]) -> usize {
+fn pages(v: &[(u32, capybara::emulator::mmu::MmioStat)]) -> usize {
     let p: std::collections::BTreeSet<u32> = v.iter().map(|(a, _)| a & !0xFFF).collect();
     p.len()
 }
