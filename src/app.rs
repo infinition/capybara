@@ -108,8 +108,14 @@ fn open_dossier(chemin: &std::path::Path) -> std::io::Result<()> {
 /// Onglet du panneau lateral.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Onglet {
-    /// Console, partie, points de reprise, diagnostic.
+    /// Chargement du dump, console du firmware, vitesse et diagnostic.
     Console,
+    /// Points de reprise et emplacements de sauvegarde.
+    Sauvegardes,
+    /// Registres, memoire, desassemblage. Ces panneaux coutent plus cher a
+    /// dessiner que l'emulation n'en gagne a tourner : les mettre dans leur
+    /// propre onglet suffit a ne les payer que quand on les regarde.
+    Inspection,
     /// Habillage de la coque.
     Personnalisation,
 }
@@ -2387,6 +2393,8 @@ impl eframe::App for TamagotchiApp {
                     ui.horizontal_wrapped(|ui| {
                         for (onglet, nom) in [
                             (Onglet::Console, "Console"),
+                            (Onglet::Sauvegardes, "Sauvegardes"),
+                            (Onglet::Inspection, "Inspection"),
                             (Onglet::Personnalisation, "Personnalisation"),
                         ] {
                             if ui.selectable_label(self.onglet == onglet, nom).clicked() {
@@ -2417,6 +2425,10 @@ impl eframe::App for TamagotchiApp {
                         );
                         return;
                     }
+
+                    // Chaque onglet sort par un retour anticipe : le contenu
+                    // reste ecrit a la suite, et un seul bloc s'execute.
+                    if self.onglet == Onglet::Console {
 
                     // Firmware File Loader Box
                     ui.group(|ui| {
@@ -2654,21 +2666,25 @@ impl eframe::App for TamagotchiApp {
                             });
                     });
 
-                    ui.separator();
-                    ui.group(|ui| {
-                        self.dessiner_les_reprises(ui);
-                    });
+                    } // fin de l'onglet Console
 
-
-                    // Les panneaux d'inspection coutent plus cher a dessiner que
-                    // l'emulation n'en gagne a tourner : ils restent replies par
-                    // defaut, et le debit affiche dit tout de suite ce qu'ils
-                    // prennent.
-                    if !self.show_debugger {
+                    // Les sauvegardes et les points de reprise avaient leur
+                    // place en bas de la console, donc hors de vue des que la
+                    // fenetre n'etait pas en plein ecran. Ils ont leur onglet.
+                    if self.onglet == Onglet::Sauvegardes {
+                        ui.group(|ui| {
+                            self.dessiner_les_reprises(ui);
+                        });
                         return;
                     }
 
-                    ui.separator();
+                    // Les panneaux d'inspection coutent plus cher a dessiner que
+                    // l'emulation n'en gagne a tourner. Leur onglet suffit a ne
+                    // les payer que quand on les regarde, et le debit affiche
+                    // dit tout de suite ce qu'ils prennent.
+                    if self.onglet != Onglet::Inspection {
+                        return;
+                    }
 
                     // CPU Registers Inspector
                     CpuPanel::render(
