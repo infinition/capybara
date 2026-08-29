@@ -9,7 +9,7 @@ use crate::audio::AudioEngine;
 use crate::emulator::Machine;
 use crate::gui::{ActiveModal, GuiWidgets, ShellColor};
 use crate::hw_bridge::FlashInspector;
-use crate::i18n::{I18n, Language};
+use crate::i18n::I18n;
 use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
 /// Entete repliable du menu du clic droit, une seule section ouverte a la fois.
@@ -146,7 +146,6 @@ pub struct TamagotchiApp {
     pub audio: AudioEngine,
     pub i18n: I18n,
     pub shell_color: ShellColor,
-    pub show_debugger: bool,
     pub hex_base_addr: u32,
     pub last_frame_time: std::time::Instant,
     pub load_path_input: String,
@@ -184,8 +183,6 @@ pub struct TamagotchiApp {
     /// d'egui survit a la fermeture du menu, et on le retrouvait ouvert au
     /// clic droit suivant. Elle est refermee des que le menu se ferme.
     section_menu: Option<u8>,
-    /// Vue de restauration ouverte.
-    pub voir_reprises: bool,
     /// Habillage de la console courante : papier, titre et vitre.
     pub fond: crate::gui::fond::Habillage,
     /// Texture du papier, papier et masque deja cuits ensemble.
@@ -300,7 +297,6 @@ impl TamagotchiApp {
             audio,
             i18n,
             shell_color: ShellColor::BlueWater,
-            show_debugger: false,
             hex_base_addr: 0x6001_1000,
             last_frame_time: std::time::Instant::now(),
             load_path_input: String::new(),
@@ -318,7 +314,6 @@ impl TamagotchiApp {
             reprises: crate::emulator::reprises::Journal::default(),
             onglet: Onglet::Console,
             section_menu: None,
-            voir_reprises: false,
             fond: crate::gui::fond::Habillage::default(),
             fond_texture: None,
             chapeau_texture: None,
@@ -1021,6 +1016,26 @@ impl TamagotchiApp {
     /// Tout y est retenu par console, comme le papier de la vraie machine suit
     /// la coque et non le Tamagotchi.
     fn dessiner_l_habillage(&mut self, ui: &mut egui::Ui, ctx: &Context) {
+        // Le modele de coque ouvre la personnalisation : c'est le choix dont
+        // tous les autres dependent, puisqu'il donne les couleurs de depart.
+        // Il etait dans la barre du haut, ou il n'avait rien a voir avec le
+        // reste et poussait la barre hors de l'ecran.
+        ui.group(|ui| {
+            ui.label(egui::RichText::new("Modele de coque").strong());
+            ui.horizontal_wrapped(|ui| {
+                for coque in ShellColor::TOUTES {
+                    if ui.selectable_label(self.shell_color == coque, coque.nom()).clicked() {
+                        self.shell_color = coque;
+                    }
+                }
+            });
+            ui.label(
+                egui::RichText::new("Donne les couleurs de depart. Chaque reglage ci dessous s'y substitue.")
+                    .small(),
+            );
+        });
+        ui.add_space(8.0);
+
         ui.label(egui::RichText::new("Habillage de la coque").strong());
         let Some(dossier) = self.dossier_du_papier() else {
             ui.label(egui::RichText::new("Charge une console d'abord.").small());
@@ -2331,49 +2346,10 @@ impl eframe::App for TamagotchiApp {
                     self.mode = Mode::Accueil;
                 }
                 self.menu_des_consoles(ui);
-                if ui.button(if self.show_debugger { "Masquer l'inspection" } else { "Afficher l'inspection" }).clicked() {
-                    self.show_debugger = !self.show_debugger;
-                }
-
-                if ui.button("💾 Inspecteur Flash").clicked() {
-                    self.active_modal = ActiveModal::FlashInspector;
-                }
-
-                ui.separator();
-
-                ui.label("Son :");
-                if ui
-                    .selectable_label(self.audio.enabled, if self.audio.enabled { "actif" } else { "coupe" })
-                    .clicked()
-                {
-                    self.audio.enabled = !self.audio.enabled;
-                }
-                ui.add(
-                    egui::Slider::new(&mut self.audio.volume, 0.0..=1.0)
-                        .show_value(false)
-                        .text(""),
-                );
-                ui.label("Hauteur :");
-                for (nom, h) in [("/2", 0.5_f32), ("x1", 1.0), ("x2", 2.0), ("x4", 4.0)] {
-                    if ui
-                        .selectable_label((self.audio.hauteur - h).abs() < 0.01, nom)
-                        .clicked()
-                    {
-                        self.audio.hauteur = h;
-                    }
-                }
-
-                ui.separator();
-
-                ui.label("Shell Color:");
-                for coque in ShellColor::TOUTES {
-                    if ui.selectable_label(self.shell_color == coque, coque.nom()).clicked() {
-                        self.shell_color = coque;
-                    }
-                }
-                if ui.selectable_label(self.i18n.language() == Language::En, "EN").clicked() {
-                    self.i18n.set_language(Language::En);
-                }
+                // Le son, la coque et l'inspecteur de flash sont partis dans
+                // les onglets qui les concernent. Entasses ici, ils poussaient
+                // la barre hors de l'ecran des que la fenetre n'etait pas en
+                // plein ecran, et rien ne laissait deviner ce qui manquait.
             });
         });
 
@@ -2454,7 +2430,13 @@ impl eframe::App for TamagotchiApp {
                         }
                     });
 
-                    ui.separator();
+                    } // fin du chargement du dump, onglet Console
+
+                    // La sauvegarde de la console rejoint les points de reprise
+                    // dans son onglet : les deux parlent de ce qui survit a
+                    // l'extinction, meme si l'une est la flash du jeu et
+                    // l'autre un instantane de mise au point.
+                    if self.onglet == Onglet::Sauvegardes {
 
                     // Sauvegarde de la console. Elle n'a rien a voir avec les
                     // instantanes : ici on ne garde que ce que le jeu a ecrit
@@ -2530,12 +2512,52 @@ impl eframe::App for TamagotchiApp {
                         );
                     });
 
+                        ui.separator();
+                        ui.group(|ui| {
+                            self.dessiner_les_reprises(ui);
+                        });
+                        return;
+                    } // fin de l'onglet Sauvegardes
+
+                    if self.onglet == Onglet::Console {
                     ui.separator();
 
-                    // Vitesse et diagnostic : de quoi jouer, puis rapporter un
-                    // blocage sans avoir a relire la trace.
+                    // Vitesse, son et serveur : tout ce qui sert a jouer, au
+                    // meme endroit. Le son etait dans la barre du haut, loin de
+                    // la vitesse alors que les deux reglent la meme chose, la
+                    // facon dont la console se rend.
                     ui.group(|ui| {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(egui::RichText::new("Son :").strong());
+                            if ui
+                                .selectable_label(
+                                    self.audio.enabled,
+                                    if self.audio.enabled { "actif" } else { "coupe" },
+                                )
+                                .clicked()
+                            {
+                                self.audio.enabled = !self.audio.enabled;
+                            }
+                            ui.add(
+                                egui::Slider::new(&mut self.audio.volume, 0.0..=1.0)
+                                    .show_value(false)
+                                    .text("volume"),
+                            );
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(egui::RichText::new("Hauteur :").strong());
+                            for (nom, h) in [("/2", 0.5_f32), ("x1", 1.0), ("x2", 2.0), ("x4", 4.0)]
+                            {
+                                if ui
+                                    .selectable_label((self.audio.hauteur - h).abs() < 0.01, nom)
+                                    .clicked()
+                                {
+                                    self.audio.hauteur = h;
+                                }
+                            }
+                        });
+                        ui.separator();
+                        ui.horizontal_wrapped(|ui| {
                             ui.label(egui::RichText::new("Vitesse :").strong());
                             // Deux positions, et pas davantage. L'emulation
                             // tient tout juste le temps reel : au dessus, la
@@ -2646,6 +2668,19 @@ impl eframe::App for TamagotchiApp {
                             .small(),
                         );
 
+                    });
+                    return;
+                    } // fin de l'onglet Console
+
+                    // Le diagnostic sert a rapporter un blocage : sa place est
+                    // avec les registres et la memoire, pas avec les commandes
+                    // de jeu. L'inspecteur de flash le suit, pour la meme
+                    // raison.
+                    if self.onglet == Onglet::Inspection {
+                    ui.group(|ui| {
+                        if ui.button("💾 Inspecteur Flash").clicked() {
+                            self.active_modal = ActiveModal::FlashInspector;
+                        }
                         let rapport = self.diagnostic();
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("Diagnostic").strong());
@@ -2657,7 +2692,7 @@ impl eframe::App for TamagotchiApp {
                         });
                         egui::ScrollArea::vertical()
                             .max_height(170.0)
-                            .id_source("diagnostic")
+                            .id_salt("diagnostic")
                             .show(ui, |ui| {
                                 ui.add(
                                     egui::Label::new(egui::RichText::new(&rapport).monospace().small())
@@ -2666,19 +2701,10 @@ impl eframe::App for TamagotchiApp {
                             });
                     });
 
-                    } // fin de l'onglet Console
+                    } // fin du diagnostic, onglet Inspection
 
-                    // Les sauvegardes et les points de reprise avaient leur
-                    // place en bas de la console, donc hors de vue des que la
-                    // fenetre n'etait pas en plein ecran. Ils ont leur onglet.
-                    if self.onglet == Onglet::Sauvegardes {
-                        ui.group(|ui| {
-                            self.dessiner_les_reprises(ui);
-                        });
-                        return;
-                    }
-
-                    // Les panneaux d'inspection coutent plus cher a dessiner que
+                    // Les panneaux qui suivent, registres, memoire et
+                    // desassemblage, coutent plus cher a dessiner que
                     // l'emulation n'en gagne a tourner. Leur onglet suffit a ne
                     // les payer que quand on les regarde, et le debit affiche
                     // dit tout de suite ce qu'ils prennent.
