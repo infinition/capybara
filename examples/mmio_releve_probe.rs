@@ -107,7 +107,13 @@ fn main() {
         horloge = (m.cpu.cycles - depart) as f64 / SECONDE;
     }
 
-    println!("# scene {}", scene);
+    let nom = tamagotchi_paradise_rs::emulator::scenes::TableScenes::reperer(
+        &m.bus.flash.data,
+        m.periph.xip.base,
+    )
+    .and_then(|t| t.nom(scene).map(str::to_string))
+    .unwrap_or_else(|| "?".to_string());
+    println!("# scene {} {}", scene, nom);
     println!("# {} secondes de temps console", secondes);
     let mut v: Vec<_> = m.bus.mmio_trace.all.iter().map(|(a, s)| (*a, *s)).collect();
     v.sort_by_key(|(a, _)| *a);
