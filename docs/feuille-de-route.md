@@ -74,46 +74,50 @@ est donc juste. Les scenes qui nous interessent :
 Le firmware porte aussi un `** UART Monitor Service Ver.%d.%02d **` et des
 entrees de menu `UART BYTE`, `UART AGEING`, `UART TEST` et `TAMA HOME`.
 
-**Le peripherique est probablement en `0x40038000`.** Les bases materielles ne
-sont pas dans les pools litteraux, le firmware les forme en MOVW puis MOVT. En
-decodant ces paires sur la fenetre XIP, cette page ressort douze fois, la seule
-du groupe des communications. Et le code qui s'en sert la scrute bit a bit :
-en `0x100054E2` il lit `0x40038000`, en extrait le bit 4 et branche ; juste
-apres il relit le meme mot et en extrait le bit 9. C'est la forme d'un registre
-d'etat de port serie, pret a emettre et donnee recue.
+**`0x40038000` n'est pas le port serie.** J'ai cru le contraire une heure
+durant : la page ressort douze fois dans la fenetre XIP, seule de son groupe,
+et le code la scrute bit a bit. Le pilote lu jusqu'au bout dit autre chose.
 
-Or la note heritee donne cette page pour un accelerateur de somme de controle.
-Les deux ne sont pas forcement incompatibles, mais c'est exactement le genre de
-conclusion qu'il faut refaire plutot que croire.
+Sa fonction de configuration, en `0x10005560`, recoit une adresse qu'elle
+compare a `0x18000000`, donc un tampon en memoire vive, et une longueur. Sa
+fonction d'attente, en `0x10005534`, boucle sur le temoin d'etat, coupe
+l'autorisation de marche, puis lit `+0x1C` et le rend a l'appelant. Une adresse,
+une longueur, un depart, une attente, un resultat : c'est un accelerateur qui
+calcule une valeur sur un bloc de memoire. La note heritee avait raison, et
+c'est moi qui l'ai mise en doute a tort.
 
-**La banque de registres, relevee.** Le code forme huit adresses exactes, de
-`0x40038000` a `0x4003801C`, toutes depuis un seul bloc entre `0x100054E0` et
-`0x100056F0`. La fonction de configuration se lit sans ambiguite :
+La banque reste utile a consigner, elle servira le jour ou ce bloc sera
+modelise :
 
 ```text
-  +0x00  controle. On efface le bit 4 puis le bit 0 avant de toucher au reste,
-         et on repose le bit 4 a la fin : c'est l'autorisation de marche.
-         Le bit 4 et le bit 9 de ce meme mot sont scrutes en 0x100054E2 et
-         0x100054FC, ce sont des temoins d'etat.
-  +0x04  parametre entier, pose depuis la pile
-  +0x08  parametre entier, pose depuis la pile
+  +0x00  controle et etat. Bit 4 : autorisation de marche, efface avant de
+         configurer, repose pour lancer, efface a la fin. Bits 4 et 9 scrutes
+         comme temoins d'achevement.
+  +0x04  adresse du tampon, verifiee en memoire vive
+  +0x08  longueur
   +0x0C  mis a 1 a la configuration
   +0x10  mis a 1 a la configuration
-  +0x14  format. Bit 0 et bit 1 poses un a un depuis deux parametres, et un
-         champ de cinq bits en 4..8 qui recoit n moins un : c'est un nombre
-         de bits par transfert.
-  +0x18  parametre entier pose d'un bloc, sans masque : la vitesse.
-  +0x1C  touche en 0x10005556
+  +0x14  format : deux bits de mode, et un champ de cinq bits en 4..8 qui
+         recoit un nombre moins un
+  +0x18  parametre pose d'un bloc
+  +0x1C  resultat, lu a la fin
 ```
 
-Le champ « n moins un » sur cinq bits vaut pour un port serie comme pour un
-port synchrone : il ne tranche pas a lui seul entre les deux lectures de cette
-page.
+**Ce qu'on sait du lien physique.** 460800 bauds, niveaux 3,3 V, adaptateur de
+type CH341A ou CH347. Cela vient de la communaute, pas de notre mesure, mais
+c'est une valeur precise a confronter au diviseur qu'on trouvera.
 
-**Le prochain pas.** Trouver l'appelant de cette configuration pour lire les
-valeurs passees, en particulier celle de `+0x18`. Une vitesse de 115200 sur une
-horloge a 96 MHz donne un diviseur autour de 833, 460800 en donne 208 : le
-chiffre trouve dira du meme coup la vitesse et confirmera la nature du bloc.
+**Le peripherique reste a identifier.** Un balayage des paires MOVW puis MOVT
+sur les seize mega-octets donne les pages que le firmware forme : les ports
+d'entrees-sorties, le controleur de flash, les convertisseurs, le controleur de
+transferts, la fenetre XIP, la zone systeme, l'alias bit-band, et le bloc
+ci-dessus. Ni `0x40034000` ni `0x40020000`, les deux adresses que le datasheet
+donne pour UART1 et SPI1.
+
+Attention en refaisant ce balayage : il avance de deux octets en deux octets
+sans suivre les frontieres d'instruction, il decode donc aussi des donnees. Les
+pages vues moins de cinq fois sont a verifier une par une au desassembleur avant
+d'y croire ; j'ai perdu du temps sur deux d'entre elles.
 
 **Ce qui ne marche pas, pour ne pas le refaire.** Ecrire le numero de scene
 voulu en `0x18001BF6` ne declenche aucune transition : le diagnostic appelle ce
