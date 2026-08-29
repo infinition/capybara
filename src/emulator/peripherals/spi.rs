@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 /// - `0x18` : IC (acquittement d'interruptions)
 /// - `0x1C` : DATA (registre de donnees FIFO TX/RX, destination des trames ecran)
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct SpiController {
     pub ctrl: u32,
     pub clkdiv: u32,

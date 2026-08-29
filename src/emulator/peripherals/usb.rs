@@ -15,6 +15,7 @@ use std::collections::VecDeque;
 /// - `0x20` : EP1_CSR (controle et etat du point d'acces 1 CDC/donnees)
 /// - `0x24` : EP1_COUNT (nombre d'octets sur EP1)
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct UsbController {
     pub ctrl: u32,
     pub int_en: u32,

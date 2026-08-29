@@ -16,6 +16,7 @@ use std::collections::VecDeque;
 /// - `0x28` : FD (diviseur fractionnaire : DIVADDVAL, MULVAL, OVER8)
 /// - `0x30` : CTRL (validation generale de l'UART, TX et RX)
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct UartController {
     pub dll: u8,
     pub dlm: u8,

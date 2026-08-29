@@ -8,6 +8,7 @@
 /// - `0x10` : PMU_IO_LATCH_P1 (masque de maintien et detection de broches port 1)
 /// - `0x14` : PMU_IO_LATCH_P2 (masque de maintien et detection de broches port 2)
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct PmuController {
     pub ctrl: u32,
     pub status: u32,

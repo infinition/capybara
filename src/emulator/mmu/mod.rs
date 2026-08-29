@@ -727,13 +727,12 @@ impl MemoryBus {
         let off = addr & 0xFFF;
         match page {
             periph::CHECKSUM => p.crc.read_reg(off),
-            periph::UART0 | periph::UART1 => p.uart.read_reg(off),
-            periph::SPI0 if crate::emulator::peripherals::SpiController::handles(off) => {
-                p.spi0.read_reg(off)
-            }
-            periph::USB if crate::emulator::peripherals::UsbController::handles(off) => {
-                p.usb.read_reg(off)
-            }
+            // 0x4000E000 et 0x40007000 restent hors modele, et 0x4000A000
+            // avec 0x4000B000 aussi. La premiere porte l'interface serie de la
+            // dalle : la modeliser en SPI ordinaire intercepte les registres
+            // que le pilote d'ecran scrute, et l'ecran reste noir quoi qu'on
+            // charge. Les rendre a la voie non modelisee, qui rend zero et
+            // journalise, est ce qui marche.
             periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
                 p.pmu.read_reg(off)
             }
@@ -778,13 +777,6 @@ impl MemoryBus {
                 if let Some(c) = p.crc.write_reg(off, val) {
                     self.executer_calcul(c, p);
                 }
-            }
-            periph::UART0 | periph::UART1 => p.uart.write_reg(off, val),
-            periph::SPI0 if crate::emulator::peripherals::SpiController::handles(off) => {
-                p.spi0.write_reg(off, val);
-            }
-            periph::USB if crate::emulator::peripherals::UsbController::handles(off) => {
-                p.usb.write_reg(off, val);
             }
             periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
                 p.pmu.write_reg(off, val);
