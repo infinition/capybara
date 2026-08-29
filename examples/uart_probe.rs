@@ -48,6 +48,18 @@ fn main() {
 
     // Deux secondes de jeu ordinaire : c'est la reference.
     avancer(&mut m, 2.0);
+
+    // La zone de la scene, en clair. Ses adresses ont bouge d'une edition a
+    // l'autre, comme le tableau des voix : lire les voisins evite de conclure
+    // sur un mot qui ne veut plus rien dire.
+    println!("== demi mots autour de la scene");
+    for a in (0x1800_1BE0u32..0x1800_1C10).step_by(2) {
+        let v = lire16(&m, a);
+        if v != 0 {
+            println!("  {:#010x}  {:>6}  {:#06x}", a, v, v);
+        }
+    }
+    println!();
     let avant = pages(&m);
     println!("== avant : scene {}, {} pages touchees", lire16(&m, SCENE), avant.len());
 

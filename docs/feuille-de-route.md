@@ -134,15 +134,31 @@ peripherique de son filtrait les acces sur l'intervalle de PC du module audio,
 en `0x1001F000` a `0x10080000` : elle ne pouvait pas la voir. C'est exactement
 le trou de methode qu'on soupconnait.
 
-Ce qu'elle est reste a etablir. Trois lectures possibles, a departager en
-correlant son trafic avec ce qui se passe : sortie du son, liaison vers
-l'afficheur, ou lien serie. La mesure qui tranche est simple : relever son
-trafic pendant qu'une note joue, puis au silence.
+Ce qu'elle est reste a etablir, mais un chiffre penche deja. Son canal de
+transfert compte quatre vingt quatorze operations par releve, et le meme releve
+compte quatre vingt quatorze trames poussees vers l'ecran. Le trafic suit donc
+la cadence d'affichage et non celle du son : c'est vraisemblablement l'interface
+serie de la dalle, pas le buzzer. A confirmer en relevant son trafic pendant
+qu'une note joue puis au silence, mais il ne faut pas s'emballer dessus.
+
+**L'ecran de connexion ne reveille aucun peripherique nouveau.** Mesure faite
+sur un instantane pris pendant que la console attendait sur cet ecran : les
+memes onze pages qu'en jeu ordinaire, aux memes cadences. Deux lectures
+possibles, et rien ne les departage encore : le lien serie passe par un bloc
+deja sollicite, ou l'instantane n'est pas ou l'on croit.
+
+**Attention aux numeros de scene d'une edition a l'autre.** Ceux du tableau
+ci-dessus viennent de l'image Earth. Sur Jade Forest, dont on sait deja que la
+zone de travail est decalee de huit octets, l'instantane pris sur l'ecran de
+connexion donne 119 en `0x18001BF4`, ce qui vaudrait `PSID_TAMASPACE_RANK` dans
+la numerotation d'Earth. Avant de conclure quoi que ce soit sur Jade, il faut
+extraire sa propre table.
 
 **Ce qui ne marche pas, pour ne pas le refaire.** Ecrire le numero de scene
-voulu en `0x18001BF6` ne declenche aucune transition : le diagnostic appelle ce
-mot « transition demandee », c'est une supposition d'une note precedente et
-elle est fausse. `uart_probe` fait cet essai en une commande.
+voulu en `0x18001BF6` ne declenche aucune transition. Ce mot vaut `0xFFFF` au
+repos, ce qui ressemble bien a « aucune transition demandee », mais y poser un
+numero ne suffit pas : le firmware attend autre chose en plus. `uart_probe`
+fait cet essai en une commande.
 
 **Ce qui manque cote emulateur, et qui vient avant.** Le port serie n'est pas
 modelise. `src/hw_bridge/uart_pcom.rs` et `src/emulator/peripherals/uart.rs`
