@@ -1,3 +1,19 @@
+/// Ouvre le fichier de capture d'un sens, si la variable CAPTURE_UART est
+/// posee. Elle donne un prefixe : le sens est ajoute en suffixe.
+///
+/// Rejouer les octets reels hors interface est le seul moyen d'instrumenter
+/// finement un echange qui ne se reproduit qu'avec un outil exterieur et une
+/// paire de ports virtuels.
+#[cfg(not(target_arch = "wasm32"))]
+fn fichier_de_capture(sens: &str) -> Option<std::fs::File> {
+    let prefixe = std::env::var("CAPTURE_UART").ok()?;
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("{prefixe}.{sens}"))
+        .ok()
+}
+
 /// Nombre de lectures consecutives par tour de boucle.
 ///
 /// Le tampon du systeme derriere un port serie est petit, souvent quatre kilo
@@ -9,6 +25,8 @@ const LECTURES_PAR_TOUR: usize = 16;
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs::OpenOptions;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
@@ -176,10 +194,15 @@ impl UartHostBridge {
                     let file = Arc::clone(&self.recus);
                     std::thread::spawn(move || {
                         let mut lecture = lecture;
+                        let mut capture = fichier_de_capture("recu");
                         let mut buf = [0u8; 4096];
                         while !fanion.load(Ordering::Relaxed) {
                             match lecture.read(&mut buf) {
                                 Ok(n) if n > 0 => {
+                                    if let Some(c) = capture.as_mut() {
+                                        let _ = c.write_all(&buf[..n]);
+                                        let _ = c.flush();
+                                    }
                                     if let Ok(mut f) = file.lock() {
                                         f.extend(buf[..n].iter().copied());
                                     }
@@ -201,6 +224,7 @@ impl UartHostBridge {
                             let compte = Arc::clone(&self.compteur_emis);
                             std::thread::spawn(move || {
                                 let mut ecriture = ecriture;
+                                let mut capture = fichier_de_capture("emis");
                                 while !fanion.load(Ordering::Relaxed) {
                                     let bloc: Vec<u8> = match file.lock() {
                                         Ok(mut f) => f.drain(..).collect(),
@@ -209,6 +233,10 @@ impl UartHostBridge {
                                     if bloc.is_empty() {
                                         std::thread::sleep(Duration::from_millis(1));
                                         continue;
+                                    }
+                                    if let Some(c) = capture.as_mut() {
+                                        let _ = c.write_all(&bloc);
+                                        let _ = c.flush();
                                     }
                                     let mut reste = &bloc[..];
                                     while !reste.is_empty() {
