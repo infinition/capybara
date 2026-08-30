@@ -278,6 +278,20 @@ impl UartController {
         self.evaluer_irq();
     }
 
+    /// Vide les deux sens de la ligne, sans toucher aux registres.
+    ///
+    /// A appeler quand un hote se branche. La console imprime son journal de
+    /// demarrage bien avant, et ces octets attendent dans la file de sortie :
+    /// sans ce vidage, le premier chose que recoit l'outil de transfert est un
+    /// message de demarrage, et sa conversation commence desynchronisee.
+    pub fn vider_la_ligne(&mut self) {
+        self.tx_out.clear();
+        self.rx_in.clear();
+        self.rx_fifo.clear();
+        self.tx_phase = 0;
+        self.rx_phase = 0;
+    }
+
     /// Rend les octets dont la transmission sur la ligne est terminee.
     pub fn drain_hote(&mut self) -> Vec<u8> {
         self.tx_out.drain(..).collect()

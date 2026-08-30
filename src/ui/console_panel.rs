@@ -43,6 +43,12 @@ impl ConsolePanel {
                     }
                 } else if ui.button("Connecter").clicked() {
                     let port = bridge.port_name.clone();
+                    // La ligne est videe avant d'ouvrir : le journal de
+                    // demarrage de la console attend sinon dans la file de
+                    // sortie et part en premier vers l'outil de transfert.
+                    uart.vider_la_ligne();
+                    bridge.debut_vers_tama.clear();
+                    bridge.debut_vers_hote.clear();
                     let _ = bridge.connect(&port);
                 }
             });
@@ -62,6 +68,26 @@ impl ConsolePanel {
                     .small(),
                 );
             }
+            // Le debit que le firmware s'est programme, et ce qui attend encore
+            // sur la ligne. Un retard qui gonfle sans redescendre signifie que
+            // l'hote parle plus vite que la console ne peut ecouter, et c'est
+            // ce qui fait expirer les delais de l'outil de transfert.
+            if bridge.is_connected {
+                let debit = uart.baud_rate(crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as u32);
+                let attente = uart.rx_in.len();
+                let couleur = if attente > 2000 {
+                    Color32::from_rgb(230, 140, 110)
+                } else {
+                    Color32::GRAY
+                };
+                ui.label(
+                    RichText::new(format!(
+                        "debit programme {debit} bauds, {attente} octets en attente sur la ligne"
+                    ))
+                    .small()
+                    .color(couleur),
+                );
+            }
             // Un transfert qui echoue sur une somme de controle vient presque
             // toujours d'octets perdus. Ces deux compteurs disent lesquels, et
             // de quel cote, sans avoir a instrumenter quoi que ce soit.
@@ -73,6 +99,31 @@ impl ConsolePanel {
                     ))
                     .small()
                     .color(Color32::from_rgb(230, 180, 90)),
+                );
+            }
+            // Les premiers octets de chaque sens. Quand un transfert echoue sans
+            // qu'aucun octet ne se perde, eux seuls disent si l'en-tete du
+            // paquet arrive intact.
+            if !bridge.debut_vers_tama.is_empty() {
+                ui.label(
+                    RichText::new(format!(
+                        "recu : {}",
+                        UartBridge::trace_hex(&bridge.debut_vers_tama)
+                    ))
+                    .small()
+                    .monospace()
+                    .color(Color32::from_rgb(150, 190, 230)),
+                );
+            }
+            if !bridge.debut_vers_hote.is_empty() {
+                ui.label(
+                    RichText::new(format!(
+                        "emis  : {}",
+                        UartBridge::trace_hex(&bridge.debut_vers_hote)
+                    ))
+                    .small()
+                    .monospace()
+                    .color(Color32::from_rgb(150, 230, 190)),
                 );
             }
             if let Some(message) = &bridge.last_error {
