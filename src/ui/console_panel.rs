@@ -126,6 +126,17 @@ impl ConsolePanel {
                     .color(Color32::from_rgb(150, 230, 190)),
                 );
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            if bridge.is_connected {
+                ui.label(
+                    RichText::new(format!(
+                        "capture : {}",
+                        crate::hw_bridge::uart_pcom::dossier_captures().display()
+                    ))
+                    .small()
+                    .color(Color32::GRAY),
+                );
+            }
             if let Some(message) = &bridge.last_error {
                 ui.label(RichText::new(message).small().color(Color32::LIGHT_RED));
             }

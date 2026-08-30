@@ -1,17 +1,23 @@
-/// Ouvre le fichier de capture d'un sens, si la variable CAPTURE_UART est
-/// posee. Elle donne un prefixe : le sens est ajoute en suffixe.
+/// Dossier ou sont deposees les captures de la liaison.
 ///
-/// Rejouer les octets reels hors interface est le seul moyen d'instrumenter
-/// finement un echange qui ne se reproduit qu'avec un outil exterieur et une
-/// paire de ports virtuels.
+/// Sous le dossier de donnees, a cote des sauvegardes. Une variable
+/// d'environnement conviendrait mal : elle ne survit pas a un lancement par
+/// double-clic, et c'est justement dans ce cas qu'on veut la capture.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn dossier_captures() -> std::path::PathBuf {
+    let d = crate::emulator::sauvegarde::dossier_donnees().join("liaison");
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+
+/// Ouvre le fichier de capture d'un sens. La capture est toujours active
+/// pendant une connexion : rejouer les octets reels hors interface est le seul
+/// moyen d'instrumenter un echange qui ne se reproduit qu'avec un outil
+/// exterieur et une paire de ports virtuels.
 #[cfg(not(target_arch = "wasm32"))]
 fn fichier_de_capture(sens: &str) -> Option<std::fs::File> {
-    let prefixe = std::env::var("CAPTURE_UART").ok()?;
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(format!("{prefixe}.{sens}"))
-        .ok()
+    let chemin = dossier_captures().join(format!("echange.{sens}"));
+    OpenOptions::new().create(true).append(true).open(chemin).ok()
 }
 
 /// Nombre de lectures consecutives par tour de boucle.
