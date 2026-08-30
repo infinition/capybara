@@ -1,12 +1,11 @@
-/// Retard maximal tolere sur la ligne d'entree, en octets.
+/// Nombre de lectures consecutives par tour de boucle.
 ///
-/// Au dela, on cesse de lire le port hote. Une ligne serie physique impose sa
-/// cadence a l'emetteur ; ici rien ne le ferait, et l'hote peut deverser bien
-/// plus vite que la console ne consomme. Le retard accumule finit par depasser
-/// les delais de l'outil de transfert, qui abandonne alors que tous les octets
-/// sont bien arrives. Refuser de lire laisse le controle de flux du port serie
-/// faire son office.
-pub const RETARD_MAX: usize = 4096;
+/// Le tampon du systeme derriere un port serie est petit, souvent quatre kilo
+/// octets. Une seule lecture par image d'interface ne suffit pas a le vider
+/// quand l'outil de transfert envoie un bloc de plus de quatre mille octets :
+/// le tampon deborde et le systeme jette des octets, sans que rien ne le
+/// signale. On vide donc le port jusqu'a ce qu'il n'ait plus rien a rendre.
+const LECTURES_PAR_TOUR: usize = 16;
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -207,18 +206,29 @@ impl UartHostBridge {
                     }
                 }
 
-                // On ne lit que si la console a de la place devant elle.
-                if erreur_fatale.is_none() && uart.rx_in.len() < RETARD_MAX {
+                // Le port est vide jusqu'au bout. Notre propre tampon d'entree
+                // n'a pas de limite et ne perd rien, la ou celui du systeme est
+                // petit et jette en silence.
+                if erreur_fatale.is_none() {
                     let mut buf = [0u8; 4096];
-                    match port.read(&mut buf) {
-                        Ok(n) if n > 0 => {
-                            self.bytes_received += n;
-                            Self::garder_debut(&mut self.debut_vers_tama, &buf[..n]);
-                            uart.inject_rx_bytes(&buf[..n]);
+                    for _ in 0..LECTURES_PAR_TOUR {
+                        match port.read(&mut buf) {
+                            Ok(n) if n > 0 => {
+                                self.bytes_received += n;
+                                Self::garder_debut(&mut self.debut_vers_tama, &buf[..n]);
+                                uart.inject_rx_bytes(&buf[..n]);
+                                if n < buf.len() {
+                                    break;
+                                }
+                            }
+                            Ok(_) => break,
+                            Err(e) if attente_normale(&e) => break,
+                            Err(e) => {
+                                erreur_fatale =
+                                    Some(format!("Lecture {} : {e}", self.port_name));
+                                break;
+                            }
                         }
-                        Ok(_) => {}
-                        Err(e) if attente_normale(&e) => {}
-                        Err(e) => erreur_fatale = Some(format!("Lecture {} : {e}", self.port_name)),
                     }
                 }
             }
