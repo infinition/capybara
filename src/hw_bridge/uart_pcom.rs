@@ -10,7 +10,7 @@ const LECTURES_PAR_TOUR: usize = 16;
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -44,9 +44,16 @@ pub struct UartHostBridge {
     /// controleur.
     #[cfg(not(target_arch = "wasm32"))]
     recus: Arc<Mutex<VecDeque<u8>>>,
-    /// Drapeau d'arret du fil de lecture.
+    /// Drapeau d'arret des fils de service.
     #[cfg(not(target_arch = "wasm32"))]
     arret_lecteur: Option<Arc<AtomicBool>>,
+    /// Octets a pousser vers l'hote, remplis par la boucle d'interface et vides
+    /// par le fil d'ecriture.
+    #[cfg(not(target_arch = "wasm32"))]
+    a_envoyer: Arc<Mutex<VecDeque<u8>>>,
+    /// Total ecrit par le fil d'ecriture.
+    #[cfg(not(target_arch = "wasm32"))]
+    compteur_emis: Arc<AtomicUsize>,
 }
 
 impl Default for UartHostBridge {
@@ -70,6 +77,10 @@ impl Default for UartHostBridge {
             recus: Arc::new(Mutex::new(VecDeque::new())),
             #[cfg(not(target_arch = "wasm32"))]
             arret_lecteur: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            a_envoyer: Arc::new(Mutex::new(VecDeque::new())),
+            #[cfg(not(target_arch = "wasm32"))]
+            compteur_emis: Arc::new(AtomicUsize::new(0)),
         };
         bridge.refresh_ports();
         bridge
@@ -99,6 +110,10 @@ impl UartHostBridge {
             recus: Arc::new(Mutex::new(VecDeque::new())),
             #[cfg(not(target_arch = "wasm32"))]
             arret_lecteur: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            a_envoyer: Arc::new(Mutex::new(VecDeque::new())),
+            #[cfg(not(target_arch = "wasm32"))]
+            compteur_emis: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -175,6 +190,48 @@ impl UartHostBridge {
                             }
                         }
                     });
+                    // Un second fil pousse ce que la console repond. Ecrire
+                    // depuis la boucle d'interface la figeait : le delai du
+                    // port est confortable pour ne rien tronquer, et cette
+                    // attente se paie sur le fil, pas sur l'emulation.
+                    match port.try_clone() {
+                        Ok(ecriture) => {
+                            let fanion = Arc::clone(&arret);
+                            let file = Arc::clone(&self.a_envoyer);
+                            let compte = Arc::clone(&self.compteur_emis);
+                            std::thread::spawn(move || {
+                                let mut ecriture = ecriture;
+                                while !fanion.load(Ordering::Relaxed) {
+                                    let bloc: Vec<u8> = match file.lock() {
+                                        Ok(mut f) => f.drain(..).collect(),
+                                        Err(_) => break,
+                                    };
+                                    if bloc.is_empty() {
+                                        std::thread::sleep(Duration::from_millis(1));
+                                        continue;
+                                    }
+                                    let mut reste = &bloc[..];
+                                    while !reste.is_empty() {
+                                        match ecriture.write(reste) {
+                                            Ok(0) => break,
+                                            Ok(n) => {
+                                                compte.fetch_add(n, Ordering::Relaxed);
+                                                reste = &reste[n..];
+                                            }
+                                            Err(e) if attente_normale(&e) => continue,
+                                            Err(_) => return,
+                                        }
+                                    }
+                                    let _ = ecriture.flush();
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            let message = format!("{} : {e}", self.port_name);
+                            self.last_error = Some(message.clone());
+                            return Err(message);
+                        }
+                    }
                     self.arret_lecteur = Some(arret);
                 }
                 Err(e) => {
@@ -203,6 +260,9 @@ impl UartHostBridge {
         {
             if let Some(arret) = self.arret_lecteur.take() {
                 arret.store(true, Ordering::Relaxed);
+            }
+            if let Ok(mut f) = self.a_envoyer.lock() {
+                f.clear();
             }
             self.serial = None;
             if let Ok(mut f) = self.recus.lock() {
@@ -249,34 +309,18 @@ impl UartHostBridge {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.pending_to_host.extend(uart.drain_hote());
-            let mut erreur_fatale = None;
 
-            if let Some(port) = self.serial.as_mut() {
-                // On insiste jusqu'a ce que tout soit parti. Une ecriture
-                // partielle laissait derriere elle des reponses tronquees, et
-                // l'outil de transfert ne voyait jamais l'acquittement qu'il
-                // attendait avant d'envoyer le bloc suivant.
-                while !self.pending_to_host.is_empty() && erreur_fatale.is_none() {
-                    let donnees = self.pending_to_host.make_contiguous();
-                    match port.write(donnees) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            let envoyes: Vec<u8> =
-                                self.pending_to_host.iter().take(n).copied().collect();
-                            Self::garder_debut(&mut self.debut_vers_hote, &envoyes);
-                            self.pending_to_host.drain(..n);
-                            self.bytes_sent += n;
-                        }
-                        Err(e) if attente_normale(&e) => break,
-                        Err(e) => {
-                            erreur_fatale = Some(format!("Ecriture {} : {e}", self.port_name))
-                        }
-                    }
+            // Ce que la console repond est simplement depose : le fil
+            // d'ecriture s'en charge, et la boucle d'interface ne bloque
+            // jamais sur le port.
+            if !self.pending_to_host.is_empty() {
+                let bloc: Vec<u8> = self.pending_to_host.drain(..).collect();
+                Self::garder_debut(&mut self.debut_vers_hote, &bloc);
+                if let Ok(mut f) = self.a_envoyer.lock() {
+                    f.extend(bloc.iter().copied());
                 }
-                // Les octets doivent partir tout de suite : l'autre bout attend
-                // une reponse pour continuer, il ne relancera rien.
-                let _ = port.flush();
             }
+            self.bytes_sent = self.compteur_emis.load(Ordering::Relaxed);
 
             // Les octets releves par le fil de lecture sont remis au
             // controleur. Rien ne se perd entre deux images de l'interface.
@@ -288,11 +332,6 @@ impl UartHostBridge {
                 self.bytes_received += arrives.len();
                 Self::garder_debut(&mut self.debut_vers_tama, &arrives);
                 uart.inject_rx_bytes(&arrives);
-            }
-
-            if let Some(message) = erreur_fatale {
-                self.last_error = Some(message);
-                self.disconnect();
             }
         }
     }
