@@ -139,7 +139,11 @@ impl UartHostBridge {
                 .parity(serialport::Parity::None)
                 .stop_bits(serialport::StopBits::One)
                 .flow_control(serialport::FlowControl::None)
-                .timeout(Duration::from_millis(1))
+                // Une milliseconde tronquait les ecritures : le pilote
+                // comptait trente deux octets emis quand l'autre bout n'en
+                // recevait que vingt deux. La lecture se faisant desormais dans
+                // un fil dedie, un delai confortable ne fige plus l'interface.
+                .timeout(Duration::from_millis(50))
                 .open()
                 .map_err(|e| {
                     let message = format!("{} : {e}", self.port_name);
@@ -248,21 +252,30 @@ impl UartHostBridge {
             let mut erreur_fatale = None;
 
             if let Some(port) = self.serial.as_mut() {
-                if !self.pending_to_host.is_empty() {
+                // On insiste jusqu'a ce que tout soit parti. Une ecriture
+                // partielle laissait derriere elle des reponses tronquees, et
+                // l'outil de transfert ne voyait jamais l'acquittement qu'il
+                // attendait avant d'envoyer le bloc suivant.
+                while !self.pending_to_host.is_empty() && erreur_fatale.is_none() {
                     let donnees = self.pending_to_host.make_contiguous();
                     match port.write(donnees) {
+                        Ok(0) => break,
                         Ok(n) => {
-                            let envoyes: Vec<u8> = self.pending_to_host.iter().take(n).copied().collect();
+                            let envoyes: Vec<u8> =
+                                self.pending_to_host.iter().take(n).copied().collect();
                             Self::garder_debut(&mut self.debut_vers_hote, &envoyes);
                             self.pending_to_host.drain(..n);
                             self.bytes_sent += n;
                         }
-                        Err(e) if attente_normale(&e) => {}
+                        Err(e) if attente_normale(&e) => break,
                         Err(e) => {
                             erreur_fatale = Some(format!("Ecriture {} : {e}", self.port_name))
                         }
                     }
                 }
+                // Les octets doivent partir tout de suite : l'autre bout attend
+                // une reponse pour continuer, il ne relancera rien.
+                let _ = port.flush();
             }
 
             // Les octets releves par le fil de lecture sont remis au
