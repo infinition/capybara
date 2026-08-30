@@ -8,7 +8,7 @@ use egui::{CentralPanel, Context, Key, SidePanel, TopBottomPanel};
 use crate::audio::AudioEngine;
 use crate::emulator::Machine;
 use crate::gui::{ActiveModal, GuiWidgets, ShellColor};
-use crate::hw_bridge::FlashInspector;
+use crate::hw_bridge::{FlashInspector, UartBridge};
 use crate::i18n::I18n;
 use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
@@ -143,6 +143,7 @@ pub struct TamagotchiApp {
     /// viewport qu'au changement.
     mode_applique: Option<Mode>,
     pub machine: Machine,
+    pub uart_bridge: UartBridge,
     pub audio: AudioEngine,
     pub i18n: I18n,
     pub shell_color: ShellColor,
@@ -294,6 +295,7 @@ impl TamagotchiApp {
             mode: Mode::Accueil,
             mode_applique: None,
             machine,
+            uart_bridge: UartBridge::default(),
             audio,
             i18n,
             shell_color: ShellColor::BlueWater,
@@ -2089,6 +2091,7 @@ impl eframe::App for TamagotchiApp {
     /// L'ecriture periodique est espacee d'une seconde : sans ce dernier
     /// passage, la derniere sauvegarde du jeu pourrait rester en memoire.
     fn on_exit(&mut self) {
+        self.uart_bridge.disconnect();
         let _ = self.machine.ecrire_sauvegarde();
         // Les reglages de son ont pu changer sans qu'on ouvre d'emplacement :
         // c'est ici qu'ils sont surs d'etre retenus.
@@ -2212,6 +2215,10 @@ impl eframe::App for TamagotchiApp {
         }
 
         self.appliquer_entrees();
+        // Les octets deja arrives sont remis au controleur avant sa tranche
+        // d'execution. Le port reste non bloquant, donc une liaison silencieuse
+        // ne ralentit pas l'emulation.
+        self.uart_bridge.poll_serial(&mut self.machine.periph.uart);
         let debut_emulation = std::time::Instant::now();
         if self.machine.is_running && self.vitesse > 0.0 {
             let debut = std::time::Instant::now();
@@ -2237,6 +2244,14 @@ impl eframe::App for TamagotchiApp {
                 if !matches!(self.machine.run_frame(), crate::emulator::StepResult::Ok(_)) {
                     break;
                 }
+                // Le lien serie est servi ici, pas seulement autour de la
+                // tranche. L'outil de transfert attend un acquittement avant
+                // d'envoyer la suite, et il abandonne vite : le faire attendre
+                // une image entiere de chaque cote suffisait a lui faire
+                // repeter son ordre, que la console refusait alors a juste
+                // titre puisqu'elle attendait des donnees. Le pont ne bloque
+                // plus sur le port, cet appel ne coute qu'un verrou.
+                self.uart_bridge.poll_serial(&mut self.machine.periph.uart);
                 // La melodie se suit ici, pas une fois par image : elle change
                 // de note plusieurs fois en cent cinquante millisecondes, et un
                 // releve par image n'en attraperait que des morceaux, dans le
@@ -2259,6 +2274,8 @@ impl eframe::App for TamagotchiApp {
             // l'animation de la console s'arrete des qu'on lache la souris.
             ctx.request_repaint();
         }
+        // Recopie sans attendre les octets que le firmware vient d'emettre.
+        self.uart_bridge.poll_serial(&mut self.machine.periph.uart);
         // La partie suit le jeu sur le disque : eteindre l'ordinateur ne coute
         // plus rien, la console retrouve son personnage au prochain lancement.
         self.tenir_la_sauvegarde();
@@ -2669,6 +2686,12 @@ impl eframe::App for TamagotchiApp {
                         );
 
                     });
+                    ui.separator();
+                    ConsolePanel::render(
+                        ui,
+                        &mut self.machine.periph.uart,
+                        &mut self.uart_bridge,
+                    );
                     return;
                     } // fin de l'onglet Console
 
@@ -2773,10 +2796,6 @@ impl eframe::App for TamagotchiApp {
                         &mut self.hex_base_addr,
                     );
 
-                    ui.separator();
-
-                    // UART Console
-                    ConsolePanel::render(ui, &mut self.machine.periph.uart);
                         });
                 });
         }
