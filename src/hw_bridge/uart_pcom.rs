@@ -9,6 +9,10 @@ const LECTURES_PAR_TOUR: usize = 16;
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::emulator::peripherals::UartController;
@@ -36,6 +40,13 @@ pub struct UartHostBridge {
 
     #[cfg(not(target_arch = "wasm32"))]
     serial: Option<Box<dyn serialport::SerialPort>>,
+    /// Octets releves par le fil de lecture, en attente d'etre remis au
+    /// controleur.
+    #[cfg(not(target_arch = "wasm32"))]
+    recus: Arc<Mutex<VecDeque<u8>>>,
+    /// Drapeau d'arret du fil de lecture.
+    #[cfg(not(target_arch = "wasm32"))]
+    arret_lecteur: Option<Arc<AtomicBool>>,
 }
 
 impl Default for UartHostBridge {
@@ -55,6 +66,10 @@ impl Default for UartHostBridge {
             pending_to_host: VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             serial: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            recus: Arc::new(Mutex::new(VecDeque::new())),
+            #[cfg(not(target_arch = "wasm32"))]
+            arret_lecteur: None,
         };
         bridge.refresh_ports();
         bridge
@@ -80,6 +95,10 @@ impl UartHostBridge {
             pending_to_host: VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             serial: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            recus: Arc::new(Mutex::new(VecDeque::new())),
+            #[cfg(not(target_arch = "wasm32"))]
+            arret_lecteur: None,
         }
     }
 
@@ -127,6 +146,39 @@ impl UartHostBridge {
                     self.last_error = Some(message.clone());
                     message
                 })?;
+            // Un fil dedie vide le port sans discontinuer. Sans lui, plus rien
+            // ne lit pendant la tranche d'emulation, le tampon du systeme
+            // deborde et il jette des octets en silence : un bloc de quatre
+            // mille octets arrivait ampute de quelques dizaines.
+            match port.try_clone() {
+                Ok(lecture) => {
+                    let arret = Arc::new(AtomicBool::new(false));
+                    let fanion = Arc::clone(&arret);
+                    let file = Arc::clone(&self.recus);
+                    std::thread::spawn(move || {
+                        let mut lecture = lecture;
+                        let mut buf = [0u8; 4096];
+                        while !fanion.load(Ordering::Relaxed) {
+                            match lecture.read(&mut buf) {
+                                Ok(n) if n > 0 => {
+                                    if let Ok(mut f) = file.lock() {
+                                        f.extend(buf[..n].iter().copied());
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(e) if attente_normale(&e) => {}
+                                Err(_) => break,
+                            }
+                        }
+                    });
+                    self.arret_lecteur = Some(arret);
+                }
+                Err(e) => {
+                    let message = format!("{} : {e}", self.port_name);
+                    self.last_error = Some(message.clone());
+                    return Err(message);
+                }
+            }
             self.serial = Some(port);
             self.is_connected = true;
             return Ok(());
@@ -145,7 +197,13 @@ impl UartHostBridge {
     pub fn disconnect(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if let Some(arret) = self.arret_lecteur.take() {
+                arret.store(true, Ordering::Relaxed);
+            }
             self.serial = None;
+            if let Ok(mut f) = self.recus.lock() {
+                f.clear();
+            }
         }
         self.is_connected = false;
         self.pending_to_host.clear();
@@ -205,32 +263,18 @@ impl UartHostBridge {
                         }
                     }
                 }
+            }
 
-                // Le port est vide jusqu'au bout. Notre propre tampon d'entree
-                // n'a pas de limite et ne perd rien, la ou celui du systeme est
-                // petit et jette en silence.
-                if erreur_fatale.is_none() {
-                    let mut buf = [0u8; 4096];
-                    for _ in 0..LECTURES_PAR_TOUR {
-                        match port.read(&mut buf) {
-                            Ok(n) if n > 0 => {
-                                self.bytes_received += n;
-                                Self::garder_debut(&mut self.debut_vers_tama, &buf[..n]);
-                                uart.inject_rx_bytes(&buf[..n]);
-                                if n < buf.len() {
-                                    break;
-                                }
-                            }
-                            Ok(_) => break,
-                            Err(e) if attente_normale(&e) => break,
-                            Err(e) => {
-                                erreur_fatale =
-                                    Some(format!("Lecture {} : {e}", self.port_name));
-                                break;
-                            }
-                        }
-                    }
-                }
+            // Les octets releves par le fil de lecture sont remis au
+            // controleur. Rien ne se perd entre deux images de l'interface.
+            let arrives: Vec<u8> = match self.recus.lock() {
+                Ok(mut f) => f.drain(..).collect(),
+                Err(_) => Vec::new(),
+            };
+            if !arrives.is_empty() {
+                self.bytes_received += arrives.len();
+                Self::garder_debut(&mut self.debut_vers_tama, &arrives);
+                uart.inject_rx_bytes(&arrives);
             }
 
             if let Some(message) = erreur_fatale {
