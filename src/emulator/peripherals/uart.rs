@@ -258,21 +258,22 @@ impl UartController {
         if self.rx_in.is_empty() || !rx_actif {
             self.rx_phase = 0;
         } else {
-            self.rx_phase = self.rx_phase.saturating_add(credit);
-            while self.rx_phase >= seuil && self.rx_fifo.len() < UART_FIFO_DEPTH {
+            // La reception n'est pas cadencee au debit programme, contrairement
+            // a l'emission. C'est l'hote qui impose son rythme sur une vraie
+            // ligne, et il l'impose deja ici : ses octets n'arrivent dans le
+            // tampon d'entree qu'a mesure qu'il les envoie.
+            //
+            // Les cadencer une seconde fois sur le temps emule les etirerait
+            // des que l'emulation passe sous le temps reel, et le firmware
+            // expirerait en plein paquet. Il refuse alors le bloc, ce qui se
+            // lit comme un refus de contenu alors que ce n'en est pas un.
+            while self.rx_fifo.len() < UART_FIFO_DEPTH {
                 let Some(b) = self.rx_in.pop_front() else {
-                    self.rx_phase = 0;
                     break;
                 };
                 self.rx_fifo.push_back(b);
-                self.rx_phase -= seuil;
             }
-            if self.rx_fifo.len() >= UART_FIFO_DEPTH {
-                // Le tampon hote fournit la contre-pression que la ligne
-                // physique n'a pas. On ne cumule pas un retard infini pendant
-                // que le firmware vide la FIFO.
-                self.rx_phase = self.rx_phase.min(seuil);
-            }
+            self.rx_phase = 0;
         }
 
         self.evaluer_irq();
