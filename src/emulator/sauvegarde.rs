@@ -384,6 +384,32 @@ pub fn chemin_cle_commune() -> PathBuf {
     dossier_donnees().join("cle-device.txt")
 }
 
+/// Cle commune deja enregistree, en hexadecimal, si elle existe.
+pub fn lire_cle_commune() -> Option<String> {
+    std::fs::read_to_string(chemin_cle_commune()).ok().map(|s| s.trim().to_string())
+}
+
+/// Enregistre la cle commune du dossier de donnees.
+///
+/// Elle n'etait fournissable que par une variable d'environnement, qui ne
+/// survit pas a un lancement par double-clic, ou par un fichier a poser a la
+/// main a cote du dump. Autant dire qu'elle n'etait pas fournissable du tout
+/// pour qui ouvre le logiciel pour la premiere fois.
+pub fn ecrire_cle_commune(valeur: &str) -> Result<(), String> {
+    let propre = valeur.trim().trim_start_matches("0x").trim_start_matches("0X");
+    if propre.is_empty() {
+        let _ = std::fs::remove_file(chemin_cle_commune());
+        return Ok(());
+    }
+    if u32::from_str_radix(propre, 16).is_err() {
+        return Err("huit chiffres hexadecimaux attendus".to_string());
+    }
+    if let Some(parent) = chemin_cle_commune().parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(chemin_cle_commune(), propre).map_err(|e| e.to_string())
+}
+
 /// Recopie la cle posee a cote d'un dump importe.
 ///
 /// Sans elle, un dump chiffre recopie dans le dossier de donnees devient
@@ -486,6 +512,11 @@ pub struct DernierePartie {
     /// Ce que font les boutons de la souris sur l'ecran.
     #[serde(default)]
     pub souris: crate::touches::Souris,
+    /// Fond du mode jeu decoupe sur le bureau. Certaines cartes graphiques
+    /// refusent la transparence par pixel et rendent un carre noir : la
+    /// decouper devient alors un defaut, pas un agrement.
+    #[serde(default = "vrai")]
+    pub fond_transparent: bool,
 }
 
 fn vrai() -> bool {
@@ -518,6 +549,7 @@ impl Default for DernierePartie {
             toujours_devant: false,
             touches: crate::touches::Touches::default(),
             souris: crate::touches::Souris::default(),
+            fond_transparent: true,
             langue: langue_par_defaut(),
         }
     }

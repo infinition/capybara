@@ -46,7 +46,31 @@ fn main() -> eframe::Result<()> {
     if let Some(icone) = icone() {
         fenetre = fenetre.with_icon(icone);
     }
-    let native_options = eframe::NativeOptions { viewport: fenetre, ..Default::default() };
+    #[allow(unused_mut)]
+    let mut native_options =
+        eframe::NativeOptions { viewport: fenetre, ..Default::default() };
+
+    // Sous Windows, wgpu choisit son moteur selon la machine. DX12 sait
+    // composer une surface avec de la transparence par pixel ; Vulkan y
+    // annonce le plus souvent l'opacite seule, et le mode jeu se retrouve
+    // alors dans un carre noir au lieu d'etre decoupe sur le bureau. Le meme
+    // binaire marchait donc sur une machine et pas sur la suivante.
+    //
+    // On demande DX12, mais seulement apres avoir verifie qu'un adaptateur
+    // existe. L'imposer sans regarder est pire que le defaut d'origine : sans
+    // adaptateur, wgpu n'en trouve aucun et l'application ne s'ouvre pas du
+    // tout.
+    #[cfg(target_os = "windows")]
+    {
+        use eframe::wgpu;
+        let sonde = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::DX12,
+            ..Default::default()
+        });
+        if !sonde.enumerate_adapters(wgpu::Backends::DX12).is_empty() {
+            native_options.wgpu_options.supported_backends = wgpu::Backends::DX12;
+        }
+    }
 
     eframe::run_native(
         "Capybara",

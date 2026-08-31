@@ -246,12 +246,24 @@ pub struct TamagotchiApp {
     suppression_demandee: Option<String>,
     /// Verification des mises a jour, a la demande.
     maj: crate::maj::Maj,
+    /// Cle de la puce, telle qu'elle est saisie dans l'interface.
+    saisie_cle: String,
+    /// Instant du depart de la recherche, pour annoncer le temps restant.
+    depart_recherche: std::time::Instant,
+    /// Recherche de la cle en cours : avancement, arret, et son resultat.
+    recherche_cle: Option<(
+        std::sync::Arc<std::sync::atomic::AtomicU64>,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        std::sync::mpsc::Receiver<Option<u32>>,
+    )>,
     /// Correspondance clavier, reglable et retenue.
     touches: crate::touches::Touches,
     /// Commande dont on attend la prochaine touche frappee.
     capture_touche: Option<crate::touches::Commande>,
     /// Ce que font les boutons de la souris sur l'ecran.
     souris: crate::touches::Souris,
+    /// Fond du mode jeu decoupe sur le bureau.
+    fond_transparent: bool,
     /// Le papier doit etre relu a la prochaine image.
     ///
     /// Il faut un contexte egui pour en faire une texture, et le chargement
@@ -388,9 +400,13 @@ impl TamagotchiApp {
             but_de_la_saisie: ButDeLaSaisie::EnregistrerSous,
             suppression_demandee: None,
             maj: crate::maj::Maj::default(),
+            saisie_cle: crate::emulator::sauvegarde::lire_cle_commune().unwrap_or_default(),
+            depart_recherche: std::time::Instant::now(),
+            recherche_cle: None,
             touches: crate::touches::Touches::default(),
             capture_touche: None,
             souris: crate::touches::Souris::default(),
+            fond_transparent: true,
             partage,
             port_web,
             serveur_actif: None,
@@ -561,6 +577,7 @@ impl TamagotchiApp {
                 langue: self.i18n.language().code().to_string(),
                 touches: self.touches.clone(),
                 souris: self.souris,
+                fond_transparent: self.fond_transparent,
             },
         );
     }
@@ -582,6 +599,7 @@ impl TamagotchiApp {
         self.toujours_devant = partie.toujours_devant;
         self.touches = partie.touches.clone();
         self.souris = partie.souris;
+        self.fond_transparent = partie.fond_transparent;
         self.i18n.set_language(if partie.langue == "en" {
             Language::En
         } else {
@@ -2246,6 +2264,8 @@ impl TamagotchiApp {
                         .small(),
                     );
                 }
+                ui.add_space(6.0);
+                self.dessiner_la_cle(ui);
             });
 
             ui.add_space(8.0);
@@ -2322,6 +2342,199 @@ impl TamagotchiApp {
                 );
             }
         });
+    }
+
+    /// Champ de la cle de la puce.
+    ///
+    /// Sans elle un dump chiffre ne demarre pas. Elle n'etait fournissable que
+    /// par une variable d'environnement, qui ne survit pas a un double-clic, ou
+    /// par un fichier a poser a la main : autant dire pas du tout pour qui
+    /// ouvre le logiciel pour la premiere fois.
+    fn dessiner_la_cle(&mut self, ui: &mut egui::Ui) {
+        let connue = crate::emulator::sauvegarde::lire_cle_commune().is_some();
+        ui.horizontal_wrapped(|ui| {
+            ui.label(self.i18n.choisir("Cle de la puce :", "Device key:"));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.saisie_cle)
+                    .desired_width(120.0)
+                    .hint_text("5AAF34FB"),
+            );
+            if ui.button(self.i18n.choisir("Enregistrer", "Save")).clicked() {
+                let saisie = self.saisie_cle.clone();
+                match crate::emulator::sauvegarde::ecrire_cle_commune(&saisie) {
+                    Ok(()) => {
+                        self.status_msg = Some(
+                            self.i18n
+                                .choisir("Cle enregistree. Rechargez le dump.", "Key saved. Load the dump again.")
+                                .to_string(),
+                        );
+                        // Le dump deja charge est relu tout de suite : sans
+                        // cela il faudrait deviner qu'il faut le recharger.
+                        let chemin = self.load_path_input.clone();
+                        if !chemin.is_empty() {
+                            self.load_firmware(std::path::PathBuf::from(chemin));
+                        }
+                    }
+                    Err(e) => {
+                        self.status_msg = Some(format!(
+                            "{} : {}",
+                            self.i18n.choisir("Cle refusee", "Key rejected"),
+                            e
+                        ))
+                    }
+                }
+            }
+            if connue {
+                ui.label(
+                    egui::RichText::new(self.i18n.choisir("enregistree", "saved"))
+                        .small()
+                        .color(egui::Color32::from_rgb(140, 220, 150)),
+                );
+            }
+        });
+
+        // La cle se retrouve depuis le dump lui meme. La cle AES est en clair
+        // dans la table de chargement ; le seul secret est la deviceKey, trente
+        // deux bits, qui ne sert qu'a masquer un IV. Quatre milliards de
+        // candidats, deux blocs chacun, et la table des vecteurs du coeur pour
+        // dire lequel est le bon. Rien de la cle n'est ecrit dans le logiciel :
+        // c'est votre dump qui rend la sienne.
+        let en_cours = self.recherche_cle.is_some();
+        if !en_cours {
+            let dump = self.load_path_input.clone();
+            if ui
+                .add_enabled(
+                    !dump.is_empty(),
+                    egui::Button::new(self.i18n.choisir(
+                        "Chercher la cle dans le dump",
+                        "Find the key in the dump",
+                    )),
+                )
+                .on_hover_text(self.i18n.choisir(
+                    "La cle se deduit de votre propre dump, en une minute environ. Rien n'est telecharge et rien n'est fourni.",
+                    "The key is worked out from your own dump, in about a minute. Nothing is downloaded and nothing is supplied.",
+                ))
+                .clicked()
+            {
+                use std::sync::atomic::{AtomicBool, AtomicU64};
+                use std::sync::Arc;
+                let avancement = Arc::new(AtomicU64::new(0));
+                let arret = Arc::new(AtomicBool::new(false));
+                let (envoi, reception) = std::sync::mpsc::channel();
+                let a = Arc::clone(&avancement);
+                let s = Arc::clone(&arret);
+                std::thread::spawn(move || {
+                    let trouvee = std::fs::read(&dump).ok().and_then(|buf| {
+                        let fils = std::thread::available_parallelism()
+                            .map(|n| n.get())
+                            .unwrap_or(4);
+                        crate::emulator::sonix::recherche_cle::chercher(&buf, fils, a, s)
+                    });
+                    let _ = envoi.send(trouvee);
+                });
+                self.depart_recherche = std::time::Instant::now();
+                self.recherche_cle = Some((avancement, arret, reception));
+            }
+        } else if let Some((avancement, arret, _)) = &self.recherche_cle {
+            use std::sync::atomic::Ordering;
+            let essayes = avancement.load(Ordering::Relaxed);
+            let part = (essayes as f64 / 4_294_967_296.0).clamp(0.0, 1.0);
+            let ecoule = self.depart_recherche.elapsed().as_secs_f64();
+            // Le reste s'estime sur la cadence deja tenue. La cle peut tomber
+            // bien avant la fin : elle est cherchee dans l'ordre, pas au hasard.
+            let restant = if part > 0.02 { ecoule * (1.0 - part) / part } else { 0.0 };
+            ui.label(
+                egui::RichText::new(self.i18n.choisir(
+                    "Recherche de la cle dans votre dump. La console demarrera toute seule des qu'elle est trouvee.",
+                    "Looking for the key in your dump. The console will start on its own once it is found.",
+                ))
+                .small(),
+            );
+            ui.add(
+                egui::ProgressBar::new(part as f32)
+                    .desired_width(240.0)
+                    .text(if restant > 1.0 {
+                        format!(
+                            "{:.0} %   {} {:.0} s",
+                            part * 100.0,
+                            self.i18n.choisir("au plus", "at most"),
+                            restant
+                        )
+                    } else {
+                        format!("{:.0} %", part * 100.0)
+                    }),
+            );
+            if ui.small_button(self.i18n.choisir("Arreter", "Stop")).clicked() {
+                arret.store(true, Ordering::Relaxed);
+            }
+            // Sans cela la jauge ne bougerait qu'au prochain evenement.
+            ui.ctx().request_repaint();
+        }
+
+        // La cle se retrouve depuis le dump lui meme. La cle AES est en clair
+        // dans la table de chargement ; le seul secret est la deviceKey, trente
+        // deux bits, qui ne sert qu'a masquer un IV. Quatre milliards de
+        // candidats, deux blocs chacun, et la table des vecteurs du coeur pour
+        // dire lequel est le bon. Rien de la cle n'est ecrit dans le logiciel :
+        // c'est votre dump qui rend la sienne.
+        ui.horizontal_wrapped(|ui| {
+            let en_cours = self.recherche_cle.is_some();
+            let dump = self.load_path_input.clone();
+            if ui
+                .add_enabled(
+                    !en_cours && !dump.is_empty(),
+                    egui::Button::new(
+                        self.i18n.choisir("Chercher la cle dans le dump", "Find the key in the dump"),
+                    ),
+                )
+                .on_hover_text(self.i18n.choisir(
+                    "La cle se deduit de votre propre dump, en une minute environ. Rien n'est telecharge et rien n'est fourni.",
+                    "The key is worked out from your own dump, in about a minute. Nothing is downloaded and nothing is supplied.",
+                ))
+                .clicked()
+            {
+                use std::sync::atomic::{AtomicBool, AtomicU64};
+                use std::sync::Arc;
+                let avancement = Arc::new(AtomicU64::new(0));
+                let arret = Arc::new(AtomicBool::new(false));
+                let (envoi, reception) = std::sync::mpsc::channel();
+                let a = Arc::clone(&avancement);
+                let s = Arc::clone(&arret);
+                std::thread::spawn(move || {
+                    let trouvee = std::fs::read(&dump).ok().and_then(|buf| {
+                        let fils = std::thread::available_parallelism()
+                            .map(|n| n.get())
+                            .unwrap_or(4);
+                        crate::emulator::sonix::recherche_cle::chercher(&buf, fils, a, s)
+                    });
+                    let _ = envoi.send(trouvee);
+                });
+                self.recherche_cle = Some((avancement, arret, reception));
+            }
+            if let Some((avancement, arret, _)) = &self.recherche_cle {
+                use std::sync::atomic::Ordering;
+                let fait = avancement.load(Ordering::Relaxed) as f64 * 100.0 / 4_294_967_296.0;
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} {:.0} %",
+                        self.i18n.choisir("recherche", "searching"),
+                        fait
+                    ))
+                    .small(),
+                );
+                if ui.small_button(self.i18n.choisir("Arreter", "Stop")).clicked() {
+                    arret.store(true, Ordering::Relaxed);
+                }
+            }
+        });
+        ui.label(
+            egui::RichText::new(self.i18n.choisir(
+                "Elle est gravee dans les fusibles de votre console et se lit en SWD. Elle n'est ni fournie ni distribuee.",
+                "It is burned into your console's fuses and read over SWD. It is neither shipped nor distributed.",
+            ))
+            .small()
+            .color(egui::Color32::GRAY),
+        );
     }
 
     /// Mode jeu : la console seule, decoupee, deplacable sur le bureau.
@@ -2648,7 +2861,10 @@ impl eframe::App for TamagotchiApp {
     /// Fond de la fenetre. Transparent en mode jeu : c'est ce qui decoupe la
     /// coque sur le bureau, le reste de la surface ne peignant rien.
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
-        if self.mode == Mode::Jeu {
+        // Un fond transparent que la carte refuse de composer devient un carre
+        // noir. Mieux vaut alors une fenetre ordinaire qu'un trou : le reglage
+        // permet de retomber dessus sans rien deviner.
+        if self.mode == Mode::Jeu && self.fond_transparent {
             [0.0, 0.0, 0.0, 0.0]
         } else {
             visuals.panel_fill.to_normalized_gamma_f32()
@@ -2657,6 +2873,70 @@ impl eframe::App for TamagotchiApp {
 
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let now = std::time::Instant::now();
+        // Resultat de la recherche de cle, s'il est arrive.
+        if let Some((_, _, reception)) = &self.recherche_cle {
+            if let Ok(resultat) = reception.try_recv() {
+                self.recherche_cle = None;
+                match resultat {
+                    Some(cle) => {
+                        let texte = format!("{cle:08X}");
+                        self.saisie_cle = texte.clone();
+                        let _ = crate::emulator::sauvegarde::ecrire_cle_commune(&texte);
+                        self.status_msg = Some(format!(
+                            "{} {}",
+                            self.i18n.choisir("Cle trouvee :", "Key found:"),
+                            texte
+                        ));
+                        let chemin = self.load_path_input.clone();
+                        if !chemin.is_empty() {
+                            self.load_firmware(std::path::PathBuf::from(chemin));
+                        }
+                    }
+                    None => {
+                        self.status_msg = Some(
+                            self.i18n
+                                .choisir(
+                                    "Aucune cle ne convient pour ce dump.",
+                                    "No key fits this dump.",
+                                )
+                                .to_string(),
+                        )
+                    }
+                }
+            }
+        }
+        // Resultat de la recherche de cle, s'il est arrive.
+        if let Some((_, _, reception)) = &self.recherche_cle {
+            if let Ok(resultat) = reception.try_recv() {
+                self.recherche_cle = None;
+                match resultat {
+                    Some(cle) => {
+                        let texte = format!("{cle:08X}");
+                        self.saisie_cle = texte.clone();
+                        let _ = crate::emulator::sauvegarde::ecrire_cle_commune(&texte);
+                        self.status_msg = Some(format!(
+                            "{} {}",
+                            self.i18n.choisir("Cle trouvee :", "Key found:"),
+                            texte
+                        ));
+                        let chemin = self.load_path_input.clone();
+                        if !chemin.is_empty() {
+                            self.load_firmware(std::path::PathBuf::from(chemin));
+                        }
+                    }
+                    None => {
+                        self.status_msg = Some(
+                            self.i18n
+                                .choisir(
+                                    "Aucune cle ne convient pour ce dump.",
+                                    "No key fits this dump.",
+                                )
+                                .to_string(),
+                        )
+                    }
+                }
+            }
+        }
         if let Some(action) = self.tray.as_ref().and_then(|tray| tray.action()) {
             match action {
                 crate::tray::ActionTray::Afficher => {
@@ -3074,6 +3354,22 @@ impl eframe::App for TamagotchiApp {
                                     // pouvant avoir ete retiree par ailleurs.
                                     // Une case a cocher qui ment est pire que
                                     // pas de case du tout.
+                                    if ui
+                                        .checkbox(
+                                            &mut self.fond_transparent,
+                                            self.i18n.choisir(
+                                                "Fond transparent en mode jeu",
+                                                "Transparent background in game mode",
+                                            ),
+                                        )
+                                        .on_hover_text(self.i18n.choisir(
+                                            "Decoupe la console sur le bureau. Si votre carte graphique refuse la transparence, vous voyez un carre noir : decochez.",
+                                            "Cuts the console out on the desktop. If your graphics card refuses transparency you get a black square: uncheck this.",
+                                        ))
+                                        .changed()
+                                    {
+                                        self.retenir_la_partie();
+                                    }
                                     let mut au_demarrage =
                                         crate::demarrage::actif();
                                     if ui
@@ -3148,6 +3444,8 @@ impl eframe::App for TamagotchiApp {
                                 self.load_firmware(std::path::PathBuf::from(self.load_path_input.clone()));
                             }
                         });
+                        ui.add_space(4.0);
+                        self.dessiner_la_cle(ui);
                         if let Some(msg) = &self.status_msg {
                             ui.label(egui::RichText::new(msg).small().color(egui::Color32::from_rgb(255, 230, 80)));
                         }

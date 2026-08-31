@@ -42,8 +42,10 @@ Capybara ships no game data, and never will. You supply two things, taken from a
 console you own.
 
 - **A flash dump** of your own device, 16 MB, read from its memory chip.
-- **The device key**, read over SWD. It is burned into the chip fuses, appears
-  in no dump, and can only be read from the device itself.
+- **The device key**. It is burned into the chip fuses and appears in no dump,
+  but Capybara works it out from your dump in about a minute: the AES key sits
+  in the load table in clear, and only a thirty two bit value is missing. You
+  can also read it over SWD if you prefer.
 
 **Why it works this way.** Tamagotchi Paradise is a product still on sale, not
 an abandoned one. Nothing here replaces buying it, and nothing here lets you
@@ -60,8 +62,10 @@ Without a dump and its key, the application opens and asks for them.
    [Releases](https://github.com/infinition/capybara/releases), or build one.
 2. Open Capybara and load your dump. It is copied into the data folder, so it
    stays available even if you move the original.
-3. Put the key in the data folder as `cle-device.txt`, or beside the dump in a
-   file with the same name plus `.key`.
+3. Press **Find the key in the dump**. The key is worked out from your own
+   dump in about a minute, and saved. Nothing is downloaded and nothing is
+   supplied with the software. If you already know your key you can paste it in
+   the field instead.
 4. Play. The console resumes its last game on its own the next time you open it,
    like a real device switched back on.
 
@@ -260,8 +264,10 @@ fournissez deux choses, tirees d'une console qui vous appartient.
 
 - **Un dump de la flash** de votre propre appareil, 16 Mo, lu sur sa puce
   memoire.
-- **La cle de l'appareil**, lue en SWD. Elle est gravee dans les fusibles de la
-  puce, ne figure dans aucun dump, et ne se lit que sur l'appareil lui meme.
+- **La cle de l'appareil**. Elle est gravee dans les fusibles de la puce et ne
+  figure dans aucun dump, mais Capybara la retrouve depuis votre dump en une
+  minute environ : la cle AES est en clair dans la table de chargement, et il ne
+  manque qu'une valeur de trente deux bits. Vous pouvez aussi la lire en SWD.
 
 **Pourquoi c'est fait ainsi.** Tamagotchi Paradise est un produit toujours en
 vente, pas une console abandonnee. Rien ici ne remplace son achat, et rien ici
@@ -279,8 +285,10 @@ Sans dump ni cle, l'application s'ouvre et vous les demande.
    [releases](https://github.com/infinition/capybara/releases), ou compilez le.
 2. Ouvrez Capybara et chargez votre dump. Il est recopie dans le dossier de
    donnees : il reste trouvable meme si vous deplacez l'original.
-3. Posez la cle dans le dossier de donnees sous le nom `cle-device.txt`, ou a
-   cote du dump dans un fichier portant le meme nom suivi de `.key`.
+3. Appuyez sur **Chercher la cle dans le dump**. Elle se deduit de votre propre
+   dump en une minute environ, et elle est enregistree. Rien n'est telecharge et
+   rien n'est fourni avec le logiciel. Si vous connaissez deja votre cle, collez
+   la dans le champ a la place.
 4. Jouez. La console reprend sa derniere partie toute seule a l'ouverture
    suivante, comme un vrai boitier qu'on rallume.
 

@@ -1,6 +1,6 @@
 [package]
 name = "capybara"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "Emulateur bare-metal du Sonix SNC73410, compatible avec le firmware Tamagotchi Paradise"
