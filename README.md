@@ -38,14 +38,31 @@ reboot of your computer.
 
 ### What you need first
 
-Capybara ships no game data, and never will. You supply two things, taken from a
-console you own.
+Capybara ships no game data, and never will. You supply one thing: **a flash
+dump of your own console**, 16 MB, read from its memory chip.
 
-- **A flash dump** of your own device, 16 MB, read from its memory chip.
-- **The device key**. It is burned into the chip fuses and appears in no dump,
-  but Capybara works it out from your dump in about a minute: the AES key sits
-  in the load table in clear, and only a thirty two bit value is missing. You
-  can also read it over SWD if you prefer.
+That dump is encrypted, but you have nothing else to find. Import it and
+Capybara works out its key on its own, in about a minute, with a gauge showing
+how far it has got. The console starts the moment the key turns up.
+
+<details>
+<summary>How that works, if you are curious</summary>
+
+The AES key is not the secret. It sits in the dump's load table in clear. What
+is missing is a thirty two bit device value, and it does nothing but mask an
+initialisation vector before one encryption pass. Everything else, key schedules
+included, is computed once.
+
+So four billion candidates remain, two AES blocks each, and the core's vector
+table tells which one is right: a stack pointer in RAM followed by three odd
+handler addresses. Noise does not satisfy all four at once. That runs at about
+twenty six million candidates per second on eight threads.
+
+Nothing of the key is written into the software or into this repository. Your
+dump yields its own, and a key found this way is filed beside that dump, so
+another dump with another key never overwrites it.
+
+</details>
 
 **Why it works this way.** Tamagotchi Paradise is a product still on sale, not
 an abandoned one. Nothing here replaces buying it, and nothing here lets you
@@ -54,7 +71,7 @@ memory. What Capybara gives back is what you already paid for, on a screen that
 does not run on a coin cell. That is the honest line, and the project holds it
 even where it makes the software harder to start using.
 
-Without a dump and its key, the application opens and asks for them.
+Without a dump, the application opens and asks for one.
 
 ### Getting started
 
@@ -62,10 +79,9 @@ Without a dump and its key, the application opens and asks for them.
    [Releases](https://github.com/infinition/capybara/releases), or build one.
 2. Open Capybara and load your dump. It is copied into the data folder, so it
    stays available even if you move the original.
-3. Press **Find the key in the dump**. The key is worked out from your own
-   dump in about a minute, and saved. Nothing is downloaded and nothing is
-   supplied with the software. If you already know your key you can paste it in
-   the field instead.
+3. Wait for the gauge if your dump is encrypted. Nothing to do: the search
+   starts by itself and the console boots when it finishes. If you already know
+   your key, paste it in the field to skip the wait.
 4. Play. The console resumes its last game on its own the next time you open it,
    like a real device switched back on.
 
@@ -260,14 +276,32 @@ sauvegarde survit a l'extinction de l'ordinateur.
 ### Ce qu'il vous faut d'abord
 
 Capybara ne distribue aucune donnee de jeu, et ne le fera jamais. Vous
-fournissez deux choses, tirees d'une console qui vous appartient.
+fournissez une seule chose : **un dump de la flash de votre propre console**,
+16 Mo, lu sur sa puce memoire.
 
-- **Un dump de la flash** de votre propre appareil, 16 Mo, lu sur sa puce
-  memoire.
-- **La cle de l'appareil**. Elle est gravee dans les fusibles de la puce et ne
-  figure dans aucun dump, mais Capybara la retrouve depuis votre dump en une
-  minute environ : la cle AES est en clair dans la table de chargement, et il ne
-  manque qu'une valeur de trente deux bits. Vous pouvez aussi la lire en SWD.
+Ce dump est chiffre, mais vous n'avez rien d'autre a trouver. Importez le et
+Capybara en deduit la cle tout seul, en une minute environ, avec une jauge qui
+montre ou il en est. La console demarre des que la cle tombe.
+
+<details>
+<summary>Comment ca marche, si la question vous interesse</summary>
+
+La cle AES n'est pas le secret. Elle est en clair dans la table de chargement du
+dump. Ce qui manque est une valeur d'appareil de trente deux bits, et elle ne
+sert qu'a masquer un vecteur d'initialisation avant une passe de chiffrement.
+Tout le reste, cadencements de cle compris, se calcule une fois.
+
+Restent donc quatre milliards de candidats a deux blocs AES chacun, et la table
+des vecteurs du coeur pour dire lequel est le bon : un pointeur de pile en
+memoire vive, puis trois adresses de gestionnaires impaires. Le bruit ne
+satisfait pas ces quatre conditions a la fois. Cela tourne a vingt six millions
+de candidats par seconde sur huit fils.
+
+Rien de la cle n'est ecrit dans le logiciel ni dans ce depot. C'est votre dump
+qui rend la sienne, et une cle trouvee ainsi est rangee a cote de ce dump la,
+donc un autre dump avec une autre cle ne l'ecrase jamais.
+
+</details>
 
 **Pourquoi c'est fait ainsi.** Tamagotchi Paradise est un produit toujours en
 vente, pas une console abandonnee. Rien ici ne remplace son achat, et rien ici
@@ -277,7 +311,7 @@ vous avez deja paye, sur un ecran qui ne tient pas sur une pile bouton. C'est
 la ligne honnete, et le projet s'y tient meme quand elle rend le logiciel plus
 difficile a prendre en main.
 
-Sans dump ni cle, l'application s'ouvre et vous les demande.
+Sans dump, l'application s'ouvre et vous en demande un.
 
 ### Premiers pas
 
@@ -285,10 +319,9 @@ Sans dump ni cle, l'application s'ouvre et vous les demande.
    [releases](https://github.com/infinition/capybara/releases), ou compilez le.
 2. Ouvrez Capybara et chargez votre dump. Il est recopie dans le dossier de
    donnees : il reste trouvable meme si vous deplacez l'original.
-3. Appuyez sur **Chercher la cle dans le dump**. Elle se deduit de votre propre
-   dump en une minute environ, et elle est enregistree. Rien n'est telecharge et
-   rien n'est fourni avec le logiciel. Si vous connaissez deja votre cle, collez
-   la dans le champ a la place.
+3. Laissez la jauge finir si votre dump est chiffre. Rien a faire : la
+   recherche part toute seule et la console demarre a la fin. Si vous connaissez
+   deja votre cle, collez la dans le champ pour eviter l'attente.
 4. Jouez. La console reprend sa derniere partie toute seule a l'ouverture
    suivante, comme un vrai boitier qu'on rallume.
 
