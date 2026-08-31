@@ -233,7 +233,10 @@ impl GuiWidgets {
                 ui.horizontal(|ui| {
                     ui.label(i18n.t("biome_ocean"));
                     if island.ocean_unlocked {
-                        ui.colored_label(Color32::GREEN, "✔ Débloqué");
+                        ui.colored_label(
+                            Color32::GREEN,
+                            i18n.choisir("✔ Debloque", "✔ Unlocked"),
+                        );
                     } else if ui.button(i18n.t_args("shop_buy", &[("price", "80")])).clicked() {
                         if pet.coins >= 80 {
                             pet.coins -= 80;
@@ -246,7 +249,10 @@ impl GuiWidgets {
                 ui.horizontal(|ui| {
                     ui.label(i18n.t("biome_sky"));
                     if island.sky_unlocked {
-                        ui.colored_label(Color32::GREEN, "✔ Débloqué");
+                        ui.colored_label(
+                            Color32::GREEN,
+                            i18n.choisir("✔ Debloque", "✔ Unlocked"),
+                        );
                     } else if ui.button(i18n.t_args("shop_buy", &[("price", "150")])).clicked() {
                         if pet.coins >= 150 {
                             pet.coins -= 150;
@@ -360,12 +366,12 @@ impl GuiWidgets {
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    ui.label("Édition détectée:");
+                    ui.label(i18n.choisir("Edition detectee :", "Detected edition:"));
                     ui.label(RichText::new(&inspector.detected_edition).color(Color32::from_rgb(100, 220, 255)).strong());
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Flash Size:");
+                    ui.label(i18n.choisir("Taille de la flash :", "Flash size:"));
                     ui.label(
                         RichText::new(format!(
                             "{} MB (128 Mbit)",
@@ -385,7 +391,13 @@ impl GuiWidgets {
                 ui.label(i18n.t("hw_uart_status"));
 
                 ui.add_space(8.0);
-                ui.label(RichText::new("Memory Layout & Partitions:").strong());
+                ui.label(
+                    RichText::new(i18n.choisir(
+                        "Organisation memoire et partitions :",
+                        "Memory layout and partitions:",
+                    ))
+                    .strong(),
+                );
 
                 ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     for section in &inspector.sections {

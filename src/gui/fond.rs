@@ -94,6 +94,10 @@ pub struct Habillage {
     /// Couleur du mot. Absente, il prend la couleur d'accent de la coque.
     #[serde(default)]
     pub titre_couleur: Option<[u8; 3]>,
+    /// Position verticale du mot, en fraction du cote de la coque. Zero le
+    /// laisse ou la console le porte, juste au dessus de l'ecran.
+    #[serde(default)]
+    pub titre_dy: f32,
 
     /// Liseré clair autour de la dalle. Sur la console c'est le bord de la
     /// vitre, tres fin.
@@ -121,6 +125,30 @@ pub struct Habillage {
     /// l'oeuf : agrandie, elle sortait sinon du Tamagotchi.
     #[serde(default)]
     pub fenetre_deborde: bool,
+    /// Rotation du calque de la fenetre, en degres.
+    #[serde(default)]
+    pub fenetre_rotation: f32,
+    /// Ombre portee autour du calque de la fenetre, en fraction de son cote.
+    /// Zero n'en met aucune.
+    #[serde(default)]
+    pub ombre_fenetre: f32,
+    /// Ombre portee autour de la dalle.
+    #[serde(default)]
+    pub ombre_ecran: f32,
+    /// Relief de la coque : reflet en haut, assombrissement en bas. Zero rend
+    /// l'aplat d'origine.
+    #[serde(default)]
+    pub relief_coque: f32,
+
+    /// Hauteur des trois boutons, en fraction de la hauteur de coque.
+    #[serde(default)]
+    pub boutons_dy: f32,
+    /// Ecartement des trois boutons, en facteur de l'ecart d'origine.
+    #[serde(default = "un")]
+    pub boutons_ecart: f32,
+    /// Taille des trois boutons, en facteur de leur taille d'origine.
+    #[serde(default = "un")]
+    pub boutons_taille: f32,
 
     /// Couleur du corps de l'oeuf, ce qu'on voit derriere tout le reste.
     /// Absente, elle suit l'edition.
@@ -140,6 +168,24 @@ pub struct Habillage {
     pub bouton_couleur: Option<[u8; 3]>,
     #[serde(default)]
     pub molette_couleur: Option<[u8; 3]>,
+
+    /// Opacite de chaque piece, de zero a un. Elle est rangee a part des
+    /// couleurs : une couleur absente suit l'edition, et on veut pouvoir la
+    /// rendre translucide sans avoir a la choisir.
+    #[serde(default = "un")]
+    pub corps_opacite: f32,
+    #[serde(default = "un")]
+    pub motif_opacite: f32,
+    #[serde(default = "un")]
+    pub bordure_opacite: f32,
+    #[serde(default = "un")]
+    pub bouton_opacite: f32,
+    #[serde(default = "un")]
+    pub molette_opacite: f32,
+    #[serde(default = "un")]
+    pub chapeau_opacite: f32,
+    #[serde(default = "un")]
+    pub titre_opacite: f32,
 }
 
 fn un() -> f32 {
@@ -151,7 +197,7 @@ fn vrai() -> bool {
 }
 
 fn titre_par_defaut() -> String {
-    "TAMAGOTCHI".to_string()
+    "CAPYBARA".to_string()
 }
 
 /// Le liseré de la vraie console est mince : un cinquantieme du cote.
@@ -177,6 +223,21 @@ impl Default for Habillage {
             chapeau_cadrage: Cadrage::default(),
             chapeau_couleur: None,
             titre_visible: true,
+            titre_dy: 0.0,
+            fenetre_rotation: 0.0,
+            ombre_fenetre: 0.0,
+            ombre_ecran: 0.0,
+            relief_coque: 0.0,
+            boutons_dy: 0.0,
+            boutons_ecart: 1.0,
+            boutons_taille: 1.0,
+            corps_opacite: 1.0,
+            motif_opacite: 1.0,
+            bordure_opacite: 1.0,
+            bouton_opacite: 1.0,
+            molette_opacite: 1.0,
+            chapeau_opacite: 1.0,
+            titre_opacite: 1.0,
             titre: titre_par_defaut(),
             titre_taille: 1.0,
             titre_couleur: None,

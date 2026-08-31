@@ -17,6 +17,18 @@ pub struct EtatBouton {
     pub clique: bool,
 }
 
+/// Etat reel des quatre broches de commande, pour l'animation.
+///
+/// Le dessin ne peut pas le deviner : un appui venu du clavier ou du navigateur
+/// ne laisse aucune trace dans la reponse du pointeur.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Enfonces {
+    pub a: bool,
+    pub b: bool,
+    pub c: bool,
+    pub molette: bool,
+}
+
 /// Etat des commandes rendu par le panneau pour une image.
 #[derive(Default, Clone, Copy)]
 pub struct Commandes {
@@ -75,6 +87,25 @@ fn silhouette_fenetre(cadre: Rect) -> Vec<Vec<Pos2>> {
         p(-0.82, -0.74),
     ];
 
+    // La crete : le haut etait une droite, plaquee sous la calotte. La console
+    // y porte le meme motif de coquille fendue que la fente. Chaque dent est un
+    // triangle a part, egui ne remplissant que du convexe, et le papier les
+    // traverse sans jointure puisque toutes prennent leur texture du meme
+    // repere.
+    const DENTS: usize = 7;
+    const HAUTEUR_DENT: f32 = 0.085;
+    let mut crete = Vec::with_capacity(DENTS);
+    let gauche = -0.62;
+    let pas = (0.62 - gauche) / DENTS as f32;
+    for i in 0..DENTS {
+        let x0 = gauche + pas * i as f32;
+        crete.push(vec![
+            p(x0, -1.00),
+            p(x0 + pas, -1.00),
+            p(x0 + pas * 0.5, -1.00 - HAUTEUR_DENT),
+        ]);
+    }
+
     // Les joues : ce qui avance a mi hauteur, de part et d'autre.
     let joues = vec![
         p(-0.70, -0.46),
@@ -90,7 +121,9 @@ fn silhouette_fenetre(cadre: Rect) -> Vec<Vec<Pos2>> {
     // La pointe, sous l'ecran.
     let pointe = vec![p(-0.34, 0.80), p(0.34, 0.80), p(0.0, 1.16)];
 
-    vec![corps, joues, pointe]
+    let mut morceaux = vec![corps, joues, pointe];
+    morceaux.extend(crete);
+    morceaux
 }
 
 /// Habillage de la coque, tel que le panneau le recoit.
@@ -105,6 +138,11 @@ pub struct Habits<'a> {
     pub papier: Option<&'a TextureHandle>,
     /// Papier propre a la calotte, quand elle a le sien.
     pub chapeau: Option<&'a TextureHandle>,
+    /// Vrai quand un masque importe est en service. Il remplace alors la
+    /// decoupe de la console au lieu de s'y ajouter : sans cela, le papier
+    /// restait enferme dans la silhouette de la fenetre transparente et le
+    /// masque ne pouvait que la reduire.
+    pub masque_impose: bool,
 }
 
 /// Rogne un polygone convexe sur un autre, convexe lui aussi.
@@ -169,9 +207,34 @@ fn rogner_sur(sujet: &[Pos2], fenetre: &[Pos2]) -> Vec<Pos2> {
 /// la composition, ce qui suffit a faire correspondre les deux sans autre
 /// calcul.
 fn peindre_texture(morceau: &[Pos2], repere: Rect, texture: egui::TextureId) -> Shape {
+    peindre_texture_tournee(morceau, repere, texture, 0.0, repere.center())
+}
+
+/// Fait tourner un point autour d'un pivot.
+fn tourner(point: Pos2, pivot: Pos2, angle: f32) -> Pos2 {
+    if angle == 0.0 {
+        return point;
+    }
+    let (s, c) = angle.sin_cos();
+    let dx = point.x - pivot.x;
+    let dy = point.y - pivot.y;
+    pos2(pivot.x + dx * c - dy * s, pivot.y + dx * s + dy * c)
+}
+
+/// Comme `peindre_texture`, mais le morceau tourne autour d'un pivot.
+///
+/// Les coordonnees de texture sont prises sur le point avant rotation : la
+/// texture tourne donc avec la forme au lieu de glisser dessous.
+fn peindre_texture_tournee(
+    morceau: &[Pos2],
+    repere: Rect,
+    texture: egui::TextureId,
+    angle: f32,
+    pivot: Pos2,
+) -> Shape {
     let mut maillage = egui::Mesh::with_texture(texture);
     for point in morceau {
-        maillage.colored_vertex(*point, Color32::WHITE);
+        maillage.colored_vertex(tourner(*point, pivot, angle), Color32::WHITE);
         let dernier = maillage.vertices.len() - 1;
         maillage.vertices[dernier].uv = pos2(
             (point.x - repere.min.x) / repere.width(),
@@ -287,6 +350,8 @@ impl LcdPanel {
         shell_color: ShellColor,
         angle_molette: f32,
         habits: &Habits<'_>,
+        enfonces: Enfonces,
+        souris: crate::touches::Souris,
     ) -> Commandes {
         let habillage = habits.reglages;
         let couleurs = shell_color.couleurs();
@@ -298,11 +363,27 @@ impl LcdPanel {
         let rvb = |c: Option<[u8; 3]>, defaut: Color32| {
             c.map(|[r, v, b]| Color32::from_rgb(r, v, b)).unwrap_or(defaut)
         };
-        let corps_col = rvb(habits.reglages.corps_couleur, corps_col);
-        let motif_col = rvb(habits.reglages.motif_couleur, motif_col);
+        // L'opacite est rangee a part de la couleur : une couleur absente suit
+        // l'edition, et on veut pouvoir la rendre translucide sans avoir a la
+        // choisir.
+        let opaque = |couleur: Color32, opacite: f32| -> Color32 {
+            let a = (opacite.clamp(0.0, 1.0) * 255.0).round() as u8;
+            Color32::from_rgba_unmultiplied(couleur.r(), couleur.g(), couleur.b(), a)
+        };
+        let corps_col = opaque(
+            rvb(habits.reglages.corps_couleur, corps_col),
+            habillage.corps_opacite,
+        );
+        let motif_col = opaque(
+            rvb(habits.reglages.motif_couleur, motif_col),
+            habillage.motif_opacite,
+        );
         // Tous les traits de la coque en decoulent : contour de l'oeuf, ombres
         // des reliefs, cerclage des boutons, stries de la molette.
-        let ombre_col = rvb(habits.reglages.bordure_couleur, ombre_col);
+        let ombre_col = opaque(
+            rvb(habits.reglages.bordure_couleur, ombre_col),
+            habillage.bordure_opacite,
+        );
         let mut commandes = Commandes::default();
 
         // La coque suit la fenetre, mais l'ecran et les boutons se placent les
@@ -338,29 +419,10 @@ impl LcdPanel {
             pos2(centre.x + flanc - largeur * 0.06, antenne_haut),
             pos2(centre.x + flanc + largeur * 0.13, antenne_bas),
         );
-        // La molette n'est pas de la couleur du corps sur la console : elle
-        // tranche, vert d'eau sur la rose, violet sur la bleue. Elle est
-        // cannelee, ce que rendent quelques traits horizontaux.
-        let rayon_molette = largeur * 0.055;
-        ui.painter().rect_filled(antenne.translate(vec2(0.0, 2.5)), rayon_molette, ombre_col);
-        ui.painter().rect_filled(
-            antenne,
-            rayon_molette,
-            rvb(habits.reglages.molette_couleur, accent_col),
-        );
-        ui.painter().rect_stroke(antenne, rayon_molette, Stroke::new(1.5, ombre_col));
-        let cannelures = 7;
-        for i in 1..cannelures {
-            let y = antenne.min.y
-                + antenne.height() * i as f32 / cannelures as f32;
-            ui.painter().line_segment(
-                [
-                    pos2(antenne.min.x + antenne.width() * 0.28, y),
-                    pos2(antenne.max.x - antenne.width() * 0.12, y),
-                ],
-                Stroke::new(1.0, ombre_col.gamma_multiply(0.5)),
-            );
-        }
+        // Le rectangle de l'antenne ne sert plus qu'a placer la molette et a
+        // savoir si le pointeur la survole. Le bloc qui l'habillait doublait la
+        // roue dessinee par dessus, sans rien apporter, et son animation
+        // debordait sur une piece qui ne bouge pas.
 
         // Repere carre de la coque : c'est celui dans lequel les papiers ont ete
         // composes, et il ne depend pas de la largeur de la fenetre.
@@ -374,6 +436,59 @@ impl LcdPanel {
             corps_col,
             Stroke::new(3.0, ombre_col),
         ));
+
+        // Relief du plastique : un degrade du haut vers le bas et un reflet en
+        // haut a gauche. La coque etait un aplat parfaitement plat, ce qui se
+        // voit d'autant plus que la vraie est bombee. Le degrade est un
+        // maillage en eventail depuis le centre, chaque sommet prenant sa
+        // teinte de sa hauteur ; egui ne remplit un polygone que d'une seule
+        // couleur, un maillage est le seul moyen d'en avoir deux.
+        // Un relief negatif retourne l'eclairage : la lumiere vient d'en bas et
+        // l'ombre se pose en haut. C'est le meme reglage, du signe pres.
+        let relief = habillage.relief_coque.clamp(-1.0, 1.0);
+        if relief != 0.0 {
+            let vigueur = relief.abs();
+            let par_en_bas = relief < 0.0;
+            let mut maillage = egui::Mesh::default();
+            let teinte_de = |y: f32| -> Color32 {
+                let brut = ((y - coque.min.y) / hauteur).clamp(0.0, 1.0);
+                let t = if par_en_bas { 1.0 - brut } else { brut };
+                if t < 0.5 {
+                    // Du cote de la lumiere : forte au bord, nulle au milieu.
+                    let force = (1.0 - t * 2.0).powf(1.6);
+                    Color32::from_rgba_unmultiplied(255, 255, 255, (74.0 * force * vigueur) as u8)
+                } else {
+                    // Du cote de l'ombre, qui s'installe en s'eloignant.
+                    let force = ((t - 0.5) * 2.0).powf(1.4);
+                    Color32::from_rgba_unmultiplied(0, 0, 0, (58.0 * force * vigueur) as u8)
+                }
+            };
+            maillage.colored_vertex(centre, teinte_de(centre.y));
+            for point in &contour {
+                maillage.colored_vertex(*point, teinte_de(point.y));
+            }
+            let n = contour.len() as u32;
+            for i in 0..n {
+                maillage.add_triangle(0, i + 1, if i + 2 > n { 1 } else { i + 2 });
+            }
+            ui.painter().add(Shape::mesh(maillage));
+
+            // Le reflet, une tache claire en haut a gauche comme sur un objet
+            // brillant. Trois cercles concentriques de plus en plus pales, ce
+            // qui suffit a donner un bord doux.
+            let cote_reflet = if par_en_bas { 1.0 } else { -1.0 };
+            let foyer = pos2(
+                centre.x + largeur * 0.22 * cote_reflet,
+                centre.y + hauteur * 0.28 * cote_reflet,
+            );
+            for (facteur, alpha) in [(0.30f32, 22.0f32), (0.20, 26.0), (0.11, 30.0)] {
+                ui.painter().circle_filled(
+                    foyer,
+                    largeur * facteur,
+                    Color32::from_rgba_unmultiplied(255, 255, 255, (alpha * vigueur) as u8),
+                );
+            }
+        }
 
         // Le fond de coque, pose sur le corps. Tout ce qui suit passe devant.
         if let Some(texture) = habits.coque {
@@ -397,7 +512,12 @@ impl LcdPanel {
         // pointent vers le haut, et le papier pose dessous, celui de la fenetre
         // par exemple, ne s'y verrait pas.
         let creux = hauteur * 0.022;
-        let cos_haut = (COS_FENTE + creux / (hauteur * 0.5)).min(0.999);
+        // La calotte descend d'un cheveu sous le haut du ruban qui la suit.
+        // Bord a bord, les deux adoucissements d'egui ne se completaient pas et
+        // laissaient un lisere clair tout du long. Le recouvrement vaut un
+        // dixieme du creux : assez pour fermer la couture, trop peu pour
+        // combler les dents qui pointent vers le haut.
+        let cos_haut = (COS_FENTE + creux * 0.90 / (hauteur * 0.5)).min(0.999);
         let angle_haut = cos_haut.acos();
         let pas_calotte = 48;
         let mut calotte = Vec::with_capacity(pas_calotte + 1);
@@ -436,7 +556,55 @@ impl LcdPanel {
         // couleur, poses l'un sur l'autre. Sans trait, les jointures ne se
         // voient pas, et egui ne sait remplir que du convexe.
         let cadre = fenetre_rect.expand(cote_fenetre * 0.30);
-        for morceau in silhouette_fenetre(cadre) {
+        // Un masque importe donne lui meme la forme : le papier est alors pose
+        // sur tout le repere carre, celui dans lequel il a ete cuit, et c'est
+        // le masque qui decide de ce qui se voit.
+        let morceaux = if habits.masque_impose && habits.papier.is_some() {
+            vec![vec![
+                repere.left_top(),
+                repere.right_top(),
+                repere.right_bottom(),
+                repere.left_bottom(),
+            ]]
+        } else {
+            silhouette_fenetre(cadre)
+        };
+        let angle_calque = habillage.fenetre_rotation.to_radians();
+        let pivot = cadre.center();
+        // Ombre portee du calque, en couches concentriques comme celle de la
+        // dalle. Elle est posee sous tous les morceaux, sinon un morceau
+        // couvrirait l'ombre du suivant.
+        let ombre_calque = habillage.ombre_fenetre.clamp(-0.25, 0.25);
+        if ombre_calque != 0.0 {
+            let sens = ombre_calque.signum();
+            let etendue = cote_fenetre * ombre_calque.abs();
+            const COUCHES: usize = 5;
+            for i in (1..=COUCHES).rev() {
+                let t = i as f32 / COUCHES as f32;
+                let alpha = (30.0 * (1.0 - t) + 8.0) as u8;
+                let grossi = 1.0 + 0.06 * t;
+                for morceau in &morceaux {
+                    let etale: Vec<Pos2> = morceau
+                        .iter()
+                        .map(|p| {
+                            let g = pos2(
+                                pivot.x + (p.x - pivot.x) * grossi,
+                                pivot.y + (p.y - pivot.y) * grossi + etendue * 0.35 * sens,
+                            );
+                            tourner(g, pivot, angle_calque)
+                        })
+                        .collect();
+                    if etale.len() >= 3 {
+                        ui.painter().add(Shape::convex_polygon(
+                            etale,
+                            Color32::from_rgba_unmultiplied(0, 0, 0, alpha),
+                            Stroke::NONE,
+                        ));
+                    }
+                }
+            }
+        }
+        for morceau in morceaux {
             let morceau = if habillage.fenetre_deborde {
                 morceau
             } else {
@@ -447,31 +615,42 @@ impl LcdPanel {
             }
             match habits.papier {
                 Some(texture) => {
-                    ui.painter()
-                        .add(peindre_texture(&morceau, repere, texture.id()));
+                    ui.painter().add(peindre_texture_tournee(
+                        &morceau,
+                        repere,
+                        texture.id(),
+                        angle_calque,
+                        pivot,
+                    ));
                 }
                 None => {
-                    ui.painter().add(Shape::convex_polygon(morceau, motif_col, Stroke::NONE));
+                    let tourne: Vec<Pos2> =
+                        morceau.iter().map(|p| tourner(*p, pivot, angle_calque)).collect();
+                    ui.painter().add(Shape::convex_polygon(tourne, motif_col, Stroke::NONE));
                 }
             }
         }
 
-        // Le mot imprime au dessus de l'ecran. Sans couleur choisie il prend
-        // celle d'accent de la coque, comme sur la console.
-        if habillage.titre_visible && !habillage.titre.trim().is_empty() {
-            let couleur = habillage
-                .titre_couleur
-                .map(|[r, v, b]| Color32::from_rgb(r, v, b))
-                .unwrap_or(accent_col);
-            let taille = (cote * 0.10 * habillage.titre_taille.clamp(0.3, 3.0))
-                .clamp(5.0, 40.0);
-            ui.painter().text(
-                pos2(centre.x, cadre.min.y + taille * 1.05),
-                egui::Align2::CENTER_CENTER,
-                habillage.titre.trim(),
-                egui::FontId::proportional(taille),
-                couleur,
-            );
+        // Ombre portee de la dalle. Quelques couches de plus en plus larges et
+        // de plus en plus pales : egui ne sait pas flouter, mais l'empilement
+        // donne un bord degrade convaincant.
+        // Une ombre negative se pose au dessus au lieu de dessous : la lumiere
+        // vient alors d'en bas, comme pour le relief.
+        let porte_ombre = habillage.ombre_ecran.clamp(-0.25, 0.25);
+        if porte_ombre != 0.0 {
+            let sens = porte_ombre.signum();
+            let etendue = cote * porte_ombre.abs();
+            const COUCHES: usize = 6;
+            for i in (1..=COUCHES).rev() {
+                let t = i as f32 / COUCHES as f32;
+                let marge = etendue * t;
+                let alpha = (34.0 * (1.0 - t) + 10.0) as u8;
+                ui.painter().rect_filled(
+                    ecran_rect.expand(marge).translate(vec2(0.0, etendue * 0.35 * sens)),
+                    cote * 0.03 + marge,
+                    Color32::from_rgba_unmultiplied(0, 0, 0, alpha),
+                );
+            }
         }
 
         // La vitre, un liseré clair autour de la dalle, le seul bord franc de
@@ -517,26 +696,31 @@ impl LcdPanel {
         // viser les boutons, et le maintien passe aussi, sans quoi l'appui long
         // qui ouvre le laboratoire serait impossible.
         let sur_ecran = ui.allocate_rect(ecran_rect, Sense::click_and_drag());
-        if sur_ecran.clicked() {
-            commandes.bouton_a.clique = true;
-        }
-        if sur_ecran.secondary_clicked() {
-            commandes.bouton_c.clique = true;
-        }
-        if sur_ecran.middle_clicked() {
-            commandes.molette.clique = true;
-        }
-        if sur_ecran.is_pointer_button_down_on() {
-            let (gauche, droit, milieu) = ui.input(|i| {
+        let (gauche, droit, milieu) = if sur_ecran.is_pointer_button_down_on() {
+            ui.input(|i| {
                 (
                     i.pointer.primary_down(),
                     i.pointer.secondary_down(),
                     i.pointer.middle_down(),
                 )
-            });
-            commandes.bouton_a.maintenu |= gauche;
-            commandes.bouton_c.maintenu |= droit;
-            commandes.molette.maintenu |= milieu;
+            })
+        } else {
+            (false, false, false)
+        };
+        for (bouton, clique, tenu) in [
+            (souris.primaire, sur_ecran.clicked(), gauche),
+            (souris.secondaire, sur_ecran.secondary_clicked(), droit),
+            (souris.milieu, sur_ecran.middle_clicked(), milieu),
+        ] {
+            let cible = match bouton {
+                crate::touches::Bouton::Aucun => continue,
+                crate::touches::Bouton::A => &mut commandes.bouton_a,
+                crate::touches::Bouton::B => &mut commandes.bouton_b,
+                crate::touches::Bouton::C => &mut commandes.bouton_c,
+                crate::touches::Bouton::Molette => &mut commandes.molette,
+            };
+            cible.clique |= clique;
+            cible.maintenu |= tenu;
         }
 
         let _ = display;
@@ -625,44 +809,91 @@ impl LcdPanel {
                 )
             })
             .collect();
-        let couleur_calotte = habillage
-            .chapeau_couleur
-            .map(|[r, v, b]| Color32::from_rgb(r, v, b))
-            .unwrap_or(calotte_col);
+        let couleur_calotte = opaque(
+            habillage
+                .chapeau_couleur
+                .map(|[r, v, b]| Color32::from_rgb(r, v, b))
+                .unwrap_or(calotte_col),
+            habillage.chapeau_opacite,
+        );
         ui.painter().add(ruban(&haut, &dentelure, couleur_calotte, None));
         if let Some(texture) = texture_calotte {
             ui.painter()
                 .add(ruban(&haut, &dentelure, Color32::WHITE, Some((texture.id(), repere))));
         }
 
-        // Trois boutons alignes sous l'ecran, comme sur la console.
-        let rayon = (largeur * 0.062).clamp(14.0, 24.0);
-        let ligne = (cadre.max.y + (coque.max.y - cadre.max.y) * 0.42)
-            .min(coque.max.y - rayon - hauteur * 0.06);
-        let ecart = (largeur * 0.27).min(90.0);
+        // Le mot imprime, pose apres la calotte et sa dentelure. Il etait
+        // dessine avant elles et passait donc dessous des qu'on le remontait :
+        // sur la console il est serigraphie sur le plastique, rien ne le
+        // recouvre. Sans couleur choisie il prend celle d'accent de la coque.
+        if habillage.titre_visible && !habillage.titre.trim().is_empty() {
+            let couleur = opaque(
+                habillage
+                    .titre_couleur
+                    .map(|[r, v, b]| Color32::from_rgb(r, v, b))
+                    .unwrap_or(accent_col),
+                habillage.titre_opacite,
+            );
+            let taille = (cote * 0.10 * habillage.titre_taille.clamp(0.3, 3.0))
+                .clamp(5.0, 40.0);
+            ui.painter().text(
+                pos2(
+                    centre.x,
+                    cadre.min.y + taille * 1.05
+                        + hauteur * habillage.titre_dy.clamp(-0.6, 0.6),
+                ),
+                egui::Align2::CENTER_CENTER,
+                habillage.titre.trim(),
+                egui::FontId::proportional(taille),
+                couleur,
+            );
+        }
 
-        let teinte_bouton = rvb(habits.reglages.bouton_couleur, bouton_col);
-        let bouton = |ui: &mut Ui, centre: Pos2, etiquette: &str| -> EtatBouton {
+        // Trois boutons alignes sous l'ecran, comme sur la console.
+        // Le rayon suit la largeur, sans plafond. Un plafond en pixels faisait
+        // que les boutons paraissaient plus petits sur une grande coque que sur
+        // une petite : la disposition changeait d'un mode a l'autre, et ce qu'on
+        // reglait en personnalisation ne ressemblait pas a ce qu'on voyait en
+        // jouant. Seul un plancher reste, pour les toutes petites fenetres.
+        let rayon = (largeur * 0.062).max(10.0) * habillage.boutons_taille.clamp(0.3, 2.5);
+        let ligne = (cadre.max.y + (coque.max.y - cadre.max.y) * 0.42)
+            .min(coque.max.y - rayon - hauteur * 0.06)
+            + hauteur * habillage.boutons_dy.clamp(-0.4, 0.4);
+        let ecart = largeur * 0.27 * habillage.boutons_ecart.clamp(0.2, 2.5);
+
+        let teinte_bouton = opaque(
+            rvb(habits.reglages.bouton_couleur, bouton_col),
+            habillage.bouton_opacite,
+        );
+        // `enfonce` vient de l'etat reel de la broche : le bouton s'anime que
+        // l'appui vienne du clavier, du navigateur ou d'un clic sur l'ecran, et
+        // pas seulement d'un pointeur pose sur la pastille.
+        let bouton = |ui: &mut Ui, centre: Pos2, etiquette: &str, enfonce: bool| -> EtatBouton {
             let zone = Rect::from_center_size(centre, vec2(rayon * 2.0, rayon * 2.0));
             let reponse = ui.allocate_rect(zone, Sense::click_and_drag());
             // `is_pointer_button_down_on` reste vrai tant que le pointeur est
             // enfonce sur le bouton : c'est lui qui porte l'appui long.
+            // L'etat rendu ne vient que du pointeur. Y verser la broche
+            // rebouclerait : le dessin la tiendrait basse, l'appelant la
+            // relirait, et le bouton resterait enfonce pour toujours.
             let etat = EtatBouton {
                 maintenu: reponse.is_pointer_button_down_on(),
                 clique: reponse.clicked(),
             };
+            // Le relief, lui, suit la broche : peu importe d'ou vient l'appui.
+            let vu_enfonce = etat.maintenu || enfonce;
             let peintre = ui.painter();
-            let decalage = if etat.maintenu { 1.5 } else { 0.0 };
+            let decalage = if vu_enfonce { 1.5 } else { 0.0 };
             // Creux dans la coque, puis la pastille. Sur la console les trois
             // boutons tranchent sur le corps, ils ne sont pas de sa couleur.
             peintre.circle_filled(pos2(centre.x, centre.y + 2.0), rayon * 1.12, ombre_col);
             peintre.circle_filled(
                 pos2(centre.x, centre.y + decalage),
                 rayon,
-                if etat.maintenu { teinte_bouton.gamma_multiply(0.75) } else { teinte_bouton },
+                if vu_enfonce { teinte_bouton.gamma_multiply(0.75) } else { teinte_bouton },
             );
             // Reflet en haut a gauche, ce qui donne le relief du plastique.
-            if !etat.maintenu {
+            if !vu_enfonce {
                 peintre.circle_filled(
                     pos2(centre.x - rayon * 0.28, centre.y - rayon * 0.30),
                     rayon * 0.30,
@@ -685,13 +916,13 @@ impl LcdPanel {
         };
 
         commandes.bouton_a = {
-            let mut e = bouton(ui, pos2(centre.x - ecart, ligne), "A");
+            let mut e = bouton(ui, pos2(centre.x - ecart, ligne), "A", enfonces.a);
             e.maintenu |= commandes.bouton_a.maintenu;
             e.clique |= commandes.bouton_a.clique;
             e
         };
         commandes.bouton_b = {
-            let mut e = bouton(ui, pos2(centre.x, ligne + rayon * 0.5), "B");
+            let mut e = bouton(ui, pos2(centre.x, ligne + rayon * 0.5), "B", enfonces.b);
             e.maintenu |= commandes.bouton_b.maintenu;
             e.clique |= commandes.bouton_b.clique;
             e
@@ -699,7 +930,7 @@ impl LcdPanel {
         commandes.bouton_c = {
             // Le clic droit sur l'ecran vaut C : sans cette fusion, le bouton
             // dessine ecrasait ce que l'ecran avait deja signale.
-            let mut e = bouton(ui, pos2(centre.x + ecart, ligne), "C");
+            let mut e = bouton(ui, pos2(centre.x + ecart, ligne), "C", enfonces.c);
             e.maintenu |= commandes.bouton_c.maintenu;
             e.clique |= commandes.bouton_c.clique;
             e
@@ -744,13 +975,25 @@ impl LcdPanel {
         // cannelures d'un cylindre qu'on regarde de profil. Les deux fleches
         // d'avant ne disaient rien du sens.
         let peintre = ui.painter();
-        let teinte = rvb(habits.reglages.molette_couleur, accent_col);
+        let teinte = opaque(
+            rvb(habits.reglages.molette_couleur, accent_col),
+            habillage.molette_opacite,
+        );
 
         // Logement.
         peintre.rect_filled(molette, molette.width() * 0.36, ombre_col);
 
+        // Enfoncee, la roue s'enfonce dans son logement et s'assombrit, comme
+        // les trois boutons. Sans cela rien ne distinguait un appui de molette
+        // d'un simple survol.
+        let enfoncee = commandes.molette.maintenu || enfonces.molette;
+        let creux = if enfoncee { 1.5 } else { 0.0 };
+        let teinte = if enfoncee { teinte.gamma_multiply(0.75) } else { teinte };
+
         // Roue.
-        let roue = molette.shrink2(vec2(molette.width() * 0.16, molette.height() * 0.07));
+        let roue = molette
+            .shrink2(vec2(molette.width() * 0.16, molette.height() * 0.07))
+            .translate(vec2(0.0, creux));
         let arrondi = roue.width() * 0.42;
         peintre.rect_filled(roue, arrondi, teinte);
 
