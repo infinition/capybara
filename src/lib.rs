@@ -1,6 +1,6 @@
 pub mod app;
+pub mod demarrage;
 pub mod audio;
-pub mod core;
 pub mod emulator;
 pub mod gui;
 pub mod hw_bridge;

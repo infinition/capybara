@@ -414,12 +414,15 @@ impl TamagotchiApp {
             notes: Vec::new(),
             vitesse: 1.0,
             cycles_dus: 0.0,
-            tray: crate::tray::Tray::new(&cc.egui_ctx).ok(),
+            tray: None,
         };
-        // La console reprend ou elle en etait, comme un vrai Tamagotchi
-        // qu'on rallume : le dump et l'emplacement du dernier lancement sont
-        // rouverts sans rien demander.
+        // La console reprend ou elle en etait, comme un vrai boitier qu'on
+        // rallume : le dump et l'emplacement du dernier lancement sont rouverts
+        // sans rien demander.
         app.reprendre_la_derniere_partie();
+        // L'icone de la zone de notification vient apres : son menu ne se
+        // reetiquette pas, il lui faut la langue une fois relue.
+        app.tray = crate::tray::Tray::new(&cc.egui_ctx, &app.i18n).ok();
         app
     }
 }
@@ -2556,6 +2559,10 @@ impl TamagotchiApp {
                             mode_voulu = Some(Mode::Accueil);
                             ui.close_menu();
                         }
+                        if ui.button(self.i18n.choisir("Reduire", "Minimise")).clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                            ui.close_menu();
+                        }
                         if ui.button(self.i18n.choisir("Fermer", "Close")).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
@@ -2656,6 +2663,9 @@ impl eframe::App for TamagotchiApp {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                crate::tray::ActionTray::Reduire => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
                 crate::tray::ActionTray::Quitter => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -3058,6 +3068,40 @@ impl eframe::App for TamagotchiApp {
                                         // s'applique tout de suite.
                                         self.mode_applique = None;
                                         self.retenir_la_partie();
+                                    }
+                                    // L'etat est relu sur le systeme a chaque
+                                    // image : c'est lui qui fait foi, l'entree
+                                    // pouvant avoir ete retiree par ailleurs.
+                                    // Une case a cocher qui ment est pire que
+                                    // pas de case du tout.
+                                    let mut au_demarrage =
+                                        crate::demarrage::actif();
+                                    if ui
+                                        .checkbox(
+                                            &mut au_demarrage,
+                                            self.i18n.choisir(
+                                                "Demarrer avec le systeme",
+                                                "Start with the system",
+                                            ),
+                                        )
+                                        .on_hover_text(self.i18n.choisir(
+                                            "Ouvre Capybara a l'ouverture de votre session. Desactive par defaut.",
+                                            "Opens Capybara when you log in. Off by default.",
+                                        ))
+                                        .changed()
+                                    {
+                                        if let Err(e) =
+                                            crate::demarrage::regler(au_demarrage)
+                                        {
+                                            self.status_msg = Some(format!(
+                                                "{} : {}",
+                                                self.i18n.choisir(
+                                                    "Demarrage automatique impossible",
+                                                    "Could not set autostart",
+                                                ),
+                                                e
+                                            ));
+                                        }
                                     }
                                 });
                                 ui.add_space(12.0);

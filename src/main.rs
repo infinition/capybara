@@ -2,7 +2,7 @@
 
 mod app;
 mod audio;
-mod core;
+mod demarrage;
 mod emulator;
 mod gui;
 mod hw_bridge;

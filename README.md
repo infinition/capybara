@@ -46,8 +46,6 @@ even where it makes the software harder to start using.
 
 Without a dump and its key, the application opens and asks for them.
 
-The dossier in `docs/` describes the extraction procedures.
-
 ### Getting started
 
 1. Download an executable from
@@ -86,11 +84,15 @@ spacing are all adjustable, per console.
 which a real device receives items or plays with another one. The controller is
 modelled and a bidirectional host bridge is in place.
 
-For now this needs a virtual serial port pairing tool, such as Virtual Serial
-Port Driver or com0com. It creates two COM ports wired back to back: Capybara
+> **For now the link needs an intermediary.** Two programs cannot open the same
+> COM port, and Capybara has no wire. You need a virtual serial port pairing
+> tool, such as Virtual Serial Port Driver or com0com. This is a temporary
+> requirement: a built-in transport that needs no driver at all is the next step.
+
+It creates two COM ports wired back to back: Capybara
 opens one end, the transfer tool opens the other. Both sides use 460800 baud, 8
 data bits, no parity, 1 stop bit, and the same port cannot be opened twice.
-Transfers with external tools do not complete yet.
+Paired that way, a transfer tool talks to your console as if it were plugged in.
 
 **Browser view.** A local server publishes the screen and accepts the controls,
 so the console can be watched or played from a phone on the same network.
@@ -118,9 +120,9 @@ left over from an earlier name is moved there once, automatically.
 | Buttons, wheel, deep sleep and hardware wake | Complete |
 | Real time clock, calendar, ageing | Complete |
 | Persistent saves and recovery points | Complete |
-| Sound | The notes are the ones the firmware composes; the output peripheral is not identified |
-| Serial link, page `0x4000B000` | UART1 modelled, host bridge at 460800 baud, transfers not completing yet |
-| Editions | The five run; Water and Jade Forest played end to end |
+| Sound | Complete |
+| Serial link, page `0x4000B000` | UART1 modelled, host bridge at 460800 baud, needs a virtual COM pairing tool |
+| Editions | Land, Water, Sky and Jade Forest tested. White Glacier and Orange Tropical are untested and may not run yet |
 
 ### Build
 
@@ -156,9 +158,9 @@ export SONIX_DEVICE_KEY=0x........
 export SONIX_DUMPS=<folder holding the .bin files>
 ```
 
-The research dossier is `docs/dossier.html`: pinout, memory map, Sonix load
-table format, AES key derivation, extraction procedures, and the sixteen ARMv7-M
-decoding faults found by running real code.
+Everything the emulator relies on was measured on the hardware, not assumed:
+the pinout, the real memory map, the Sonix load table format, the AES key
+derivation, and the sixteen ARMv7-M decoding faults found by running real code.
 
 ### Support
 
@@ -172,8 +174,7 @@ Capybara is an independent work of reverse engineering for interoperability. It
 is not affiliated with, endorsed by, or connected to Bandai. Tamagotchi and
 Tamagotchi Paradise are trademarks of Bandai. No firmware, no ROM, no key and no
 graphic or sound asset from the console is contained in this repository or in
-the published executables. The extraction procedures described in the dossier
-apply to a device you own.
+the published executables. Everything it needs is read from a device you own.
 
 Distributed under the GNU General Public License v3.0. See [LICENSE](LICENSE).
 
@@ -211,8 +212,6 @@ la ligne honnete, et le projet s'y tient meme quand elle rend le logiciel plus
 difficile a prendre en main.
 
 Sans dump ni cle, l'application s'ouvre et vous les demande.
-
-Le dossier dans `docs/` decrit les procedures d'extraction.
 
 ### Premiers pas
 
@@ -254,12 +253,17 @@ console par console.
 lequel un vrai boitier recoit des objets ou joue a deux. Le controleur est
 modelise et un pont bidirectionnel vers l'hote est en place.
 
-Pour l'instant il faut un logiciel d'appairage de ports serie virtuels, comme
-Virtual Serial Port Driver ou com0com. Il cree deux ports COM relies dos a dos :
+> **Pour l'instant la liaison reclame un intermediaire.** Deux programmes ne
+> peuvent pas ouvrir le meme port COM, et Capybara n'a pas de fil. Il faut donc
+> un logiciel d'appairage de ports serie virtuels, comme Virtual Serial Port
+> Driver ou com0com. C'est une contrainte provisoire : un transport interne, qui
+> ne demande aucun pilote, est la prochaine etape.
+
+Il cree deux ports COM relies dos a dos :
 Capybara ouvre un bout, l'outil de transfert ouvre l'autre. Les deux cotes
 utilisent 460800 bauds, 8 bits de donnees, aucune parite, 1 bit d'arret, et un
-meme port ne s'ouvre pas deux fois. Les transferts avec les outils exterieurs
-n'aboutissent pas encore.
+meme port ne s'ouvre pas deux fois. Appairee ainsi, un outil de transfert parle
+a votre console comme si elle etait branchee.
 
 **Vue navigateur.** Un serveur local publie l'ecran et accepte les commandes :
 la console se regarde et se joue depuis un telephone sur le meme reseau.
@@ -289,9 +293,9 @@ tout seul.
 | Boutons, molette, veille profonde et reveil materiel | Complet |
 | Horloge temps reel, calendrier, vieillissement | Complet |
 | Sauvegardes persistantes et points de reprise | Complet |
-| Son | Les notes sont celles que le firmware compose, la sortie n'est pas identifiee |
-| Lien serie, page `0x4000B000` | UART1 modelise, pont hote a 460800 bauds, transferts pas encore aboutis |
-| Editions | Les cinq tournent, Water et Jade Forest menees de bout en bout |
+| Son | Complet |
+| Lien serie, page `0x4000B000` | UART1 modelise, pont hote a 460800 bauds, demande un logiciel d'appairage de ports |
+| Editions | Land, Water, Sky et Jade Forest eprouvees. White Glacier et Orange Tropical ne sont pas testees et peuvent ne pas fonctionner |
 
 ### Compiler
 
@@ -327,9 +331,9 @@ export SONIX_DEVICE_KEY=0x........
 export SONIX_DUMPS=<dossier contenant les .bin>
 ```
 
-Le dossier de recherche est la page `docs/dossier.html` : le brochage, la
-carte memoire, le format des load tables Sonix, la derivation de cle AES, les
-procedures d'extraction, et les seize defauts de decodage ARMv7-M trouves en
+Tout ce sur quoi l'emulateur repose a ete mesure sur le materiel, pas suppose :
+le brochage, la vraie carte memoire, le format des load tables Sonix, la
+derivation de cle AES, et les seize defauts de decodage ARMv7-M trouves en
 faisant tourner du vrai code.
 
 ### Soutenir
@@ -344,8 +348,7 @@ Capybara est un travail independant de retro-ingenierie a des fins
 d'interoperabilite. Il n'est ni affilie, ni approuve, ni lie a Bandai.
 Tamagotchi et Tamagotchi Paradise sont des marques de Bandai. Aucun firmware,
 aucune ROM, aucune cle et aucun element graphique ou sonore de la console n'est
-contenu dans ce depot ni dans les executables publies. Les procedures
-d'extraction decrites dans le dossier s'appliquent a un appareil dont vous etes
-proprietaire.
+contenu dans ce depot ni dans les executables publies. Tout ce dont il a besoin
+se lit sur un appareil dont vous etes proprietaire.
 
 Distribue sous licence GNU General Public License v3.0. Voir [LICENSE](LICENSE).

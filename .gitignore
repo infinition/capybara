@@ -14,6 +14,6 @@
 *.pack
 
 # Les notes de travail restent locales. Feuille de route, passation, releves
-# materiels : c'est le carnet de l'enquete, pas de la documentation publiee.
-# Le dossier public est index.html.
+# materiels, dossier de retro-ingenierie : c'est le carnet de l'enquete, pas de
+# la documentation publiee. La page publique est index.html, a la racine.
 /docs/

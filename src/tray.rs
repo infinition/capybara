@@ -9,6 +9,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionTray {
     Afficher,
+    Reduire,
     Quitter,
 }
 
@@ -18,7 +19,7 @@ pub struct Tray {
 }
 
 impl Tray {
-    pub fn new(ctx: &egui::Context) -> Result<Self, String> {
+    pub fn new(ctx: &egui::Context, i18n: &crate::i18n::I18n) -> Result<Self, String> {
         let image = image::load_from_memory(include_bytes!("../assets/icone.png"))
             .map_err(|e| e.to_string())?
             .into_rgba8();
@@ -26,10 +27,13 @@ impl Tray {
         let icone = Icon::from_rgba(image.into_raw(), largeur, hauteur)
             .map_err(|e| e.to_string())?;
 
+        // Le menu est bati une fois pour toutes : la bibliotheque ne permet pas
+        // de le reetiqueter, il prend donc la langue du demarrage.
         let menu = Menu::new();
-        let afficher = MenuItem::new("Afficher", true, None);
-        let quitter = MenuItem::new("Quitter", true, None);
-        menu.append_items(&[&afficher, &quitter])
+        let afficher = MenuItem::new(i18n.choisir("Afficher", "Show"), true, None);
+        let reduire = MenuItem::new(i18n.choisir("Reduire", "Minimise"), true, None);
+        let quitter = MenuItem::new(i18n.choisir("Quitter", "Quit"), true, None);
+        menu.append_items(&[&afficher, &reduire, &quitter])
             .map_err(|e| e.to_string())?;
 
         // Un simple receveur consulte depuis update ne suffit pas quand la
@@ -38,13 +42,16 @@ impl Tray {
         let action = Arc::new(AtomicU8::new(0));
         let action_evenement = Arc::clone(&action);
         let afficher_id = afficher.id().clone();
+        let reduire_id = reduire.id().clone();
         let quitter_id = quitter.id().clone();
         let contexte = ctx.clone();
         MenuEvent::set_event_handler(Some(move |evenement: MenuEvent| {
             let valeur = if evenement.id == afficher_id {
                 1
-            } else if evenement.id == quitter_id {
+            } else if evenement.id == reduire_id {
                 2
+            } else if evenement.id == quitter_id {
+                3
             } else {
                 0
             };
@@ -70,7 +77,8 @@ impl Tray {
     pub fn action(&self) -> Option<ActionTray> {
         match self.action.swap(0, Ordering::AcqRel) {
             1 => Some(ActionTray::Afficher),
-            2 => Some(ActionTray::Quitter),
+            2 => Some(ActionTray::Reduire),
+            3 => Some(ActionTray::Quitter),
             _ => None,
         }
     }

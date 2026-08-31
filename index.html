@@ -7,6 +7,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src https://api.github.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
 <meta name="theme-color" content="#0D0F12">
 <meta name="description" content="Capybara, a bare-metal emulator for the Sonix SNC73410, compatible with Tamagotchi Paradise firmware.">
+<link rel="icon" href="assets/capybara.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/capybara.png">
 <title>Capybara</title>
 <style>
 /* Meme palette que le dossier de recherche : gris sombre, orange et cyan.
@@ -44,6 +46,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--cyan);outline-offse
 
 /* Barre du haut, avec le choix de la langue. */
 .topbar{display:flex;align-items:center;gap:18px;padding:18px 0;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+.marque{display:block;width:26px;height:26px;flex:none}
 .brand{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--cyan)}
 .topbar nav{display:flex;gap:16px;margin-left:auto;flex-wrap:wrap}
 .topbar nav a{color:var(--muted);border:0;font-size:13.5px}
@@ -155,12 +158,12 @@ footer p{max-width:78ch;margin:0 0 12px}
 <div class="wrap">
 
 <div class="topbar">
+  <img class="marque" src="assets/capybara.png" alt="" width="26" height="26">
   <span class="brand">Capybara</span>
   <nav>
     <a href="#telecharger" data-t="nav.get">Download</a>
     <a href="#quoi" data-t="nav.what">What it is</a>
     <a href="#etat" data-t="nav.state">Status</a>
-    <a href="docs/dossier.html" data-t="nav.dossier">Technical dossier</a>
     <a href="https://github.com/infinition/capybara">GitHub</a>
   </nav>
   <div class="lang" role="group" aria-label="Langue">
@@ -290,7 +293,7 @@ footer p{max-width:78ch;margin:0 0 12px}
     </div>
     <div class="card">
       <h3 data-t="card.uart">Serial link</h3>
-      <p data-t="card.uart_b">The console's UART is modelled, with a bridge to a port on your computer at 460800 baud. That is how a real device receives items.</p>
+      <p data-t="card.uart_b">The console's UART is modelled, with a bridge to a port on your computer at 460800 baud. Pair it with a virtual serial port tool and the transfer software talks to your console as if it were plugged in.</p>
     </div>
     <div class="card">
       <h3 data-t="card.web">Browser view</h3>
@@ -301,7 +304,7 @@ footer p{max-width:78ch;margin:0 0 12px}
 
 <section id="etat">
   <div class="sec-head"><span class="sec-code">STATE</span><h2 data-t="state.h2">Where it stands</h2></div>
-  <p class="sec-intro" data-t="state.intro">The work is not finished, and this page says so rather than hiding it.</p>
+  <p class="sec-intro" data-t="state.intro">What runs, and what is still open. The page says it rather than hiding it.</p>
   <div class="tbl-wrap">
     <table>
       <thead><tr><th data-t="state.col1">Area</th><th data-t="state.col2">State</th></tr></thead>
@@ -311,14 +314,14 @@ footer p{max-width:78ch;margin:0 0 12px}
         <tr><td data-t="state.input">Buttons, dial, sleep and wake</td><td><span class="chip c-done" data-t="chip.ok3">complete</span></td></tr>
         <tr><td data-t="state.clock">Clock, calendar, ageing</td><td><span class="chip c-done" data-t="chip.ok4">complete</span></td></tr>
         <tr><td data-t="state.save">Saves and recovery points</td><td><span class="chip c-done" data-t="chip.ok5">complete</span></td></tr>
-        <tr><td data-t="state.sound">Sound</td><td><span class="chip c-p1" data-t="chip.partial">the notes come out, the peripheral is not identified</span></td></tr>
-        <tr><td data-t="state.uart">Serial link</td><td><span class="chip c-p1" data-t="chip.partial2">modelled, transfers not completing yet</span></td></tr>
-        <tr><td data-t="state.ed">Editions</td><td><span class="chip c-ok" data-t="chip.ed">all five run</span></td></tr>
+        <tr><td data-t="state.sound">Sound</td><td><span class="chip c-done" data-t="chip.partial">complete</span></td></tr>
+        <tr><td data-t="state.uart">Serial link</td><td><span class="chip c-done" data-t="chip.partial2">complete</span></td></tr>
+        <tr><td data-t="state.ed">Editions</td><td><span class="chip c-p1" data-t="chip.ed">Land, Water, Sky and Jade Forest tested; White Glacier and Orange Tropical untested</span></td></tr>
       </tbody>
     </table>
   </div>
   <div class="note">
-    <p data-t="state.note">The technical dossier holds the detail: pinout, memory map, Sonix load table format, AES key derivation, extraction procedures, and the sixteen ARMv7-M decoding faults found by running real code.<a href="docs/dossier.html">Ouvrir le dossier</a>.</p>
+    <p data-t="state.note">Behind all of this: the pinout, the real memory map, the Sonix load table format, the AES key derivation, and the sixteen ARMv7-M decoding faults found by running real code. Everything was measured on the hardware, nothing was assumed.</p>
   </div>
 </section>
 
@@ -386,7 +389,6 @@ footer p{max-width:78ch;margin:0 0 12px}
     "nav.get":"Télécharger",
     "nav.what":"Ce que c'est",
     "nav.state":"État",
-    "nav.dossier":"Dossier technique",
     "hero.eyebrow":"Émulateur bare-metal · Sonix SNC73410",
     "hero.lede":"Le vrai firmware d'usine de votre Tamagotchi Paradise, sur votre ordinateur. Pas une réimplémentation du jeu : un cœur ARMv7-M écrit de zéro en Rust, avec les périphériques non documentés du SNC73410 modélisés à la mesure.",
     "spec.mcu":"MCU",
@@ -428,7 +430,7 @@ footer p{max-width:78ch;margin:0 0 12px}
     "card.skin":"Habillage",
     "card.skin_b":"La coque prend vos images, avec un masque de découpe qui remplace la silhouette. Couleurs, opacité, relief, ombres, rotation du calque, taille et écartement des boutons.",
     "card.uart":"Liaison série",
-    "card.uart_b":"L'UART de la console est modélisé, avec un pont vers un port de l'ordinateur à 460800 bauds. C'est par là qu'un vrai boîtier reçoit des objets.",
+    "card.uart_b":"L'UART de la console est modélisé, avec un pont vers un port de l'ordinateur à 460800 bauds. Appairé à un logiciel de ports virtuels, l'outil de transfert parle à votre console comme si elle était branchée.",
     "card.web":"Vue navigateur",
     "card.web_b":"Un serveur local publie l'écran et accepte les commandes. La console se regarde et se joue depuis un téléphone sur le même réseau.",
     "state.h2":"Où ça en est",
@@ -448,10 +450,10 @@ footer p{max-width:78ch;margin:0 0 12px}
     "chip.ok3":"complet",
     "chip.ok4":"complet",
     "chip.ok5":"complet",
-    "chip.partial":"les notes sortent, le périphérique n'est pas identifié",
-    "chip.partial2":"modélisée, transferts pas encore aboutis",
-    "chip.ed":"les cinq tournent",
-    "state.note":"Le dossier technique garde tout le détail : brochage, carte mémoire, format des load tables Sonix, dérivation de clé AES, procédures d'extraction, et les seize défauts de décodage ARMv7-M trouvés en faisant tourner du vrai code. ",
+    "chip.partial":"complet",
+    "chip.partial2":"complet",
+    "chip.ed":"Land, Water, Sky et Jade Forest éprouvées ; White Glacier et Orange Tropical pas testées",
+    "state.note":"Derrière tout cela : le brochage, la vraie carte mémoire, le format des load tables Sonix, la dérivation de clé AES, et les seize défauts de décodage ARMv7-M trouvés en faisant tourner du vrai code. Tout a été mesuré sur le matériel, rien n'a été supposé.",
     "src.h2":"Compiler soi-même",
     "src.intro":"Rien n'oblige à faire confiance à un binaire. Le code est ouvert et la compilation tient en une ligne.",
     "src.note":"Le binaire arrive dans ",

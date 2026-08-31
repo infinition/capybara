@@ -1,13 +1,9 @@
-#![allow(dead_code)]
+//! Habillage de la fenetre : la coque dessinee, le papier pose dessous, et la
+//! seule fenetre modale qui reste.
 
 pub mod fond;
-
-pub mod screen;
 pub mod shell;
-pub mod sprites;
 pub mod widgets;
 
-pub use screen::{VirtualScreen, ZoomLevel};
 pub use shell::{Palette, ShellColor};
-pub use sprites::{SpriteSheet, SpriteState};
 pub use widgets::{ActiveModal, GuiWidgets};
