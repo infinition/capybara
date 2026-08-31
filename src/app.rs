@@ -1289,8 +1289,10 @@ impl TamagotchiApp {
             if ui
                 .button(self.i18n.choisir("Image...", "Image..."))
                 .on_hover_text(
-                    "L'image se glisse sous la fenetre transparente, comme le papier \
-                     imprime de la vraie console.",
+                    self.i18n.choisir(
+                        "L'image se glisse sous la fenetre transparente, comme le papier imprime de la vraie console.",
+                        "The image slides under the transparent window, like the printed paper of the real console.",
+                    ),
                 )
                 .clicked()
             {
@@ -1326,9 +1328,10 @@ impl TamagotchiApp {
             if ui
                 .button(self.i18n.choisir("Masque...", "Mask..."))
                 .on_hover_text(
-                    "Decoupe l'image autour de l'ecran. Noir et blanc : le noir laisse \
-                     voir l'image, le blanc la cache, et ce qui est hors de l'image est \
-                     cache aussi.",
+                    self.i18n.choisir(
+                        "Decoupe l'image autour de l'ecran. Noir et blanc : le noir laisse voir l'image, le blanc la cache, et ce qui est hors de l'image est cache aussi.",
+                        "Cuts the image around the screen. Black and white: black shows the image, white hides it, and anything outside the mask is hidden too.",
+                    ),
                 )
                 .clicked()
             {
@@ -1649,7 +1652,10 @@ impl TamagotchiApp {
         if ui
             .button(self.i18n.choisir("Tout remettre par defaut", "Restore all defaults"))
             .on_hover_text(
-                "Rend a la coque son apparence d'origine. Les images importees sont                  effacees.",
+                self.i18n.choisir(
+                    "Rend a la coque son apparence d'origine. Les images importees sont effacees.",
+                    "Gives the shell back its original look. Imported images are erased.",
+                ),
             )
             .clicked()
         {
@@ -2458,7 +2464,11 @@ impl TamagotchiApp {
                                 let etiquette = format!(
                                     "{}   {}",
                                     point.quand.format("%H:%M"),
-                                    point.age_lisible()
+                                    if self.i18n.language() == Language::En {
+                                        point.age_lisible_en()
+                                    } else {
+                                        point.age_lisible()
+                                    }
                                 );
                                 if ui.button(etiquette).clicked() {
                                     point_voulu = Some(indice);
@@ -3282,7 +3292,10 @@ impl eframe::App for TamagotchiApp {
                             if ui
                                 .button(self.i18n.choisir("Annuler les 2 dernieres secondes", "Undo the last 2 seconds"))
                                 .on_hover_text(
-                                    "Filet de mise au point : revient a l'instantane                                      automatique precedent, pris toutes les deux secondes                                      d'emulation. Pour remonter plus loin, servez vous des                                      points de reprise.",
+                                    self.i18n.choisir(
+                                        "Filet de mise au point : revient a l'instantane automatique precedent, pris toutes les deux secondes d'emulation. Pour remonter plus loin, servez vous des points de reprise.",
+                                        "Debugging net: goes back to the previous automatic snapshot, taken every two seconds of emulation. To rewind further, use the recovery points.",
+                                    ),
                                 )
                                 .clicked()
                             {
@@ -3291,7 +3304,10 @@ impl eframe::App for TamagotchiApp {
                             if ui
                                 .button(self.i18n.choisir("Rallumer la console", "Restart console"))
                                 .on_hover_text(
-                                    "Recharge le dump et remet la console a son demarrage.                                      La partie sauvegardee n'est pas touchee : elle est                                      relue et le jeu reprend ou il en etait.",
+                                    self.i18n.choisir(
+                                        "Recharge le dump et remet la console a son demarrage. La partie sauvegardee n'est pas touchee : elle est relue et le jeu reprend ou il en etait.",
+                                        "Reloads the dump and returns the console to its startup. The saved game is untouched: it is read back and play resumes where it was.",
+                                    ),
                                 )
                                 .clicked()
                             {

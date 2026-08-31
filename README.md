@@ -37,11 +37,16 @@ console you own.
 - **The device key**, read over SWD. It is burned into the chip fuses, appears
   in no dump, and can only be read from the device itself.
 
-This is the only lawful and honest way to use the emulator: you emulate the
-machine you already own. Without a dump and its key, the application opens and
-asks for them.
+**Why it works this way.** Tamagotchi Paradise is a product still on sale, not
+an abandoned one. Nothing here replaces buying it, and nothing here lets you
+play without it: you must physically own a console, open it, and read its own
+memory. What Capybara gives back is what you already paid for, on a screen that
+does not run on a coin cell. That is the honest line, and the project holds it
+even where it makes the software harder to start using.
 
-The dossier at the root of this repository describes the extraction procedures.
+Without a dump and its key, the application opens and asks for them.
+
+The dossier in `docs/` describes the extraction procedures.
 
 ### Getting started
 
@@ -79,8 +84,13 @@ spacing are all adjustable, per console.
 
 **Serial link.** The console speaks over a UART at 460800 baud, the port through
 which a real device receives items or plays with another one. The controller is
-modelled and a bidirectional host bridge is in place. Transfers with external
-tools are still being worked on.
+modelled and a bidirectional host bridge is in place.
+
+For now this needs a virtual serial port pairing tool, such as Virtual Serial
+Port Driver or com0com. It creates two COM ports wired back to back: Capybara
+opens one end, the transfer tool opens the other. Both sides use 460800 baud, 8
+data bits, no parity, 1 stop bit, and the same port cannot be opened twice.
+Transfers with external tools do not complete yet.
 
 **Browser view.** A local server publishes the screen and accepts the controls,
 so the console can be watched or played from a phone on the same network.
@@ -146,7 +156,7 @@ export SONIX_DEVICE_KEY=0x........
 export SONIX_DUMPS=<folder holding the .bin files>
 ```
 
-The research dossier is `index.html` at the root: pinout, memory map, Sonix load
+The research dossier is `docs/dossier.html`: pinout, memory map, Sonix load
 table format, AES key derivation, extraction procedures, and the sixteen ARMv7-M
 decoding faults found by running real code.
 
@@ -192,11 +202,17 @@ fournissez deux choses, tirees d'une console qui vous appartient.
 - **La cle de l'appareil**, lue en SWD. Elle est gravee dans les fusibles de la
   puce, ne figure dans aucun dump, et ne se lit que sur l'appareil lui meme.
 
-C'est la seule facon honnete et licite de se servir de l'emulateur : vous
-emulez la machine que vous possedez deja. Sans dump ni cle, l'application
-s'ouvre et vous les demande.
+**Pourquoi c'est fait ainsi.** Tamagotchi Paradise est un produit toujours en
+vente, pas une console abandonnee. Rien ici ne remplace son achat, et rien ici
+ne permet d'y jouer sans elle : il faut posseder physiquement un boitier,
+l'ouvrir, et lire sa propre memoire. Ce que Capybara vous rend, c'est ce que
+vous avez deja paye, sur un ecran qui ne tient pas sur une pile bouton. C'est
+la ligne honnete, et le projet s'y tient meme quand elle rend le logiciel plus
+difficile a prendre en main.
 
-Le dossier a la racine du depot decrit les procedures d'extraction.
+Sans dump ni cle, l'application s'ouvre et vous les demande.
+
+Le dossier dans `docs/` decrit les procedures d'extraction.
 
 ### Premiers pas
 
@@ -236,8 +252,14 @@ console par console.
 
 **Liaison serie.** La console parle par un UART a 460800 bauds, le port par
 lequel un vrai boitier recoit des objets ou joue a deux. Le controleur est
-modelise et un pont bidirectionnel vers l'hote est en place. Les transferts
-avec les outils exterieurs sont encore en chantier.
+modelise et un pont bidirectionnel vers l'hote est en place.
+
+Pour l'instant il faut un logiciel d'appairage de ports serie virtuels, comme
+Virtual Serial Port Driver ou com0com. Il cree deux ports COM relies dos a dos :
+Capybara ouvre un bout, l'outil de transfert ouvre l'autre. Les deux cotes
+utilisent 460800 bauds, 8 bits de donnees, aucune parite, 1 bit d'arret, et un
+meme port ne s'ouvre pas deux fois. Les transferts avec les outils exterieurs
+n'aboutissent pas encore.
 
 **Vue navigateur.** Un serveur local publie l'ecran et accepte les commandes :
 la console se regarde et se joue depuis un telephone sur le meme reseau.
@@ -305,7 +327,7 @@ export SONIX_DEVICE_KEY=0x........
 export SONIX_DUMPS=<dossier contenant les .bin>
 ```
 
-Le dossier de recherche est la page `index.html` a la racine : le brochage, la
+Le dossier de recherche est la page `docs/dossier.html` : le brochage, la
 carte memoire, le format des load tables Sonix, la derivation de cle AES, les
 procedures d'extraction, et les seize defauts de decodage ARMv7-M trouves en
 faisant tourner du vrai code.

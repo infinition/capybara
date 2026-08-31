@@ -83,6 +83,7 @@ jobs:
           cp "target/${{ matrix.cible }}/release/capybara.exe" paquet/
           cp assets/capybara.ico paquet/
           cp README.md LICENSE index.html paquet/
+          cp -r docs paquet/docs
           7z a "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.zip" ./paquet/*
 
       - name: Paquet Debian et AppImage
@@ -143,6 +144,7 @@ jobs:
           mkdir -p paquet
           cp -R "$APP" paquet/
           cp README.md LICENSE index.html paquet/
+          cp -r docs paquet/docs
           # ditto plutot que zip : il preserve la structure du bundle.
           ditto -c -k --sequesterRsrc --keepParent paquet \
             "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.zip"

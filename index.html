@@ -1,20 +1,17 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="referrer" content="strict-origin-when-cross-origin">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src https://api.github.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
 <meta name="theme-color" content="#0D0F12">
-<title>Dossier Paradise SNC73410</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,500;12..96,75..100,700;12..96,75..100,800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-
+<meta name="description" content="Capybara, a bare-metal emulator for the Sonix SNC73410, compatible with Tamagotchi Paradise firmware.">
+<title>Capybara</title>
 <style>
-/* Gris sombre, orange et cyan. La page assume un seul theme : ce qu'on lit ici
-   sort d'un desassembleur et d'un terminal, autant que ca en ait l'air. Seuls
-   la coque dessinee et l'ecran gardent leurs vraies couleurs, ce sont celles
-   de l'objet. */
+/* Meme palette que le dossier de recherche : gris sombre, orange et cyan.
+   Seules la coque dessinee et son ecran gardent leurs vraies couleurs, ce sont
+   celles de l'objet. */
 :root{
   --ground:#0D0F12; --surface:#15181D; --surface-2:#1C2027;
   --ink:#E7ECF2; --ink-2:#BAC3CE; --muted:#7B8794;
@@ -23,10 +20,8 @@
   --orange:#FF9247; --orange-soft:#33200F;
   --p0:#FF6B4A; --p0-soft:#341810;
   --p1:#F0AE3C; --p1-soft:#32250E;
-  --p2:#5FC7E4; --p2-soft:#0F2732;
   --done:#3FCF8E; --done-soft:#0E2C20;
   --shadow:0 1px 2px rgba(0,0,0,.5),0 10px 30px -14px rgba(0,0,0,.8);
-  --rail:224px;
   color-scheme:dark;
 }
 
@@ -39,29 +34,29 @@ body{
   overscroll-behavior:contain;
   padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
-h1,h2,h3,h4{font-family:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif;text-wrap:balance;margin:0;line-height:1.12;font-weight:700}
-code,kbd,.mono,.hex{overflow-wrap:anywhere;font-family:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
+h1,h2,h3{font-family:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif;text-wrap:balance;margin:0;line-height:1.12;font-weight:700}
+code,kbd,.mono{overflow-wrap:anywhere;font-family:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
 a{color:var(--cyan);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--cyan) 35%,transparent)}
 a:hover{border-bottom-color:var(--cyan)}
 a:focus-visible,button:focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:3px}
 
-.wrap{max-width:1240px;margin:0 auto;padding:0 24px}
-.layout{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);gap:56px;align-items:start}
-@media (max-width:1020px){.layout{grid-template-columns:minmax(0,1fr);gap:0}.rail{display:none}}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
 
-.rail{position:sticky;top:0;padding:40px 0;max-height:100vh;overflow-y:auto;overscroll-behavior:contain}
-.rail-title{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
-.rail nav{display:flex;flex-direction:column;gap:1px}
-.rail a{display:grid;grid-template-columns:36px 1fr;gap:8px;align-items:baseline;padding:6px 8px;border:0;border-radius:5px;color:var(--muted);font-size:13.5px;line-height:1.3}
-.rail a span{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.06em;color:color-mix(in srgb,var(--muted) 70%,transparent)}
-.rail a:hover{background:var(--surface-2);color:var(--ink)}
-.rail a.on{background:var(--cyan-soft);color:var(--ink);font-weight:600}
-.rail a.on span{color:var(--cyan)}
+/* Barre du haut, avec le choix de la langue. */
+.topbar{display:flex;align-items:center;gap:18px;padding:18px 0;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+.brand{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--cyan)}
+.topbar nav{display:flex;gap:16px;margin-left:auto;flex-wrap:wrap}
+.topbar nav a{color:var(--muted);border:0;font-size:13.5px}
+.topbar nav a:hover{color:var(--ink)}
+.lang{display:flex;gap:2px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.lang button{background:none;border:0;color:var(--muted);font:inherit;font-size:12px;padding:3px 10px;cursor:pointer}
+.lang button[aria-pressed="true"]{background:var(--cyan-soft);color:var(--cyan)}
 
-header.hero{padding:56px 0 28px;border-bottom:1px solid var(--line)}
+/* En-tete. */
+header.hero{padding:52px 0 30px;border-bottom:1px solid var(--line)}
 .eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cyan);margin-bottom:18px}
-h1{font-size:clamp(36px,6.2vw,64px);font-weight:800;letter-spacing:-.022em;font-stretch:92%}
-.lede{font-size:clamp(16.5px,1.6vw,19px);color:var(--ink-2);max-width:60ch;margin-top:18px}
+h1{font-size:clamp(38px,6.4vw,68px);font-weight:800;letter-spacing:-.022em}
+.lede{font-size:clamp(16.5px,1.6vw,19px);color:var(--ink-2);max-width:58ch;margin-top:18px}
 .hero-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:52px;align-items:center}
 @media (max-width:860px){.hero-grid{grid-template-columns:1fr;gap:34px}}
 
@@ -94,111 +89,92 @@ h1{font-size:clamp(36px,6.2vw,64px);font-weight:800;letter-spacing:-.022em;font-
 .spec dd{margin:0;font-size:14.5px;font-weight:600;letter-spacing:-.01em}
 .spec dd small{display:block;font-weight:400;font-size:12px;color:var(--muted);letter-spacing:0}
 
-main{padding-bottom:80px}
 section{padding:52px 0;border-bottom:1px solid var(--line-soft);scroll-margin-top:24px}
 section:last-of-type{border-bottom:0}
-.sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px;flex-wrap:wrap}
+.sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:10px;flex-wrap:wrap}
 .sec-code{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;color:var(--cyan);padding:2px 7px;border:1px solid color-mix(in srgb,var(--cyan) 40%,transparent);border-radius:4px}
-h2{font-size:clamp(25px,3.2vw,34px);letter-spacing:-.018em}
-h3{font-size:19px;letter-spacing:-.012em;margin-top:34px;margin-bottom:10px}
-h4{font-size:14px;letter-spacing:.02em;margin-bottom:6px;font-weight:700}
-p{margin:0 0 14px;max-width:70ch}
-.sec-intro{color:var(--ink-2);max-width:70ch;margin-bottom:8px}
-ul,ol{max-width:70ch;padding-left:20px;margin:0 0 14px}
-li{margin-bottom:6px}
-.stack{display:flex;flex-direction:column}
-
-.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface);margin:18px 0 6px;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
-table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:520px}
-th{text-align:left;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:500;padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--surface-2)}
-td{padding:10px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top}
-tr:last-child td{border-bottom:0}
-td.hex,th.hex{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
-tbody tr:hover td{background:color-mix(in srgb,var(--surface-2) 55%,transparent)}
-.cap{font-size:12.5px;color:var(--muted);margin:8px 0 0;max-width:70ch}
-
-.chip{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.06em;padding:2px 7px;border-radius:4px;white-space:nowrap;font-weight:500;line-height:1.6}
-.c-ok{background:var(--cyan-soft);color:var(--cyan)}
-.c-p0{background:var(--p0-soft);color:var(--p0)}
-.c-p1{background:var(--p1-soft);color:var(--p1)}
-.c-p2{background:var(--p2-soft);color:var(--p2)}
-.c-done{background:var(--done-soft);color:var(--done)}
-.c-neutral{background:var(--surface-2);color:var(--muted)}
-
-.legend{display:flex;flex-wrap:wrap;gap:10px 22px;padding:14px 16px;background:var(--surface);border:1px solid var(--line);border-radius:10px;margin:18px 0}
-.legend div{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted)}
+h2{font-size:clamp(23px,3vw,30px);letter-spacing:-.015em}
+.sec-intro{color:var(--ink-2);max-width:70ch;margin:0 0 8px}
 
 .note{border-left:3px solid var(--cyan);background:var(--surface);padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0;font-size:14.5px}
 .note.warn{border-left-color:var(--p0)}
 .note.win{border-left-color:var(--done)}
-.note strong{font-weight:600}
+.note p{margin:0 0 10px}
 .note p:last-child{margin-bottom:0}
+.note strong{font-weight:600}
 
-.band-wrap{overflow-x:auto;overscroll-behavior-x:contain}
-.band{display:flex;height:52px;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin:20px 0 10px;min-width:520px}
-.band i{display:block;height:100%;border-right:1px solid rgba(255,255,255,.25)}
-.band i:last-child{border-right:0}
-.band-key{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:12.5px;color:var(--muted)}
-.band-key b{display:inline-flex;align-items:center;gap:7px;font-weight:400}
-.sw{width:11px;height:11px;border-radius:3px;display:inline-block;flex:none}
+/* Telechargement : un onglet par systeme, un bouton par format. */
+.os-row{display:flex;gap:8px;flex-wrap:wrap;margin:22px 0 0}
+.os-row button{
+  display:inline-flex;align-items:center;gap:9px;
+  background:var(--surface);border:1px solid var(--line);border-radius:8px;
+  color:var(--ink-2);font:inherit;font-size:14px;padding:9px 15px;cursor:pointer;
+}
+.os-row button svg{width:17px;height:17px;flex:none}
+.os-row button[aria-selected="true"]{background:var(--cyan-soft);border-color:color-mix(in srgb,var(--cyan) 45%,transparent);color:var(--ink)}
+.panel{display:none;margin-top:20px}
+.panel.on{display:block}
+.get{
+  display:flex;align-items:center;gap:14px;
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;
+  padding:15px 18px;margin:0 0 12px;color:var(--ink);box-shadow:var(--shadow);
+}
+.get:hover{border-color:color-mix(in srgb,var(--cyan) 45%,transparent)}
+.get svg{width:22px;height:22px;flex:none;color:var(--cyan)}
+.get span{display:flex;flex-direction:column;min-width:0}
+.get .file{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.steps{margin:14px 0 0;padding-left:20px;color:var(--ink-2);font-size:14.5px}
+.steps li{margin-bottom:8px}
+.cmd{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:7px;padding:8px 12px;margin-top:6px;overflow-x:auto}
+.cmd code{font-size:13px;white-space:pre}
+.panel-note{font-size:13px;color:var(--muted);margin:14px 0 0;max-width:70ch}
 
-.chain{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:22px 0 6px}
-.step{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:15px 16px;box-shadow:var(--shadow)}
-.step-n{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;color:var(--muted);margin-bottom:7px}
-.step h4{margin-bottom:5px}
-.step p{font-size:13px;color:var(--ink-2);margin:0 0 10px}
-.step .addr{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--cyan);display:block;margin-bottom:9px}
+/* Cartes de presentation. */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin-top:24px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+.card h3{font-size:16px;margin-bottom:8px}
+.card p{margin:0;font-size:14.5px;color:var(--ink-2)}
 
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:14px;margin:20px 0 6px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:17px 18px;box-shadow:var(--shadow)}
-.card h4{margin-bottom:7px}
-.card p{font-size:13.5px;color:var(--ink-2);margin:0 0 10px}
-.card p:last-child{margin-bottom:0}
-.card .k{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:9px}
+/* Tableau d'etat. */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface);margin:20px 0 0;overscroll-behavior-x:contain}
+table{border-collapse:collapse;width:100%;min-width:460px;font-size:14.5px}
+th,td{text-align:left;padding:11px 16px;border-bottom:1px solid var(--line-soft)}
+th{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:500}
+tr:last-child td{border-bottom:0}
+.chip{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.06em;padding:2px 7px;border-radius:4px;white-space:nowrap;font-weight:500;line-height:1.6}
+.c-done{background:var(--done-soft);color:var(--done)}
+.c-p1{background:var(--p1-soft);color:var(--p1)}
+.c-ok{background:var(--cyan-soft);color:var(--cyan)}
 
-pre{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.65;margin:14px 0;font-family:"IBM Plex Mono",monospace;overscroll-behavior-x:contain}
-pre code{font-size:inherit}
-p code,li code,td code{background:var(--surface-2);padding:1px 5px;border-radius:4px;font-size:.88em;word-break:break-word}
-
-.phase{display:grid;grid-template-columns:76px minmax(0,1fr);gap:20px;padding:20px 0;border-bottom:1px solid var(--line-soft)}
-.phase:last-child{border-bottom:0}
-.phase-n{font-family:"Bricolage Grotesque",sans-serif;font-size:38px;font-weight:800;line-height:1;color:var(--line);letter-spacing:-.03em}
-.phase.is-done .phase-n{color:var(--done)}
-.phase h3{margin:0 0 6px;font-size:18px}
-.phase p{margin:0 0 10px;font-size:14.5px}
-.phase-meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
-@media (max-width:600px){.phase{grid-template-columns:minmax(0,1fr);gap:6px}.phase-n{font-size:26px}}
-
-.log{display:grid;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface);margin-top:16px}
-.log-row{display:grid;grid-template-columns:84px minmax(0,1fr);gap:16px;padding:12px 16px;border-bottom:1px solid var(--line-soft);align-items:baseline}
-.log-row:last-child{border-bottom:0}
-.log-row code{background:none;padding:0;color:var(--cyan);font-size:11.5px}
-.log-row b{font-weight:600;font-size:14px;display:block;margin-bottom:2px}
-.log-row span{font-size:13px;color:var(--muted);line-height:1.5}
-@media (max-width:600px){.log-row{grid-template-columns:minmax(0,1fr);gap:4px}}
-
-.links{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:16px}
-.lnk{display:block;background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:14px 16px}
-.lnk:hover{border-color:var(--cyan);background:var(--cyan-soft)}
-.lnk b{display:block;font-size:14.5px;color:var(--ink);font-weight:600;margin-bottom:3px}
-.lnk span{display:block;font-size:12.5px;color:var(--muted);line-height:1.5}
-.lnk em{font-family:"IBM Plex Mono",monospace;font-style:normal;font-size:11px;color:var(--cyan);display:block;margin-top:6px;word-break:break-all}
-
-footer{padding:34px 0 60px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--line)}
-footer p{max-width:70ch}
-
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+footer{padding:44px 0 60px;color:var(--muted);font-size:13.5px}
+footer p{max-width:78ch;margin:0 0 12px}
 </style>
 </head>
-<body>
 
+<body>
 <div class="wrap">
+
+<div class="topbar">
+  <span class="brand">Capybara</span>
+  <nav>
+    <a href="#telecharger" data-t="nav.get">Download</a>
+    <a href="#quoi" data-t="nav.what">What it is</a>
+    <a href="#etat" data-t="nav.state">Status</a>
+    <a href="docs/dossier.html" data-t="nav.dossier">Technical dossier</a>
+    <a href="https://github.com/infinition/capybara">GitHub</a>
+  </nav>
+  <div class="lang" role="group" aria-label="Langue">
+    <button type="button" data-lang="en" aria-pressed="true">EN</button>
+    <button type="button" data-lang="fr" aria-pressed="false">FR</button>
+  </div>
+</div>
+
 <header class="hero">
   <div class="hero-grid">
     <div>
-      <div class="eyebrow">Rétro-ingénierie matérielle · Révision 5 · 28 août 2026</div>
-      <h1>Dossier Paradise SNC73410</h1>
-      <p class="lede">Brochage, carte mémoire réelle, format des load tables Sonix, dérivation de clé AES, procédures d'extraction, et audit de l'émulateur Rust <code>tamagotchi-paradise-rs</code>, branche <code>feat/real-firmware-boot</code>.</p>
+      <div class="eyebrow" data-t="hero.eyebrow">Bare-metal emulator · Sonix SNC73410</div>
+      <h1>Capybara</h1>
+      <p class="lede" data-t="hero.lede">The real factory firmware of your Tamagotchi Paradise, on your computer. Not a reimplementation of the game: an ARMv7-M core written from scratch in Rust, with the undocumented SNC73410 peripherals modelled from measurement.</p>
     </div>
     <div class="device-stage">
       <div class="device">
@@ -207,1442 +183,335 @@ footer p{max-width:70ch}
         <div class="dial"></div>
         <div class="btns"><div class="btn">A</div><div class="btn">B</div><div class="btn">C</div></div>
       </div>
-      <div class="device-cap">TFT 128 × 128 RGB565 · molette rotative · 3 boutons</div>
+      <div class="device-cap">TFT 128 × 128 RGB565 · molette · 3 boutons</div>
     </div>
   </div>
 
   <dl class="specs">
-    <div class="spec"><dt>MCU</dt><dd>Sonix SNC73410<small>Cortex-M3 double cœur</small></dd></div>
-    <div class="spec"><dt>Flash</dt><dd>KH25L12833F<small>Macronix 16 Mo, SPI quad</small></dd></div>
-    <div class="spec"><dt>Carte mémoire</dt><dd>Datasheet V1.7<small>relevée, plus d'hypothèses</small></dd></div>
-    <div class="spec"><dt>Déchiffrement</dt><dd>Autonome<small>AES maison, zéro dépendance</small></dd></div>
-    <div class="spec"><dt>État</dt><dd>Le jeu se joue<small>éclosion, horloge, son, sauvegardes</small></dd></div>
+    <div class="spec"><dt data-t="spec.mcu">MCU</dt><dd>Sonix SNC73410<small data-t="spec.mcu_sub">dual core Cortex-M3</small></dd></div>
+    <div class="spec"><dt data-t="spec.flash">Flash</dt><dd>16 Mo<small data-t="spec.flash_sub">quad SPI, encrypted</small></dd></div>
+    <div class="spec"><dt data-t="spec.speed">Speed</dt><dd><span data-t="spec.speed_v">Faster than the console</span><small data-t="spec.speed_sub">held to real time</small></dd></div>
+    <div class="spec"><dt data-t="spec.license">License</dt><dd>GPL v3<small data-t="spec.license_sub">open source</small></dd></div>
   </dl>
-
-  <div class="note win" style="margin-top:26px">
-    <p><strong>Révision 5.</strong> Mise en route complète, boutons et molette, horloge qui avance, œuf qui éclot, nourrissage, QR code secret, veille et réveil, sauvegardes persistantes qui survivent à l'extinction du PC, vieillissement en temps réel, coque fidèle suivant l'édition, et le son que la console compose. 16 415 lignes de Rust, 22 sondes, 73 tests. La vitesse était le dernier défaut visible ; elle est passée à 1,40 fois le temps de la console, et le gouverneur la retient désormais à 1,00. Ce qui reste ouvert ne se voit pas à l'écran.</p>
-    <p>Je n'efface rien quand je me suis trompé. Les vieux constats restent où ils sont, et j'écris à côté ce qui les a remplacés. Ça m'a resservi plusieurs fois : quand quelque chose recasse, je retrouve pourquoi j'avais cru l'inverse, et je gagne les deux jours que j'avais déjà perdus.</p>
-    <p>Six sections sont apparues depuis la révision 3, à mesure que le firmware révélait des morceaux dont je ne soupçonnais pas l'existence : les démentis de la carte périphériques, le catalogue des défauts de cœur, le temps et la veille, le moteur audio, les sauvegardes, et la vitesse.</p>
-  </div>
-
-  <div class="note">
-    <p><strong>Révision 3, rappel.</strong> <code>TBB</code> était décodé comme un <code>LDMIA</code> fantôme qui écrasait r0, SP, LR et PC avec les octets de la table de saut. <strong>Révision 2 :</strong> carte mémoire issue du datasheet SNC7340 V1.7, load table Sonix décodée, AES implémenté et validé sur FIPS-197, code utilisateur déchiffré exécuté depuis la PRAM.</p>
-  </div>
 </header>
 
-<div class="layout">
-  <aside class="rail">
-    <div class="rail-title">Sommaire</div>
-    <nav id="rail-nav">
-      <a href="#journal"><span>LOG</span>Journal</a>
-      <a href="#sources"><span>SRC</span>État des sources</a>
-      <a href="#materiel"><span>HW</span>Fiche matérielle</a>
-      <a href="#pastilles"><span>PAD</span>Pastilles de test</a>
-      <a href="#adressage"><span>MEM</span>Carte mémoire</a>
-      <a href="#peripheriques"><span>PER</span>Démentis matériels</a>
-      <a href="#serie"><span>SER</span>Le port série</a>
-      <a href="#flash"><span>MAP</span>Layout Flash</a>
-      <a href="#loadtable"><span>TAB</span>Load table Sonix</a>
-      <a href="#crypto"><span>CRY</span>Déchiffrement</a>
-      <a href="#boot"><span>BOOT</span>Chaîne de démarrage</a>
-      <a href="#coeur"><span>CPU</span>Défauts de cœur</a>
-      <a href="#jeu"><span>JEU</span>Temps et veille</a>
-      <a href="#son"><span>SON</span>Le son</a>
-      <a href="#etat"><span>ETAT</span>Sauvegardes</a>
-      <a href="#vitesse"><span>PERF</span>Vitesse</a>
-      <a href="#extraction"><span>EXT</span>Extraction</a>
-      <a href="#audit"><span>AUD</span>Audit émulateur</a>
-      <a href="#plan"><span>PLAN</span>Feuille de route</a>
-      <a href="#ressources"><span>REF</span>Ressources</a>
-    </nav>
-  </aside>
+<section id="telecharger">
+  <div class="sec-head"><span class="sec-code">GET</span><h2 data-t="get.h2">Download</h2></div>
+  <p class="sec-intro" data-t="get.intro">Pick your system. The packages are built by the repository's own publishing pipeline, from code you can read.</p>
 
-  <main>
+  <div class="os-row" role="tablist" aria-label="Système">
+    <button type="button" role="tab" data-os="win" aria-selected="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg> Windows
+    </button>
+    <button type="button" role="tab" data-os="mac" aria-selected="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><circle cx="12" cy="14" r="4"/><circle cx="7" cy="8" r="1"/></svg> macOS
+    </button>
+    <button type="button" role="tab" data-os="linux" aria-selected="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Linux
+    </button>
+  </div>
 
-  <!-- ===== JOURNAL ===== -->
-  <section id="journal">
-    <div class="sec-head"><span class="sec-code">LOG</span><h2>Journal des avancées</h2></div>
-    <p class="sec-intro">Tout est sur la branche <code>feat/real-firmware-boot</code>. Je liste du plus récent au plus ancien. À ce jour, 25 sondes et 73 tests.</p>
-
-    <h3>Depuis la révision 5</h3>
-    <p>Le 29 août 2026. Le port série trouvé, et trois conclusions héritées retournées.</p>
-    <div class="log">
-      <div class="log-row"><code>Série</code><div><b>Le port série est en 0x4000B000</b><span>Trouvé par comparaison de deux exécutions, pas par lecture de code. La page n'apparaît qu'à l'ouverture du lien, et seulement là. Banque relevée, état en <code>+0x14</code> avec l'émetteur prêt au bit 6, contrôle de ligne en <code>+0x0C</code>. Section SER.</span></div></div>
-      <div class="log-row"><code>Méthode</code><div><b>Comparer un état à lui-même ne trouve jamais rien</b><span>Les relevés notaient les pages touchées avant puis après dans la même exécution. Une page déjà ouverte n'en ressort pas, et la mesure rendait « zéro nouvelle page » quoi qu'il arrive. <code>mmio_releve_probe</code> rend un texte fait pour <code>diff</code>.</span></div></div>
-      <div class="log-row"><code>Scènes</code><div><b>Les numéros étaient tous décalés d'un rang</b><span>Le descripteur porte un champ qui vaut le rang plus un, et c'est ce champ qu'on prenait pour le numéro. L'instantané censé montrer l'écran de connexion était en fait sur <code>TAMASPACE_DOWNLOAD</code> : la mesure faite dessus ne valait rien. <code>table_scenes_probe</code> extrait la table de n'importe quelle édition sans rien exécuter, et l'interface nomme désormais la scène courante.</span></div></div>
-      <div class="log-row"><code>Son</code><div><b>Le bourdonnement de Jade Forest</b><span>Quarante secondes de Sol3 avant chaque mélodie. L'adresse du drapeau « un son joue » avait été relevée sur Water et tenue pour universelle ; Jade range son bloc audio huit octets plus loin. Le modèle lisait autre chose, le trouvait non nul en permanence, et tenait une voix pour active sans arrêt.</span></div></div>
-      <div class="log-row"><code>Interface</code><div><b>La fente dentelée peinte d'un seul tenant</b><span>Onze triangles posés côte à côte laissaient un liseré clair : egui adoucit le bord de chaque forme, et deux adoucissements qui se touchent ne se complètent pas. Les dents qui mordent vers le haut recevaient en plus un aplat qui masquait le papier posé dessous. La calotte s'arrête maintenant à la dentelure et laisse paraître.</span></div></div>
-      <div class="log-row"><code>Robustesse</code><div><b>Un clamp qui fermait l'application</b><span><code>clamp</code> affirme <code>min &lt;= max</code>. Au changement de mode il y a une image où la hauteur disponible vaut zéro : une division zéro sur zéro rendait NaN, l'assertion tombait et le processus avec. Ne pas donner de bornes calculées à <code>clamp</code> dans du code de dessin.</span></div></div>
-    </div>
-
-    <h3>Depuis la révision 4</h3>
-    <p>Le 28 août 2026. Deux chantiers, la vitesse et la clé.</p>
-    <div class="log">
-      <div class="log-row"><code>Vitesse</code><div><b>Vitesse</b><span>1,40 fois le temps réel sur <code>step</code>, 1,37 sur <code>run_frame</code>. Deux tests posés dans le chemin chaud, dont un hachage complet par instruction pour une table de points d'arrêt vide. La sonde ne les voyait pas : elle mesurait la boucle que l'interface n'appelle pas.</span></div></div>
-      <div class="log-row"><code>Sécurité</code><div><b>La clé sort de l'historique</b><span>Trois passes, dont deux qui ont échoué en silence. Tout l'historique réécrit, zéro occurrence restante, 99 fichiers suivis, tests verts. Les trois pièges sont en section AUD.</span></div></div>
-    </div>
-
-    <h3>Depuis la révision 3</h3>
-    <p>Une quarantaine de commits, regroupés ici par chantier plutôt qu'un par un.</p>
-    <div class="log">
-      <div class="log-row"><code>Cœur</code><div><b>Seize défauts de décodage corrigés</b><span>Blocs IT, adressage indexé, table ALU 16 bits, largeur des transferts, drapeaux C et V, <code>MSR</code>, <code>BLX</code>, <code>ThumbExpandImm</code>, ITSTATE en exception, bit de pouce dans R15. Catalogue complet en section CPU.</span></div></div>
-      <div class="log-row"><code>Matériel</code><div><b>Huit périphériques modélisés</b><span>Contrôleur XIP, DMA, CRC, ADC de pile, ports d'entrées-sorties, contrôleur de Flash, TE d'écran, compteur de secondes. Cinq étiquettes du datasheet démenties au passage, section PER.</span></div></div>
-      <div class="log-row"><code>Temps</code><div><b>L'horloge du jeu repart</b><span>Compteur de secondes matériel branché, calendrier localisé, les deux veilles comprises et le réveil matériel reproduit. L'œuf éclot, les jauges descendent.</span></div></div>
-      <div class="log-row"><code>État</code><div><b>Sauvegardes persistantes par dump</b><span>Avec l'horloge de la console, donc un Tamagotchi rangé vieillit. Instantanés séparés pour la mise au point.</span></div></div>
-      <div class="log-row"><code>Interface</code><div><b>Coque fidèle et pilotage complet</b><span>Six coques suivant l'édition, molette sur antenne, appui long calibré en temps console, clavier complet, pilotage depuis le navigateur.</span></div></div>
-      <div class="log-row"><code>Son</code><div><b>Les notes que le firmware compose</b><span>Tableau des voix suivi note à note dans la boucle d'émulation, hauteur vérifiée à l'oreille contre la console posée à côté.</span></div></div>
-      <div class="log-row"><code>Vitesse</code><div><b>De 0,36 à 1,40 fois le temps réel</b><span>Huit changements mesurés. Les deux derniers étaient invisibles parce que la sonde ne mesurait pas la boucle que l'interface appelle. Section PERF.</span></div></div>
-    </div>
-
-    <h3>Séance de reprise du cœur</h3>
-    <div class="log">
-      <div class="log-row"><code>0acaa7f</code><div><b>Désassemblage ciblé sur l'adresse la plus exécutée</b><span>La sonde affichait le contexte autour de la plus <em>basse</em> adresse chaude au lieu de la plus fréquente. Elle regardait à côté du blocage.</span></div></div>
-      <div class="log-row"><code>6d364c9</code><div><b>TBB et TBH décodés au lieu d'un LDM fantôme</b><span>La cause racine du blocage à 0xB950. Voir la section BOOT.</span></div></div>
-      <div class="log-row"><code>21b8daa</code><div><b>PLL SN_SYS0 et statuts de verrouillage</b><span>Le firmware écrit une séquence de déverrouillage puis attend un bit de statut. Sans modèle, il bouclait indéfiniment.</span></div></div>
-      <div class="log-row"><code>1054273</code><div><b>Cible des branches CBZ et CBNZ corrigée</b><span>Le PC architectural vaut adresse + 4, <code>step()</code> n'avançait que de 2. Toutes les cibles étaient décalées de 2 octets, ce qui bloquait les boucles d'attente PLL.</span></div></div>
-      <div class="log-row"><code>0b797f1</code><div><b>Sonde de la séquence d'horloge</b><span><code>examples/clock_probe.rs</code>, 121 lignes.</span></div></div>
-      <div class="log-row"><code>97e2e9c</code><div><b>Décodage des ALU 32 bits, immédiat et registre</b><span><code>ThumbExpandImm</code>, opérande registre décalé, 16 opcodes. Le gros trou du décodeur Thumb-2.</span></div></div>
-      <div class="log-row"><code>a2b26b1</code><div><b>STR word immédiat écrit sur 32 bits</b><span>Écrivait sur une largeur incorrecte.</span></div></div>
-      <div class="log-row"><code>da5e27a</code><div><b>Traçage de tous les accès MMIO et hors carte</b><span>Trois compteurs distincts : registres non modélisés, tous les registres périphériques, adresses hors carte. C'est l'instrument de reverse.</span></div></div>
-      <div class="log-row"><code>c7d6034</code><div><b>Exécution du vrai firmware au lieu d'un mock</b><span>Le commit central. AES, load tables Sonix, PRAM, fusibles, réécriture du bus et du loader. 1 409 lignes ajoutées sur 17 fichiers.</span></div></div>
-      <div class="log-row"><code>f21a44b</code><div><b>Navigation par adresse dans le désassembleur</b><span>Positionnement arbitraire du PC pour le débogage.</span></div></div>
-    </div>
-
-    <p class="cap">Arbre de travail propre au moment du relevé. Les sondes jetables <code>dis_probe.rs</code> et <code>trace_probe.rs</code>, qui traquaient <code>PC = 0x0000B950</code>, ont été supprimées une fois la cause trouvée.</p>
-  </section>
-
-  <!-- ===== SOURCES ===== -->
-  <section id="sources">
-    <div class="sec-head"><span class="sec-code">SRC</span><h2>État des sources</h2></div>
-    <p class="sec-intro">Je ne redistribue aucun binaire. Ni dump de Flash, ni Boot ROM, ni empreinte de référence. Ce qui circule, ce sont les outils et la documentation. Ce dossier ajoute par-dessus ce que j'ai obtenu sur mon propre appareil.</p>
-
-    <div class="legend">
-      <div><span class="chip c-ok">CONFIRMÉ</span> Documenté ou vérifié sur matériel</div>
-      <div><span class="chip c-p2">DÉDUIT</span> Inféré du brochage ou d'un écrit technique</div>
-      <div><span class="chip c-p1">HYPOTHÈSE</span> Placeholder, non vérifié</div>
-    </div>
-
-    <p>La révision 1 comptait onze lignes marquées <span class="chip c-p1">HYPOTHÈSE</span> dans la section adressage. Il en reste une. L'acquisition du datasheet SNC7340 V1.7 a réglé la question, et le firmware qui démarre confirme le reste par l'usage.</p>
-
-    <div class="note">
-      <p><strong>Deux corpus distincts.</strong> Les travaux publics de Yukai Li (GMMan / Caralynx), juillet à octobre 2025, couvrent le layout Flash, le brochage, l'extraction de la Boot ROM et la sémantique des drapeaux d'en-tête. Le décodage du format de load table, la dérivation d'IV, les deux modes de chiffrement et la carte mémoire détaillée présentés ici viennent de la rétro-ingénierie menée dans ce projet, sans exécuter aucun outil tiers. Le partage entre les deux est détaillé en section CRY.</p>
-    </div>
-  </section>
-
-  <!-- ===== MATERIEL ===== -->
-  <section id="materiel">
-    <div class="sec-head"><span class="sec-code">HW</span><h2>Fiche matérielle</h2></div>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Bloc</th><th>Référence</th><th>Détail</th><th>Statut</th></tr></thead>
-        <tbody>
-          <tr><td>Microcontrôleur</td><td class="hex">Sonix SNC73410</td><td>ARM Cortex-M3 double cœur, Boot ROM 64 Ko, PRAM 64 Ko, SRAM AHB 128 Ko, mailbox 4 Ko, AES matériel, fusibles FEUSE</td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-          <tr><td>Flash externe</td><td class="hex">KH25L12833FM2I-10G</td><td>Macronix 16 Mo, jeu 25xx standard, quad câblé. Le dump personnel se présente comme <code>MX25L12835F</code></td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-          <tr><td>Écran</td><td class="hex">TFT SPI 128 × 128</td><td>SPI1, ligne CMD/DATA séparée, TE, reset dédié, rétroéclairage PWM</td><td><span class="chip c-p2">DÉDUIT</span></td></tr>
-          <tr><td>Entrées</td><td class="hex">3 boutons + encodeur</td><td>A / B / C sur P0.9, P0.11, P0.10. Molette à quadrature P2.0 et P2.1, appui P0.8</td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-          <tr><td>Audio</td><td class="hex">Buzzer piézo</td><td>PWM sur P1.11 et P1.13</td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-          <tr><td>Alimentation</td><td class="hex">Batterie + 3V3</td><td>Mesure par SAR ADC sur P0.6</td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-          <tr><td>Communication</td><td class="hex">Prongs</td><td>UART1 sur P0.2 / P0.3 pour les playdates. UART0 sur P0.0 / P0.1 pour la console bootloader</td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-          <tr><td>Débogage</td><td class="hex">SWD</td><td>SWDIO P0.14, SWCLK P0.13, SWO P0.12</td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ===== PASTILLES ===== -->
-  <section id="pastilles">
-    <div class="sec-head"><span class="sec-code">PAD</span><h2>Pastilles de test</h2></div>
-    <p class="sec-intro">J'ai relevé tout le circuit imprimé, regroupé par fonction. C'est ce qui donne accès à la Flash sans rien dessouder.</p>
-
-    <h3>Bus Flash SPI quad</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">TP</th><th>Broche</th><th>Signal</th><th>Rôle en extraction</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">TP24</td><td class="hex">P0.15</td><td>SPIFC_CS</td><td>Sélection de puce</td></tr>
-          <tr><td class="hex">TP26</td><td class="hex">P1.0</td><td>SPIFC_CLK</td><td>Horloge</td></tr>
-          <tr><td class="hex">TP27</td><td class="hex">P1.1</td><td>SPIFC_MISO</td><td>Données sortantes</td></tr>
-          <tr><td class="hex">TP28</td><td class="hex">P1.2</td><td>SPIFC_MOSI</td><td>Commandes</td></tr>
-          <tr><td class="hex">TP30</td><td class="hex">P1.3</td><td>SPIFC_D2</td><td>Quad, flottant en mode single</td></tr>
-          <tr><td class="hex">TP31</td><td class="hex">P1.4</td><td>SPIFC_D3</td><td>Quad, idem</td></tr>
-          <tr><td class="hex">TP29 / TP46 / TP49</td><td>·</td><td>GND</td><td>Masse</td></tr>
-          <tr><td class="hex">TP12 / TP22</td><td>·</td><td>VCC</td><td>Alimentation logique 3V3</td></tr>
-          <tr><td class="hex">TP21 / TP45 / TP25</td><td>·</td><td>RST</td><td>À maintenir bas pendant la lecture</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h3>Écran, entrées, série</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">TP</th><th>Broche</th><th>Signal</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">TP7</td><td class="hex">P1.6</td><td>TFT SPI1_SCLK</td></tr>
-          <tr><td class="hex">TP8</td><td class="hex">P1.5</td><td>TFT SPI1_CS</td></tr>
-          <tr><td class="hex">TP10</td><td class="hex">P1.8</td><td>TFT SPI1_MOSI</td></tr>
-          <tr><td class="hex">TP9</td><td class="hex">P0.5</td><td>TFT CMD / DATA</td></tr>
-          <tr><td class="hex">TP11</td><td class="hex">P0.4</td><td>TFT RESET</td></tr>
-          <tr><td class="hex">TP6</td><td class="hex">P1.10</td><td>TFT TE</td></tr>
-          <tr><td class="hex">TP4</td><td class="hex">P1.9</td><td>Alimentation TFT</td></tr>
-          <tr><td class="hex">TP13</td><td class="hex">P0.7</td><td>PWM rétroéclairage</td></tr>
-          <tr><td class="hex">TP3 / TP15</td><td>·</td><td>Alim TFT / rétroéclairage</td></tr>
-          <tr><td class="hex">TP36</td><td class="hex">P0.9</td><td>Bouton A (SW3)</td></tr>
-          <tr><td class="hex">TP38</td><td class="hex">P0.11</td><td>Bouton B (SW4)</td></tr>
-          <tr><td class="hex">TP39</td><td class="hex">P0.10</td><td>Bouton C (SW5)</td></tr>
-          <tr><td class="hex">TP34</td><td class="hex">P0.8</td><td>Appui molette</td></tr>
-          <tr><td class="hex">TP32 / TP33</td><td class="hex">P2.0 / P2.1</td><td>Encodeur voies 1 et 2</td></tr>
-          <tr><td class="hex">TP35 / TP37</td><td class="hex">P0.2 / P0.3</td><td>UART1 TXD / RXD (prongs)</td></tr>
-          <tr><td class="hex">TP48</td><td class="hex">P0.1</td><td>UART0_RXD, pull-down</td></tr>
-          <tr><td class="hex">TP5</td><td class="hex">P0.6</td><td>ADC batterie</td></tr>
-          <tr><td class="hex">TP23 / TP40</td><td>·</td><td>Buzzer, moins et plus</td></tr>
-          <tr><td class="hex">TP1 / TP2</td><td>·</td><td>VBAT / VREG 3V3</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="cap">TP14, TP16 à TP20, TP41 à TP44 et TP47 ne sont pas documentés.</p>
-  </section>
-
-  <!-- ===== ADRESSAGE ===== -->
-  <section id="adressage">
-    <div class="sec-head"><span class="sec-code">MEM</span><h2>Carte mémoire</h2></div>
-    <p class="sec-intro">J'ai réécrit cette section en entier, à partir du datasheet SNC7340 V1.7, section 4 et figure 4-1. Ma première révision se trompait sur presque toutes ces lignes.</p>
-
-    <h3>Régions</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Plage</th><th>Région</th><th class="hex">Taille</th><th>Note</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">0x00000000 – 0x0000FFFF</td><td><strong>PRAM</strong></td><td class="hex">64 Ko</td><td>Program RAM. Le bootrom y recopie le code utilisateur déchiffré. C'est là que vit la table de vecteurs du firmware, ce qui explique les adresses de handlers très basses vues dans le dump</td></tr>
-          <tr><td class="hex">0x08000000 – 0x0800FFFF</td><td>Boot ROM cœur 0</td><td class="hex">64 Ko</td><td>Segment masqué 0x08008000 – 0x0800BFFF, miroir du début de ROM</td></tr>
-          <tr><td class="hex">0x10000000 – 0x100FFFFF</td><td>Fenêtre I-cache sur la Flash</td><td class="hex">1 Mo</td><td><strong>1 Mo seulement</strong>, pas 16. C'est la fenêtre que visent les vecteurs d'interruption</td></tr>
-          <tr><td class="hex">0x18000000 – 0x1801FFFF</td><td>SRAM AHB</td><td class="hex">128 Ko</td><td>La pile du firmware y réside</td></tr>
-          <tr><td class="hex">0x20000000 – 0x20000FFF</td><td>Mailbox RAM</td><td class="hex">4 Ko</td><td>Partagée entre les deux cœurs. La révision 1 la plaçait à 0x20020000 sur 16 Ko, faux</td></tr>
-          <tr><td class="hex">0x60000000 – 0x6FFFFFFF</td><td>Flash SPI NOR directe</td><td class="hex">256 Mo</td><td>Fenêtre XIP non cachée. Un même octet de Flash est donc visible à deux adresses</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="cap">Toutes ces lignes sont <span class="chip c-ok">CONFIRMÉ</span> : datasheet, plus vérification par les tests <code>la_pram_est_mappee_a_zero_et_pas_la_rom</code>, <code>sram_et_mailbox_aux_adresses_du_datasheet</code> et <code>les_deux_fenetres_flash_voient_le_meme_octet</code>.</p>
-
-    <h3>Pages périphériques</h3>
-    <p>Une page de 4 Ko par bloc, figure 4-1 du datasheet.</p>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Base</th><th>Bloc</th><th class="hex">Base</th><th>Bloc</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">0x40001000</td><td>PMU</td><td class="hex">0x4002B000</td><td>IDMA0</td></tr>
-          <tr><td class="hex">0x40002000</td><td>ISO</td><td class="hex">0x4002F000</td><td>GPIO2</td></tr>
-          <tr><td class="hex">0x40003000</td><td><strong>RTC</strong></td><td class="hex">0x40030000</td><td>GPIO1</td></tr>
-          <tr><td class="hex">0x40004000</td><td>SYSCTRL0</td><td class="hex">0x40031000</td><td><strong>GPIO0</strong></td></tr>
-          <tr><td class="hex">0x40005000</td><td>SYSCTRL1</td><td class="hex">0x40033000</td><td>I2C1</td></tr>
-          <tr><td class="hex">0x40007000</td><td>USB</td><td class="hex">0x40034000</td><td>UART1 (prongs)</td></tr>
-          <tr><td class="hex">0x4000A000</td><td>SAR ADC</td><td class="hex">0x40038000</td><td><strong>UART0</strong> (console)</td></tr>
-          <tr><td class="hex">0x4000E000</td><td>I2S4</td><td class="hex">0x4003A000</td><td>WDT</td></tr>
-          <tr><td class="hex">0x40012000</td><td>I2S2</td><td class="hex">0x40040000 – 0x40046000</td><td>Timers CT32B1 à CT32B7</td></tr>
-          <tr><td class="hex">0x40019000</td><td>I2S0</td><td class="hex">0x45000000</td><td><strong>SN_SYS0</strong>, fusibles et PLL</td></tr>
-          <tr><td class="hex">0x40020000</td><td><strong>SPI1</strong> (écran)</td><td class="hex">0x40025000</td><td>IDMA1</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h3>SN_SYS0, la zone qui compte</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Offset</th><th>Registre</th><th>Rôle</th><th>Statut</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">+0x04</td><td>Déverrouillage PLL</td><td>Reçoit la valeur magique <code>0xA55A0000</code> avant configuration</td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-          <tr><td class="hex">+0x08</td><td>Statut PLL</td><td>Bit 4 : verrouillage initial, scruté par <code>LSR #4</code>. Bit 6 : verrouillage final après reconfiguration, scruté par <code>LSR #6</code></td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-          <tr><td class="hex">+0x30</td><td>FEUSE0</td><td>Fusible</td><td><span class="chip c-p2">DÉDUIT</span></td></tr>
-          <tr><td class="hex">+0x34</td><td>FEUSE1</td><td>Fusible</td><td><span class="chip c-p2">DÉDUIT</span></td></tr>
-          <tr><td class="hex">+0x38</td><td><strong>FEUSE2</strong></td><td>deviceKey sur les 16 bits de poids fort</td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-          <tr><td class="hex">+0x3C</td><td><strong>FEUSE3</strong></td><td>deviceKey en mot complet</td><td><span class="chip c-ok">CONFIRMÉ</span></td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="note warn">
-      <p><strong>La deviceKey n'est pas dans le dump.</strong> Elle est gravée dans les fusibles de la puce. Un dump de Flash, même parfait, ne suffit donc pas à démarrer : il faut lire FEUSE2 ou FEUSE3 en SWD sur l'appareil, ou récupérer la valeur par un autre canal. C'est la principale raison pour laquelle un dump partagé entre utilisateurs reste inerte. L'émulateur gère ce cas explicitement : sans clé, le dump est chargé et inspectable, mais <code>bootable</code> reste faux, et il ne prétend pas exécuter.</p>
-    </div>
-
-    <div class="cards">
-      <div class="card">
-        <div class="k">Reste ouvert</div>
-        <h4>Le bit de masquage de la ROM</h4>
-        <p>Le mécanisme réel clampe le bit 15 du bus d'adresse via OSC_CTRL. L'émulateur code encore un « bit 3 » arbitraire, dans <code>SysRegisters</code>, désormais routé sur SYSCTRL0 alors que le masquage relève de SN_SYS0. Seule ligne encore <span class="chip c-p1">HYPOTHÈSE</span> de la section.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== PERIPHERIQUES ===== -->
-  <section id="peripheriques">
-    <div class="sec-head"><span class="sec-code">PER</span><h2>Démentis matériels</h2></div>
-    <p class="sec-intro">Je laisse la section précédente telle que je l'avais écrite, avec la table du datasheet. Faire tourner le vrai firmware l'a démentie sur cinq pages. Je corrige ici plutôt que par-dessus. J'ai passé des jours à faire confiance à une étiquette officielle, je préfère garder la trace de ce que ça coûte.</p>
-
-    <div class="note warn">
-      <p><strong>Ne jamais croire une étiquette sur parole.</strong> Le datasheet SNC7340 nomme des pages que le SNC73410 utilise autrement. Cinq attributions se sont révélées fausses à l'usage, et chacune a coûté du temps d'enquête avant d'être retournée.</p>
-    </div>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Page</th><th>Nom au datasheet</th><th>Fonction réelle</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">0x4002F000</td><td>GPIO2</td><td><strong>Contrôleur XIP.</strong> C'est lui qui programme la fenêtre de la Flash. Sans le configurer, tout désassemblage au-delà de 0x10000000 se lit décalé de 0x11000</td></tr>
-          <tr><td class="hex">0x40038000</td><td>UART0</td><td><strong>Accélérateur de somme de contrôle</strong></td></tr>
-          <tr><td class="hex">0x40019000</td><td>I2S0</td><td><strong>Port d'entrées-sorties numéro 1</strong></td></tr>
-          <tr><td class="hex">0x4003A000</td><td>Chien de garde</td><td><strong>Convertisseur de la mesure de pile.</strong> Dix bits calés au rang 6, conversions enchaînées sur l'IRQ 9</td></tr>
-          <tr><td class="hex">0x4000A000</td><td>SAR ADC</td><td><strong>Sortie console de débogage</strong></td></tr>
-          <tr><td class="hex">0x4000B000</td><td>SAR ADC 1</td><td><strong>Le port série des prongs.</strong> Sixième étiquette démentie, et la plus coûteuse : on l'a cherché des mois durant aux deux adresses que le datasheet donne pour UART1 et SPI1. Voir section SER</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h3>Pages établies par l'exécution</h3>
-    <p>Celles-ci ne viennent pas du datasheet mais de la trace : on laisse tourner le firmware, on relève ce qu'il touche, on modélise, on recommence.</p>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Adresse</th><th>Rôle</th><th>Détail</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">0x40022018</td><td>Identification de la Flash</td><td>Paire fabricant et composant <code>0xC217</code>. Le firmware en fait <code>(valeur &amp; 0xFFFF) &lt;&lt; 8</code> et compare les bits 23:16 à <code>0xC2</code> puis <code>0xC8</code>. Ce n'est pas un identifiant JEDEC de trois octets</td></tr>
-          <tr><td class="hex">0x40022014</td><td>Configuration de la Flash</td><td>Lu avec -1 pour ne pas écrire, valeur attendue <code>0x40</code>. Bit 0 = écriture en cours</td></tr>
-          <tr><td class="hex">0x40018000 / 0x40019000 / 0x4001A000</td><td>Ports d'entrées-sorties</td><td>Données, direction, mode, autorisation et drapeaux d'interruption. Une sortie relit son verrou, une entrée rend le niveau extérieur</td></tr>
-          <tr><td class="hex">0x4000F000</td><td>Contrôleur de transferts</td><td>Deux canaux, fin sur l'IRQ 58. Le bit de direction posé va de la Flash vers la mémoire</td></tr>
-          <tr><td class="hex">0x45000304</td><td>Compteur de secondes</td><td>Zone SN_SYS0, alimentée en permanence. Voir section JEU</td></tr>
-          <tr><td class="hex">0x45000300</td><td>Contrôle de veille</td><td>Bit 0 : mise hors tension du cœur</td></tr>
-          <tr><td class="hex">P1.10</td><td>TE de l'écran</td><td>60 Hz, front montant sur l'IRQ 27</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="note warn">
-      <p><strong>Le verrou de démarrage n'était pas là où on le croyait.</strong> Une note antérieure jugeait que le message <code>unsupport chip, please check your flash vender</code> était du texte de repli sans conséquence. C'était une boucle sans sortie, et le véritable verrou. Ne jamais reprendre une conclusion héritée sans la refaire.</p>
-    </div>
-  </section>
-
-  <!-- ===== SERIE ===== -->
-  <section id="serie">
-    <div class="sec-head"><span class="sec-code">SER</span><h2>Le port série</h2></div>
-    <p class="sec-intro">Trouvé le 29 août 2026, après des mois passés à le chercher au mauvais endroit. Il est en <code>0x4000B000</code>, la page que le datasheet annonce en SAR ADC 1. Ce n'est pas une lecture de code qui l'a désigné, c'est une mesure.</p>
-
-    <div class="note warn">
-      <p><strong>La méthode comptait plus que la trouvaille.</strong> Les relevés précédents comparaient un état à lui-même : on notait les pages matérielles touchées avant, puis après, dans la même exécution. Une page déjà ouverte n'en ressort jamais, et la mesure rendait « zéro nouvelle page » quoi qu'il arrive. En comparant deux exécutions distinctes, l'une en jeu ordinaire et l'autre sur le lien ouvert, la page est apparue du premier coup.</p>
-    </div>
-
-    <h3>Comment ouvrir le lien à la main</h3>
-    <p>Depuis la vue Space. Le menu de communication est la scène 115, <code>TAMASPACE_TUSHIN</code>. <code>A</code> déplace le curseur, <code>B</code> valide, <code>C</code> revient. Chacune de ses quatre entrées correspond à un onglet de TamaHome.</p>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Entrée du menu</th><th class="hex">Scène</th><th>Onglet TamaHome</th><th>Ce qui passe</th></tr></thead>
-        <tbody>
-          <tr><td>S'amuser</td><td class="hex">116</td><td>Simulate Playdate</td><td>La visite entre deux consoles</td></tr>
-          <tr><td>Cadeaux</td><td class="hex">117</td><td>Built-In Items</td><td>Les objets du catalogue</td></tr>
-          <tr><td>Planètes</td><td class="hex">non relevée</td><td>aucun</td><td>Grisée dans le menu</td></tr>
-          <tr><td>Téléchargement</td><td class="hex">119</td><td>Lab Items</td><td>Les objets de laboratoire</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>Sur « s'amuser », la scène 116 affiche <em>connecte deux appareils et appuie sur le bouton B sur chacun d'eux</em>. C'est ce second <code>B</code> qui ouvre le lien, et c'est le geste que TamaHome demande aussi. Les quatre voies passent vraisemblablement par le même transport, seul le contenu change. L'onglet Online Bridge ne parle pas à la console autrement : il relaie le même flux série dans une prise réseau pour jouer à deux à distance.</p>
-
-    <h3>La banque de registres</h3>
-    <p>Ce qui n'apparaît qu'à l'ouverture du lien, et seulement à ce moment-là.</p>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Offset</th><th>Lectures</th><th>Écritures</th><th class="hex">Premier PC</th><th>Rôle</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">+0x00</td><td>rares</td><td>rares</td><td class="hex">0x00004E42</td><td>Écrit en dernier à l'émission</td></tr>
-          <tr><td class="hex">+0x04</td><td>rares</td><td>rares</td><td class="hex">0x00004E3C</td><td>Écrit juste avant</td></tr>
-          <tr><td class="hex">+0x08</td><td>unités</td><td>unités</td><td class="hex">0x00004C26</td><td>Configuration</td></tr>
-          <tr><td class="hex">+0x0C</td><td>unités</td><td>unités</td><td class="hex">0x00004B9C</td><td><strong>Contrôle de ligne</strong></td></tr>
-          <tr><td class="hex">+0x14</td><td><strong>des dizaines de milliers par seconde</strong></td><td>jamais</td><td class="hex">0x00004EC0</td><td><strong>État</strong></td></tr>
-          <tr><td class="hex">+0x28</td><td>rares</td><td>rares</td><td class="hex">0x00004E36</td><td>Écrit en premier à l'émission</td></tr>
-          <tr><td class="hex">+0x30</td><td>unités</td><td>unités</td><td class="hex">0x00004C60</td><td>Configuration</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h3>L'état, en <code>+0x14</code></h3>
-    <p>Deux bits sont lus, et rien d'autre.</p>
-<pre><code>0x00004EC0  LDR r0,[base,#0x14] ; UBFX r0,r0,#10,#1 ; CMP r0,#1
-0x00004EDA  LDR r0,[base,#0x14] ; LSLS r0,r0,#25 ; BMI ; sinon boucle</code></pre>
-    <p>Le second est une boucle qui ne sort que sur le <strong>bit 6</strong>, la forme habituelle d'un témoin « émetteur prêt ». Le <strong>bit 10</strong> est testé une fois avant. La page n'étant pas modélisée, elle rend zéro, le bit 6 ne monte jamais et le firmware tourne en rond : c'est exactement ce qu'on observe, des dizaines de milliers de lectures par seconde et rien d'autre. Poser le bit 6 à un ne suffit pas encore à débloquer la suite, il faut comprendre le bit 10 d'abord.</p>
-
-    <h3>Le contrôle de ligne, en <code>+0x0C</code></h3>
-<pre><code>0x00004B9C  LDR r0,[base,#0x0C] ; BFI r0,r2,#0,#2 ; STR   bits 0 et 1
-0x00004BAA  LDR r0,[base,#0x0C] ; BIC #4 ; ORR r2 LSL #2  bit 2</code></pre>
-    <p>Deux bits posés d'un coup, puis un bit isolé. C'est la forme d'une longueur de mot suivie d'un témoin de parité ou de bit d'arrêt.</p>
-
-    <h3>La cadence</h3>
-    <p>La fonction en <code>0x000047C4</code> rend la fréquence de l'horloge périphérique : les trois bits bas de <code>0x4500000C</code> choisissent la source par une table de sauts, dont une branche vaut douze millions, puis <code>0x45000010</code> porte un décalage à droite. C'est cette valeur qu'un pilote divise pour obtenir ses bauds, et c'est là qu'il faudra retomber sur les 460 800 que la communauté annonce, en 3,3 V, sur les contacts du flanc.</p>
-
-    <div class="note">
-      <p><strong>Une jumelle en <code>0x4000A000</code>.</strong> Son <code>+0x14</code> est lu au même instant, depuis <code>0x00004DD4</code>, un code voisin de celui de <code>0x4000B000</code>. Deux exemplaires du même bloc, donc, ce qui cadre avec le <code>** UART Monitor Service **</code> que porte le firmware : l'une des deux est vraisemblablement la console de mise au point, l'autre le lien vers l'extérieur.</p>
-    </div>
-
-    <h3>Ce qui change d'une édition à l'autre</h3>
-    <p>Les cinq images se ressemblent assez pour donner l'illusion qu'une adresse relevée sur l'une vaut pour les autres. Deux jours ont été perdus à cela, sur deux sujets sans rapport. Rien dans l'image ne nomme l'édition : la table de biomes en <code>0x978E8</code> contient LAND, WATER et SKY dans les cinq, et c'est le nom du fichier qui sert de convention.</p>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Ce qui bouge</th><th>Water, Earth, Sky, Land</th><th>Jade Forest</th><th>Comment le vérifier</th></tr></thead>
-        <tbody>
-          <tr><td>Bloc du moteur audio</td><td>base</td><td>huit octets plus loin</td><td><code>SRAM_DUMP=0x18014280:24</code>, sur un état muet</td></tr>
-          <tr><td>Drapeau « un son joue »</td><td class="hex">0x18014284</td><td class="hex">0x1801428C</td><td>Il vaut 0 au silence, et le moteur prêt vaut 1 deux octets avant</td></tr>
-          <tr><td>Nombre de scènes</td><td>126 sur Earth</td><td>129</td><td><code>table_scenes_probe</code></td></tr>
-          <tr><td>Numéros de scène</td><td colspan="2">Décalés dès le point d'insertion</td><td>Comparer deux éditions avec la même sonde</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>Ce qui ne bouge pas, vérifié : la clé de déchiffrement, commune aux cinq. La scène courante en <code>0x18001BF4</code> et tout le bloc de la machine à scènes. Le calendrier en <code>0x18001BA4</code>. Le compteur de secondes en <code>0x45000304</code>. Les scènes 0 à 33, celles du menu de mise au point et des quatre vues de zoom, coïncident entre Earth et Jade ; celles de l'espace de communication, au-delà de 110, non.</p>
-
-    <div class="note warn">
-      <p><strong>Un décalage d'adresse ne se plante pas, il donne une valeur plausible.</strong> Le drapeau du son lu huit octets trop tôt rendait <code>0x70</code> puis <code>0x03</code> : non nul, donc « un son joue », donc un bourdonnement permanent. Un numéro de scène décalé d'un rang désigne une scène voisine qui existe, et la mesure faite dessus a l'air valide. Le seul garde-fou est de vérifier que la valeur lue se comporte comme ce qu'elle est censée être : un booléen ne prend que deux valeurs, un écran de connexion doit ouvrir un périphérique.</p>
-    </div>
-
-    <h3>Deux observations non expliquées</h3>
-    <p>Notées parce qu'un indice non consigné est un indice perdu, pas parce qu'on en tire quoi que ce soit. La page <code>0x40007000</code>, annoncée en USB, reçoit une banque entière au moment où l'on appuie sur <code>B</code>, depuis <code>0x0000B69E</code> et <code>0x0000B71A</code>. Ces deux adresses sont voisines de la routine d'écriture de sauvegarde, et deux registres de la Flash apparaissent au même instant : l'appui déclenche probablement une sauvegarde, sans rapport avec le lien. Le registre <code>0x4000800C</code>, lui, est écrit quelques dizaines de fois par seconde depuis <code>0x0000509A</code>, en jeu ordinaire aussi. Il ne s'allume pas avec le lien.</p>
-
-    <h3>Ce qui reste, jusqu'au port COM</h3>
-    <p>Trois temps. Modéliser le bloc, en commençant par le bit 10. Retomber sur 460 800 bauds, faute de quoi la lecture est fausse quelque part. Puis l'ouvrir vers l'extérieur.</p>
-    <p>Ce dernier point n'est pas une affaire de langage. Aucune application ne peut déclarer un port série sous Windows : c'est un pilote qui le fait, et un pilote doit être signé pour se charger. Rust sait écrire un pilote Windows, mais la signature reste due, et un port série virtuel en mode noyau est un chantier à lui seul. La voie praticable est une paire de ports virtuels installée une fois, com0com ou équivalent : l'émulateur ouvre un bout, TamaHome voit l'autre comme un port ordinaire. Sous Linux et macOS un pseudo terminal suffit et ne demande rien à personne.</p>
-
-    <p class="cap">À jeter avant de commencer : <code>src/hw_bridge/uart_terminal.rs</code> et <code>src/emulator/peripherals/uart.rs</code> datent d'avant la rétro-ingénierie. Registres inventés, compteurs d'octets écrits en dur. Ils ne décrivent pas <code>0x4000B000</code>.</p>
-  </section>
-
-  <!-- ===== FLASH ===== -->
-  <section id="flash">
-    <div class="sec-head"><span class="sec-code">MAP</span><h2>Layout Flash 16 Mo</h2></div>
-    <p class="sec-intro">Sur les 16 Mo, il y en a environ 7 de vides. Le code utile pèse à peu près 600 Ko, et seuls les 64 Ko de la région PRAM sont chiffrés.</p>
-
-    <div class="band-wrap">
-      <div class="band" role="img" aria-label="Répartition proportionnelle de la Flash 16 Mo">
-        <i style="flex:0 0 6px;background:var(--p2)"></i>
-        <i style="flex:0 0 10px;background:var(--p0)"></i>
-        <i style="flex:64;background:var(--cyan)"></i>
-        <i style="flex:0 0 4px;background:var(--p1)"></i>
-        <i style="flex:456;background:color-mix(in srgb,var(--cyan) 45%,var(--surface-2))"></i>
-        <i style="flex:530;background:var(--surface-2)"></i>
-        <i style="flex:88;background:var(--orange)"></i>
-        <i style="flex:64;background:color-mix(in srgb,var(--orange) 40%,var(--surface-2))"></i>
-      </div>
-    </div>
-    <div class="band-key">
-      <b><span class="sw" style="background:var(--p2)"></span>En-tête</b>
-      <b><span class="sw" style="background:var(--p0)"></span>PRAM chiffrée</b>
-      <b><span class="sw" style="background:var(--cyan)"></span>Firmware XIP</b>
-      <b><span class="sw" style="background:var(--p1)"></span>DPD</b>
-      <b><span class="sw" style="background:color-mix(in srgb,var(--cyan) 45%,var(--surface-2))"></span>Assets</b>
-      <b><span class="sw" style="background:var(--surface-2)"></span>Vide</b>
-      <b><span class="sw" style="background:var(--orange)"></span>Données utilisateur</b>
-      <b><span class="sw" style="background:color-mix(in srgb,var(--orange) 40%,var(--surface-2))"></span>Réservé</b>
-    </div>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Offset</th><th class="hex">Taille</th><th>Contenu</th><th>Notes</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">0x000000</td><td class="hex">0x1000</td><td>En-tête, load table</td><td>Voir section TAB. Pas de vecteurs Cortex-M ici, contrairement à ce que suppose un chargeur naïf</td></tr>
-          <tr><td class="hex">0x001000</td><td class="hex">0x10000</td><td>Code utilisateur</td><td><strong>Chiffré AES.</strong> Recopié en PRAM à l'adresse 0 par le bootrom</td></tr>
-          <tr><td class="hex">0x011000</td><td class="hex">0xFFFFF</td><td>Firmware XIP</td><td>En clair. Premier demi-mot vérifié : <code>0xB082</code>, prologue de fonction Thumb</td></tr>
-          <tr><td class="hex">0x110000</td><td class="hex">0x1000</td><td>Firmware DPD</td><td>Deep power down</td></tr>
-          <tr><td class="hex">0x111000</td><td class="hex">0x717BC4</td><td>Assets</td><td>Sprites, textes, charset CJK, tables d'items</td></tr>
-          <tr><td class="hex">0xD4A000</td><td class="hex">0x4000</td><td>Staging items</td><td></td></tr>
-          <tr><td class="hex">0xD4E000</td><td class="hex">0x40000</td><td>Items stockés</td><td>40 emplacements de 16 Ko</td></tr>
-          <tr><td class="hex">0xDEE000</td><td class="hex">0x58000</td><td>Ghost data</td><td>Personnages pour playdates et génétique</td></tr>
-          <tr><td class="hex">0xE46000</td><td class="hex">0x20000</td><td>Réception ghost / patch</td><td></td></tr>
-          <tr><td class="hex">0xE66000</td><td class="hex">0x20000</td><td>Export ghost</td><td></td></tr>
-          <tr><td class="hex">0xE86000</td><td class="hex">0x78000</td><td>Captures d'écran amis</td><td></td></tr>
-          <tr><td class="hex">0xEFE000</td><td class="hex">0x1000</td><td>Sauvegarde principale</td><td>À préserver avant tout reflash</td></tr>
-          <tr><td class="hex">0xEFF000</td><td class="hex">0x1000</td><td>Sauvegarde de secours</td><td></td></tr>
-          <tr><td class="hex">0xF00000</td><td class="hex">0x100000</td><td>Réservé</td><td></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ===== LOAD TABLE ===== -->
-  <section id="loadtable">
-    <div class="sec-head"><span class="sec-code">TAB</span><h2>Load table Sonix</h2></div>
-    <p class="sec-intro">Le bootrom balaie la Flash à la recherche d'une table qui lui dit quoi charger, où, et si c'est chiffré. J'ai décodé ce format ici. Je n'ai trouvé aucune source publique équivalente.</p>
-
-    <h3>Détection</h3>
-    <p>Pas de 0x200. Six magies reconnues en tête de table : <code>SNC7320</code>, <code>SN323200</code>, <code>SNUR00</code>, <code>SN98300</code>, <code>SONIXDEV</code>, <code>SNCSPINF</code>. Une image peut porter plusieurs tables, typiquement une pour le bootloader et une pour le firmware principal, d'où un balayage à l'offset 0, à 0x1000, puis en puissances de deux depuis la fin du fichier.</p>
-
-    <h3>Champs</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Offset</th><th class="hex">Taille</th><th>Champ</th><th>Signification</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">+0x000</td><td class="hex">var.</td><td>magic</td><td>Une des six chaînes ci-dessus</td></tr>
-          <tr><td class="hex">+0x008</td><td class="hex">4</td><td>load_cfg</td><td>Bit 0 : le code de boot est chiffré</td></tr>
-          <tr><td class="hex">+0x010</td><td class="hex">4</td><td>user_code.addr</td><td>Adresse dans la fenêtre XIP. Offset Flash = <code>addr &amp; 0x00FFFFFF</code></td></tr>
-          <tr><td class="hex">+0x014</td><td class="hex">4</td><td>user_code.len</td><td>Longueur</td></tr>
-          <tr><td class="hex">+0x028</td><td class="hex">32</td><td>champ clé AES</td><td>Sert à la fois de clé et de source d'IV, après inversion d'ordre</td></tr>
-          <tr><td class="hex">+0x080</td><td class="hex">4</td><td>marque ENCRYPTER</td><td><code>0x5F5F4E45</code>, soit <code>"EN__"</code>. Sur table V3, signale une image déjà remise en clair : le drapeau <code>load_cfg</code> reste armé mais le contenu ne l'est plus</td></tr>
-          <tr><td class="hex">+0x090</td><td class="hex">4 + 4</td><td>sram_code</td><td>Adresse et longueur, V3 uniquement</td></tr>
-          <tr><td class="hex">+0x098</td><td class="hex">4 + 4</td><td>dpd_code</td><td>Adresse et longueur, V3 uniquement</td></tr>
-          <tr><td class="hex">+0x1F8</td><td class="hex">4</td><td>version</td><td>Masque <code>0x5A5A0000</code>. V3 = <code>0x5A5A0033</code>. En dessous de V3, le chiffrement est OFB au lieu de CBC</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="note">
-      <p><strong>Le piège de la marque ENCRYPTER.</strong> C'est exactement ce que documente le README de <code>sonix-boot-decrypter</code> côté écriture : après déchiffrement hors ligne, il faut effacer le bit à +0x08 et neutraliser la marque à +0x80, sinon le bootrom retente de déchiffrer du clair. Ici la logique est lue dans l'autre sens, à la détection : une table V3 marquée chiffrée mais portant <code>"EN__"</code> est traitée comme déjà en clair.</p>
-    </div>
-  </section>
-
-  <!-- ===== CRYPTO ===== -->
-  <section id="crypto">
-    <div class="sec-head"><span class="sec-code">CRY</span><h2>Déchiffrement</h2></div>
-    <p class="sec-intro">Le déchiffrement marche. Je l'ai écrit sans bibliothèque de cryptographie et sans outil tiers ; la seule chose que j'ai reprise ailleurs, c'est la documentation publique du sens des drapeaux d'en-tête.</p>
-
-    <div class="note win">
-      <p><strong>Chaîne de déchiffrement entièrement autonome.</strong> AES-128 et AES-256 sont écrits à la main dans <code>src/emulator/aes.rs</code> : S-box générée au premier appel, multiplication dans GF(2⁸), expansion de clé. Le format de load table, la dérivation d'IV et les deux modes de chiffrement sont dans <code>src/emulator/sonix.rs</code>. Le <code>Cargo.toml</code> ne déclare aucune crate de cryptographie, et rien dans le code ne lance de processus externe. Le déchiffrement se fait en mémoire au chargement du dump.</p>
-    </div>
-
-    <h3>Ce qui vient d'où</h3>
-    <p>La distinction compte, parce qu'elle dit ce qui restait à trouver.</p>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Élément</th><th>Origine</th><th>Détail</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>Sémantique des drapeaux</td>
-            <td><span class="chip c-p2">DOC PUBLIQUE</span></td>
-            <td>Le bit <code>ENCRYPTED_BOOT_CODE</code> à l'offset 0x08 et la marque <code>ENCRYPTER</code> à 0x80, décrits dans le README de <code>sonix-boot-decrypter</code>. Lus comme documentation, jamais exécutés.</td>
-          </tr>
-          <tr>
-            <td>Disposition de la load table</td>
-            <td><span class="chip c-p1">RÉTRO-INGÉNIERIE</span></td>
-            <td>Les six magies, le pas de 0x200, la position du champ clé à +0x28, celle des régions <code>sram_code</code> et <code>dpd_code</code>, le mot de version à +0x1F8 et son masque. Section TAB.</td>
-          </tr>
-          <tr>
-            <td>Dérivation de l'IV</td>
-            <td><span class="chip c-p1">RÉTRO-INGÉNIERIE</span></td>
-            <td>L'inversion du champ clé, le découpage en clé et IV brut, le masquage par la deviceKey en gros boutiste, le tour d'AES-128 final.</td>
-          </tr>
-          <tr>
-            <td>Les deux modes</td>
-            <td><span class="chip c-p1">RÉTRO-INGÉNIERIE</span></td>
-            <td>Le CBC à blocs inversés, la réinitialisation d'IV toutes les 0x1000 octets, et la permutation de mots de l'OFB.</td>
-          </tr>
-          <tr>
-            <td>AES-128 et AES-256</td>
-            <td><span class="chip c-done">ÉCRIT ICI</span></td>
-            <td>Implémentation de référence, sans dépendance. Validée sur les vecteurs FIPS-197 dans les deux longueurs de clé, plus un vecteur dédié à la dérivation d'IV Sonix.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="cap">Trois tests de régression couvrent cette chaîne : <code>fips197_aes128</code>, <code>fips197_aes256</code> et <code>sonix_iv_derivation</code>.</p>
-
-    <h3>Dérivation de l'IV</h3>
-    <p>Le champ clé de 32 octets ne sert pas tel quel. La séquence est la suivante :</p>
-    <ol>
-      <li>Inverser l'ordre des 32 octets du champ clé.</li>
-      <li>Prendre les octets 0x10 à 0x1F du résultat comme IV brut.</li>
-      <li>XOR de chaque octet de l'IV avec la deviceKey exprimée en gros boutiste, cyclée sur 4 octets.</li>
-      <li>Chiffrer ce bloc en AES-128-ECB avec les octets 0x00 à 0x0F du champ inversé. Le résultat est l'IV réel.</li>
+  <div class="panel on" data-panel="win">
+    <a class="get" href="https://github.com/infinition/capybara/releases/latest" data-asset="windows-x64.zip">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 12l5 5 5-5M4 20h16"/></svg>
+      <span><span data-t="get.win">Download for Windows</span><span class="file" data-file>capybara · zip · 64 bits</span></span>
+    </a>
+    <ol class="steps">
+      <li data-t="step.win_unzip">Unzip it wherever you like. Nothing is installed.</li>
+      <li data-t="step.win_run">Run capybara.exe. Windows may warn that the publisher is unknown: the executable is not signed with a commercial certificate.<code>capybara.exe</code>. Windows peut prévenir que l'éditeur est inconnu : l'exécutable n'est pas signé par un certificat commercial.</li>
     </ol>
-    <pre><code>key      = reverse(table[0x28 .. 0x48])       // 32 octets
-iv_brut  = key[0x10 .. 0x20]
-dk       = deviceKey.to_be_bytes()
-iv_brut[i] ^= dk[i % 4]                       // i sur 16 octets
-IV       = AES128_ENC(key[0x00 .. 0x10], iv_brut)</code></pre>
+    <p class="panel-note" data-t="note.win">64-bit Windows. Your games go in %APPDATA%\Capybara\data, never next to the program.<code>%APPDATA%\Capybara\data</code>, jamais à côté du programme.</p>
+  </div>
 
-    <h3>Les deux modes</h3>
-    <div class="cards">
-      <div class="card">
-        <div class="k">Tables V3</div>
-        <h4>CBC inversé</h4>
-        <p>Déchiffrement CBC classique, mais chaque bloc de 16 octets est inversé avant et après traitement. La clé est le champ inversé complet, donc AES-256.</p>
-        <p><strong>L'IV est réinitialisé toutes les 0x1000 octets</strong>, la puce n'ayant pas assez de RAM pour traiter les 0x10000 octets d'un coup. C'est ce détail qui fait échouer une tentative naïve de CBC linéaire.</p>
-      </div>
-      <div class="card">
-        <div class="k">Tables antérieures</div>
-        <h4>OFB permuté</h4>
-        <p>Le flux est généré par chiffrements successifs. Les quatre mots de 32 bits de chaque bloc de flux sont consommés en ordre inverse, et chaque mot subit un échange d'octets avant le XOR.</p>
-      </div>
-      <div class="card">
-        <div class="k">Portée</div>
-        <h4>90 % du code reste en clair</h4>
-        <p>Seuls les 64 Ko de <code>user_code</code> sont chiffrés. La région XIP à 0x011000 ne l'est pas. Pour l'analyse statique et l'extraction d'assets, le déchiffrement n'est pas sur le chemin critique.</p>
-      </div>
-    </div>
-
-    <h3>Fourniture de la clé</h3>
-    <p>Trois canaux, dans l'ordre de priorité : le champ <code>Machine::device_key</code>, la variable d'environnement <code>SONIX_DEVICE_KEY</code>, puis un fichier annexe <code>&lt;dump&gt;.bin.key</code> contenant la valeur en hexadécimal. Une fois chargée, la clé est aussi exposée aux fusibles émulés, pour que le firmware puisse la relire lui-même comme sur la puce.</p>
-
-    <div class="note">
-      <p><strong>La seule dépendance qui reste n'est pas logicielle.</strong> La deviceKey est gravée dans les fusibles FEUSE2 et FEUSE3, elle ne figure nulle part dans les 16 Mo du dump et ne peut pas s'en déduire. Il faut la lire en SWD sur l'appareil. Aucun outil ne remplace ça, et c'est aussi pourquoi un dump partagé entre utilisateurs reste inerte.</p>
-    </div>
-
-    <pre><code># dossier ou variable, au choix
-set SONIX_DEVICE_KEY=xxxxxxxx
-cargo run --example boot_probe -- dump.bin xxxxxxxx 2000000</code></pre>
-  </section>
-
-  <!-- ===== BOOT ===== -->
-  <section id="boot">
-    <div class="sec-head"><span class="sec-code">BOOT</span><h2>Chaîne de démarrage</h2></div>
-    <p class="sec-intro">Le statut donné est celui de l'émulateur. Depuis la première révision, trois étapes sur cinq sont passées d'absentes à implémentées.</p>
-
-    <div class="chain">
-      <div class="step">
-        <div class="step-n">ÉTAPE 1</div>
-        <h4>Reset vector</h4>
-        <span class="addr">0x08000000</span>
-        <p>Le cœur lit SP et PC dans la table de vecteurs de la Boot ROM.</p>
-        <span class="chip c-done">Implémenté</span>
-      </div>
-      <div class="step">
-        <div class="step-n">ÉTAPE 2</div>
-        <h4>Segment masqué</h4>
-        <span class="addr">0x08008000</span>
-        <p>Saut immédiat dans la partie cachée, puis armement du masquage avant activation du SWD.</p>
-        <span class="chip c-p1">Partiel</span>
-      </div>
-      <div class="step">
-        <div class="step-n">ÉTAPE 3</div>
-        <h4>Lecture de la load table</h4>
-        <span class="addr">Flash 0x000000</span>
-        <p>Balayage multi-offsets, décodage des champs, évaluation des drapeaux de chiffrement.</p>
-        <span class="chip c-done">Implémenté</span>
-      </div>
-      <div class="step">
-        <div class="step-n">ÉTAPE 4</div>
-        <h4>Déchiffrement vers PRAM</h4>
-        <span class="addr">Flash 0x001000 → 0x00000000</span>
-        <p>64 Ko déchiffrés puis recopiés en PRAM. Le vecteur de reset du firmware s'y trouve.</p>
-        <span class="chip c-done">Implémenté</span>
-      </div>
-      <div class="step">
-        <div class="step-n">ÉTAPE 5</div>
-        <h4>Exécution</h4>
-        <span class="addr">PRAM, puis XIP</span>
-        <p>Le CPU démarre sur le vecteur réel. Le firmware configure la PLL, attend le verrouillage, puis progresse.</p>
-        <span class="chip c-p1">En cours</span>
-      </div>
-    </div>
-
-    <h3>Point d'entrée réel, vérifié</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Valeur</th><th class="hex">Contenu</th><th>Vérification</th></tr></thead>
-        <tbody>
-          <tr><td>SP initial</td><td class="hex">0x1801EE38</td><td>Tombe bien dans la SRAM AHB, 0x18000000 à 0x1801FFFF. Cohérence croisée avec le datasheet</td></tr>
-          <tr><td>PC initial</td><td class="hex">0x000002F5</td><td>PRAM, bit Thumb armé</td></tr>
-          <tr><td>Vecteur MemManage</td><td class="hex">0x00000321</td><td>PRAM +0x10</td></tr>
-          <tr><td>Vecteur BusFault</td><td class="hex">0x00000323</td><td>PRAM +0x14</td></tr>
-          <tr><td>Vecteur UsageFault</td><td class="hex">0x00000325</td><td>PRAM +0x18</td></tr>
-          <tr><td>Premier demi-mot XIP</td><td class="hex">0xB082</td><td>Flash 0x11000, prologue Thumb, confirme que la région n'est pas chiffrée</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="cap">Ces constantes sont figées dans <code>tests/emulator_tests.rs</code>, dans deux tests qui se désactivent d'eux-mêmes si le dump n'est pas présent.</p>
-
-    <div class="note win">
-      <p><strong>Le blocage PLL, et sa cause réelle.</strong> Le firmware écrivait la séquence de déverrouillage puis bouclait sans fin sur l'attente du bit de statut. Deux causes distinctes se cumulaient : aucun modèle derrière SN_SYS0 pour faire monter le bit, et une erreur de décodage CBZ/CBNZ qui décalait toutes les cibles de branchement de 2 octets. La seconde était la plus insidieuse : le PC architectural ARM vaut adresse + 4, alors que <code>step()</code> n'avait avancé que de 2. Les deux sont corrigées, la boucle passe.</p>
-    </div>
-
-    <h3>Le blocage suivant, à 0xB950</h3>
-    <p>Le firmware s'arrêtait ensuite dans une boucle serrée autour de <code>0x0000B950</code> en PRAM. Cause trouvée, et elle est instructive : <code>TBB</code>, la table de saut que GCC émet pour les <code>switch</code>, était avalée par le décodeur d'accès multiples.</p>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Élément</th><th>Détail</th></tr></thead>
-        <tbody>
-          <tr><td>Encodage en cause</td><td class="hex">0xE8DF</td></tr>
-          <tr><td>Condition fautive</td><td><code>(w1 &amp; 0xFE40) == 0xE840</code>, or <code>0xE8DF &amp; 0xFE40 == 0xE840</code></td></tr>
-          <tr><td>Effet</td><td>Un LDMIA fantôme lisait les octets de la table de saut et les injectait dans r0, SP, LR et PC</td></tr>
-          <tr><td>Discriminant</td><td>Le bit 6 vaut toujours 0 pour LDM et STM. Il vaut 1 pour TBB et TBH</td></tr>
-          <tr><td>Correctif</td><td>Condition resserrée à <code>== 0xE800</code>, plus un décodage TBB / TBH réel : cible = PC + 2 × table[base + Rm], demi-mot et <code>Rm &lt;&lt; 1</code> en variante TBH</td></tr>
-          <tr><td>Régression</td><td><code>tbb_et_tbh_branchent_via_la_table</code>, les deux variantes couvertes</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <p>Le dispatch passe désormais, et le PC atterrit sur <code>0x0000B958</code>, la branche correspondant à <code>dispatch(5)</code>, qui est le bon cas.</p>
-
-    <div class="note">
-      <p><strong>Frontière actuelle : la mailbox.</strong> Le firmware lit un pointeur en <code>0x20000F60</code>, soit la mailbox à l'offset +0xF60, tout en haut de la page de 4 Ko. La lecture renvoie zéro, donc un pointeur nul, et le code attend. C'est cohérent avec un bicœur : cette zone est vraisemblablement peuplée par le second cœur, ou par le bootrom avant qu'il ne rende la main. Le second cœur, relégué en dernière phase par la révision 2, remonte donc dans la file.</p>
-      <p class="cap" style="margin-top:10px">Observation issue d'une exécution de <code>boot_probe</code> sur le dump réel, rapportée depuis la session de développement. Non revérifiée pour ce dossier.</p>
-    </div>
-
-    <div class="note win">
-      <p><strong>Suite, et fin de la chaîne.</strong> Le diagnostic mailbox ci-dessus était une fausse piste : la lecture en <code>0x20000F60</code> était un contrôle de cohérence, et si elle échouait c'est que <code>LDR.W</code> ne ramenait que seize bits. Une fois ce défaut corrigé, puis le <code>CMP</code> registre, les blocs IT et l'adressage post-indexé, la chaîne se déroule entière : le firmware bascule en XIP, initialise ses périphériques, atteint sa boucle de jeu et affiche.</p>
-      <p>Les cinq étapes sont franchies. Le verrou réel du démarrage n'était d'ailleurs aucune d'elles, mais l'identification de la Flash en <code>0x40022018</code> : sans la bonne paire fabricant et composant, le firmware entre dans une boucle sans sortie en imprimant <code>unsupport chip, please check your flash vender</code>.</p>
-    </div>
-  </section>
-
-  <!-- ===== COEUR ===== -->
-  <section id="coeur">
-    <div class="sec-head"><span class="sec-code">CPU</span><h2>Défauts de cœur</h2></div>
-    <p class="sec-intro">Seize défauts de décodage ARMv7-M, tous trouvés en faisant tourner du vrai code. Si vous écrivez un interpréteur Thumb-2, c'est la section à lire : aucun de ces pièges ne se voit sur du code de test écrit à la main.</p>
-
-    <div class="note warn">
-      <p><strong>Ce que ça m'a coûté.</strong> Mes pires bugs étaient dans le cœur, pas dans les périphériques. Un décodeur faux ne plante pas, il produit un état plausible et faux, et l'enquête part sur un périphérique innocent. J'ai écrit plusieurs modèles matériels pour compenser un défaut de cœur, avant de les jeter.</p>
-    </div>
-
-    <h3>Collisions de masques</h3>
-    <p>Quand deux encodages tombent dans la même condition, le premier testé gagne, et le second s'exécute en silence comme autre chose.</p>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Encodage</th><th>Décodé comme</th><th>Conséquence</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">0xE8DF <span class="chip c-neutral">TBB / TBH</span></td><td>LDMIA</td><td>Le LDM fantôme lisait les octets de la table de saut et les injectait dans r0, SP, LR et PC. Le bit 6 est le discriminant : toujours 0 pour LDM et STM, 1 pour TBB</td></tr>
-          <tr><td class="hex">0xF0xx <span class="chip c-neutral">B&lt;cond&gt;.W</span></td><td>ORR immédiat</td><td>Les branchements conditionnels longs tombaient dans le décodeur ALU. Discriminant : w2[15] vaut 1 pour un branchement, 0 pour l'ALU</td></tr>
-          <tr><td class="hex">0xE92D <span class="chip c-neutral">STMDB</span></td><td>STMIA</td><td><code>PUSH.W</code> écrivait au-dessus de SP au lieu d'en dessous. Les bits 8:7 séparent les modes, 01 pour IA et 10 pour DB</td></tr>
-          <tr><td class="hex">0xEA4F <span class="chip c-neutral">MOV.W rd, rm</span></td><td>SUB</td><td>Le champ d'opération de la forme registre était lu sur 3 bits, dans l'ordre du jeu ARM 32 bits. Thumb-2 le code sur 4 bits, comme la forme immédiat</td></tr>
-          <tr><td class="hex">0xF38x <span class="chip c-neutral">MSR</span></td><td>rien</td><td>Le test attrapait la plage MRS et inversait les deux sens. <code>MSR PRIMASK, r0</code> n'était pas décodé du tout</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h3>Champs mal extraits</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Instruction</th><th>Défaut</th><th>Conséquence</th></tr></thead>
-        <tbody>
-          <tr><td><code>LDR.W</code> / <code>STR.W</code></td><td>Largeur lue en w1[8:7] au lieu de w1[6:5]</td><td>Un <code>LDR.W</code> ne ramenait que 16 bits. C'est ce qui faisait échouer l'autotest de démarrage : un pointeur tronqué à sa moitié basse</td></tr>
-          <tr><td><code>LDR</code> / <code>STR</code> indexés</td><td>Bits P, U et W ignorés</td><td>L'accès se faisait à la mauvaise adresse et la base n'était jamais mise à jour. Toute boucle de recopie relisait le même octet indéfiniment</td></tr>
-          <tr><td><code>TBB</code></td><td>Rn lu dans le second demi-mot</td><td>Ne marchait que par accident, pour la forme PC-relative</td></tr>
-          <tr><td><code>ThumbExpandImm</code></td><td>Décalage au lieu de réplication</td><td>Quand <code>imm12[11:10]</code> vaut 00, l'octet se réplique selon quatre motifs, il ne se décale pas. <code>0xFFFFFFFF</code> valait <code>0xFF000000</code>, donc tout <code>CMP.W rX, #-1</code> rendait un verdict faux, ce qui cassait le décodeur de sprites</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h3>Sémantique manquante</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Manque</th><th>Conséquence</th></tr></thead>
-        <tbody>
-          <tr><td><strong>Table ALU 16 bits incomplète</strong><br>CMP, CMN, ADC, SBC, RSB, LSR, ASR et ROR tombaient dans la branche par défaut</td><td>CMP registre ne posait aucun drapeau. Tous les <code>BEQ</code> et <code>BNE</code> qui la suivent partaient dans la mauvaise branche. C'est le défaut qui bloquait l'autotest, après la correction du <code>LDR.W</code></td></tr>
-          <tr><td><strong>Drapeaux C et V jamais posés par l'ALU 32 bits</strong><br>Le suffixe S n'appelait que la mise à jour de N et Z</td><td>Toute arithmétique multi-précision fausse, et tout <code>BCS</code>, <code>BCC</code>, <code>BHI</code>, <code>BLS</code>, <code>BVS</code> après une opération 32 bits branchait au hasard</td></tr>
-          <tr><td><strong>Blocs IT absents</strong></td><td>L'instruction conditionnelle s'exécutait toujours. Un <code>IT NE</code> suivi d'un <code>SUB</code> corrompait la cible d'un <code>BX</code> et envoyait le cœur dans une table de chaînes de caractères</td></tr>
-          <tr><td><strong>ITSTATE non vidé à l'entrée en exception</strong></td><td>Plus subtil, et découvert plus tard. Une interruption tombant entre un <code>IT</code> et son instruction conditionnelle faisait sauter la première instruction du gestionnaire, donc son <code>PUSH</code> d'adresse de retour, et le cœur restait en mode Handler pour toujours. L'état voyage maintenant dans le xPSR empilé, aux places de l'architecture</td></tr>
-          <tr><td><strong>Bit de pouce laissé dans R15</strong><br><code>set_reg</code> écrivait la valeur telle quelle</td><td>PC impair, donc lecture d'instruction décalée d'un octet, donc du code qui se lit encore mais ne veut plus rien dire. L'écran de code secret restait noir, sur une instruction non décodée en <code>0x10015741</code>, adresse impaire qui trahit le défaut à elle seule ; et les adresses de retour des instantanés plantés tombaient à un octet de l'instruction réelle, par exemple <code>0x1006DF3E</code> là où le mot commence en <code>0x1006DF3C</code></td></tr>
-          <tr><td><strong><code>BLX</code> registre plaçait LR deux octets trop loin</strong></td><td>Chaque retour d'appel sautait une instruction. Ici, le chargement du pointeur de <code>main</code>, d'où un saut à l'adresse nulle</td></tr>
-          <tr><td><strong><code>CBZ</code> et <code>CBNZ</code> décalés de deux octets</strong></td><td>Le PC architectural vaut adresse + 4 alors que le pas n'avance que de 2. Toutes les cibles étaient décalées, ce qui bloquait les boucles d'attente de verrouillage PLL</td></tr>
-          <tr><td><strong><code>MUL</code> 16 bits sans arithmétique enveloppante</strong></td><td>Panique du processus en build de mise au point au premier dépassement</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="note">
-      <p><strong>Le correctif qui rend tous les autres trouvables.</strong> Faire remonter <code>Undefined</code> sur tout encodage non reconnu, au lieu de l'exécuter comme un NOP. Sans ça, un décodeur incomplet ment silencieusement et chaque enquête part sur une fausse piste. C'est une ligne, et c'est ce qui a permis d'enchaîner les corrections ci-dessus en une seule séance.</p>
-    </div>
-
-    <p>Chaque défaut porte son test de régression dans <code>tests/emulator_tests.rs</code>. Ils sont écrits avec les encodages réels, pas avec ceux que produisait le décodeur fautif : un test rédigé d'après le bug valide le bug.</p>
-  </section>
-
-  <!-- ===== JEU ===== -->
-  <section id="jeu">
-    <div class="sec-head"><span class="sec-code">JEU</span><h2>Temps et veille</h2></div>
-    <p class="sec-intro">Un Tamagotchi est d'abord une horloge. Tant que le temps ne coulait pas, l'œuf n'éclosait pas et les jauges ne descendaient pas, alors que tout le reste marchait déjà.</p>
-
-    <h3>Le calendrier n'est pas compté en logiciel</h3>
-    <p>Le firmware lit un compteur de secondes matériel en <code>0x45000304</code>, dans la zone SN_SYS0. Sa couche date n'est qu'un chargement de ce mot, et le calendrier s'en déduit :</p>
-    <pre><code>secondes = [0x45000304] + [0x18000BAC]   decalage pose au reglage de l'heure
-jours    = secondes / 86400
-jour du calendrier = [0x18000BA8] + jours
-heure = (secondes / 3600) % 24, minute = (secondes / 60) % 60</code></pre>
-    <p>Le compteur est libre : le firmware ne l'écrit jamais, il ne fait qu'ajouter son décalage. Il avance maintenant d'une seconde toutes les 96 millions de cycles, la cadence que le firmware programme lui-même dans son SysTick.</p>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Adresse</th><th>Contenu</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">0x18001BA4</td><td>Calendrier affiché, six demi-mots : année, mois, jour, heure, minute, seconde</td></tr>
-          <tr><td class="hex">0x18000BB8</td><td>Le même, dans le bloc de sauvegarde</td></tr>
-          <tr><td class="hex">0x18000BA8 / 0x18000BAC</td><td>Jour de base, et décalage en secondes</td></tr>
-          <tr><td class="hex">0x18001BF4 / 0x18001BF8</td><td>Scène courante, et la précédente</td></tr>
-          <tr><td class="hex">0x18001BFE</td><td>Compteur d'inactivité, seuil 200, cadence de trame</td></tr>
-          <tr><td class="hex">0x1801C2C4</td><td>Millisecondes, entretenues par le SysTick</td></tr>
-          <tr><td class="hex">0x1801C2C0</td><td>Trames, entretenues par le signal TE</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h3>Deux veilles, sans rapport l'une avec l'autre</h3>
-    <div class="cards">
-      <div class="card">
-        <div class="k">0x000022B8</div>
-        <h4>Veille légère</h4>
-        <p>Pose un bit dans <code>0x45000300</code>, exécute un <code>WFI</code>, et revient. C'est celle de l'affichage de l'heure, une dizaine de secondes après le dernier appui.</p>
-      </div>
-      <div class="card">
-        <div class="k">0x000023D0</div>
-        <h4>Veille profonde</h4>
-        <p>Atteinte une trentaine de secondes après. Demande la mise hors tension du cœur, exécute un <code>WFI</code>, efface toutes les interruptions en attente et se rebranche sur elle-même. <strong>Aucune sortie logicielle n'existe</strong> : le saut est inconditionnel et les deux interruptions restées autorisées reviennent dans la boucle.</p>
-      </div>
-      <div class="card">
-        <div class="k">Conséquence</div>
-        <h4>Le réveil vient du matériel</h4>
-        <p>Il remet le cœur à zéro. La mémoire vive est effacée, mais la sauvegarde est en Flash et le compteur de secondes continue de tourner : la partie et l'heure reprennent. Encore faut-il que le firmware sache <em>pourquoi</em> il se rallume, sans quoi il conclut à une pile neuve. C'est tout l'objet du témoin d'armement, ci-dessous.</p>
-      </div>
-    </div>
-
-    <h3>Le réveil matériel, registre par registre</h3>
-    <p>La boucle de veille profonde n'a pas de sortie, mais le firmware ne s'endort
-      jamais sans avoir posé son réveil. La séquence est complète et chaque adresse
-      est vérifiable.</p>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th class="hex">Adresse</th><th>Rôle</th></tr></thead>
-        <tbody>
-          <tr><td class="hex">0x10024174</td><td>Programme l'échéance du prochain réveil : le compteur plus deux secondes, ou la prochaine échéance de jeu si elle tombe avant</td></tr>
-          <tr><td class="hex">0x00002196</td><td>Écrit <code>échéance moins un</code> dans le comparateur <code>0x45000230</code></td></tr>
-          <tr><td class="hex">0x00002468</td><td>Pose le témoin d'armement, bit 8 du statut <code>0x45000234</code></td></tr>
-          <tr><td class="hex">0x00002352</td><td>Désactive toutes les interruptions une par une, sauf les numéros 2 et 3</td></tr>
-          <tr><td class="hex">0x00005CAC</td><td>Au réveil, exige que le compteur ait <strong>dépassé</strong> le comparateur, pas seulement atteint</td></tr>
-          <tr><td class="hex">0x00005CC2</td><td>Exige de trouver le témoin d'armement <strong>effacé</strong> : c'est le matériel qui le baisse en sonnant</td></tr>
-          <tr><td class="hex">0x00005CD2</td><td>Vérifie les deux bits de sonnerie, 9 et 11 du même statut</td></tr>
-          <tr><td class="hex">0x00005CE4</td><td>Les efface</td></tr>
-          <tr><td class="hex">0x00005CEA</td><td>Pose le drapeau de reprise, bit 28 de <code>0x20000F10</code></td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>Deux détails ont coûté chacun une demi-journée. L'échéance est écrite
-      diminuée de un et comparée en strict : sonner pile sur la valeur du
-      comparateur ne réveille rien. Et le témoin d'armement doit retomber, faute de
-      quoi le firmware conclut à une pile neuve et repasse par l'écran continuer ou
-      effacer, puis par le réglage de l'heure. Les deux corrigés, la reprise est
-      directe et muette : scène 0, puis 101, puis 28, puis 29, à l'heure juste.</p>
-    <p class="cap">L'appui sur un bouton emprunte la même porte, en ramenant
-      l'échéance à l'instant. Le témoin propre à la broche de réveil n'a pas été
-      identifié, mais le firmware n'a qu'un seul chemin de reprise après veille
-      profonde, et il y recalcule la date depuis le compteur : rien n'y est faussé.</p>
-
-    <h3>Les quatre niveaux de zoom</h3>
-    <p>La molette portée par l'antenne droite sert à zoomer. Les quatre vues correspondent exactement aux scènes observées dans la mémoire du firmware.</p>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Vue</th><th class="hex">Scène</th><th>Fonctions</th></tr></thead>
-        <tbody>
-          <tr><td>Space</td><td class="hex">29</td><td>Horloge, connexion, Tama Stars, déco, voyage, niveau de planète</td></tr>
-          <tr><td>Field</td><td class="hex">30</td><td>Poser des jouets, chasse aux œufs, nettoyer, changer de champ</td></tr>
-          <tr><td>Cell</td><td class="hex">32</td><td>Statut, espèce, et le QR code secret</td></tr>
-          <tr><td>Tama</td><td class="hex">33</td><td>Nourrir, jouer, laver</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="cap">Six coques sorties entre juillet 2025 et juillet 2026 : Pink Land, Blue Water et Purple Sky, puis Jade Forest, puis Orange Tropics et White Glacier. Rien dans l'image ne nomme l'édition : la table de biomes en <code>0x978E8</code> contient LAND, WATER et SKY dans les cinq dumps. Fait notable, la deviceKey s'est révélée commune aux éditions testées : ce n'est donc pas un secret par exemplaire, mais une constante de modèle. Sa valeur n'est pas reproduite ici.</p>
-  </section>
-
-  <!-- ===== SON ===== -->
-  <section id="son">
-    <div class="sec-head"><span class="sec-code">SON</span><h2>Le son</h2></div>
-    <p class="sec-intro">La console compose bien ses mélodies. Ce que je ne sais toujours pas, c'est par où elle les fait sortir.</p>
-
-    <div class="cards">
-      <div class="card">
-        <div class="k">Moteur</div>
-        <h4>Cadencé à 125 Hz</h4>
-        <p>Par le SysTick, via <code>0x10079398</code>. Le banc compte 87 sons. <code>jouer_son</code>, en <code>0x1001FCB4</code>, prend un identifiant et un volume, charge la mélodie depuis la table de pointeurs en <code>0x10087210 + id × 4</code>.</p>
-      </div>
-      <div class="card">
-        <div class="k">0x1801C820</div>
-        <h4>Tableau des voix</h4>
-        <p>Huit entrées de 0x34 octets. Horloge du cœur en tête, <code>0x05B8D800</code> soit 96 MHz, fréquence en +4, témoin d'activité en +8, volume en +0xC.</p>
-        <p>Le tableau garde ses valeurs une fois le son fini : seul le drapeau <code>0x18014284</code> dit ce qui sonne vraiment.</p>
-      </div>
-      <div class="card">
-        <div class="k">Relevé réel</div>
-        <h4>Une mélodie</h4>
-        <p>568 Hz, puis 1516, 955 et 758, sur environ cent cinquante millisecondes. Ce sont les notes que la console a composées, pas une approximation.</p>
-      </div>
-    </div>
-
-    <div class="note warn">
-      <p><strong>Le périphérique de sortie n'est pas atteint.</strong> Mesure faite en filtrant la trace par intervalle de PC : pendant qu'une note joue, aucun accès matériel ne vient du module audio, aucune page de PWM n'est touchée, et le port 1, qui porte le buzzer sur ses broches 11 et 13, n'est jamais écrit. En attendant de trouver par où ça sort, l'interface lit les fréquences déjà calculées dans les voix et les rend en signal carré, ce qu'est un buzzer. Le son entendu est bien celui de la console, mais le chemin matériel reste inconnu.</p>
-    </div>
-
-    <h3>Une fausse piste datée : l'octave</h3>
-    <p>Les fréquences lues, 568 à 1516 Hz, semblaient graves pour un piézo, dont le
-      rendement culmine entre deux et quatre kilohertz ; doublées, l'intervalle y
-      tombait exactement. Le facteur deux a donc été pris par défaut. Il était faux :
-      comparé à la console posée à côté, le son sonnait une octave trop haut. Le
-      champ de la voix donne bien des hertz. Le raisonnement était juste sur la
-      physique du transducteur et faux sur ce que mesure le firmware, qui n'a aucune
-      raison d'accorder ses notes sur le rendement de son buzzer.</p>
-
-    <h3>Trois pièges de mesure</h3>
-    <ul>
-      <li><strong>Le tableau des voix reste rempli au silence.</strong> Le lire sans vérifier le drapeau <code>0x18014284</code> et le témoin +8 donne un bourdonnement permanent.</li>
-      <li><strong>Échantillonner à la cadence de l'interface met la mélodie à l'envers.</strong> Cent cinquante millisecondes et plusieurs changements de note : un relevé par image n'en attrape que des morceaux, dans un ordre arbitraire. Il faut la suivre dans la boucle d'émulation.</li>
-      <li><strong>Une fenêtre de mesure courte conclut à tort au silence.</strong> La console ne sonne que sur des événements de jeu, jamais sur la navigation. Une première mesure sur quatre cents millions de pas avait conclu que rien ne jouait.</li>
-    </ul>
-  </section>
-
-  <!-- ===== ETAT ===== -->
-  <section id="etat">
-    <div class="sec-head"><span class="sec-code">ETAT</span><h2>Sauvegardes persistantes</h2></div>
-    <p class="sec-intro">À ne pas confondre avec les instantanés. Un instantané fige toute la machine pour revenir en arrière pendant la mise au point. Une sauvegarde ne retient que ce que la console garde vraiment, et elle survit à l'extinction de l'ordinateur.</p>
-
-    <p>Elles vivent dans <code>sauvegardes/&lt;empreinte du dump&gt;/&lt;emplacement&gt;.tamasave</code>. L'empreinte mêle le nom du fichier et une somme FNV-1a de son contenu : les cinq éditions ne se mélangent pas, et deux copies renommées du même dump se retrouvent.</p>
-
-    <div class="note win">
-      <p><strong>Un Tamagotchi rangé vieillit.</strong> Le fichier porte les pages de Flash écrites par le jeu, mais aussi l'horloge : le compteur de secondes, tous les registres de la zone système, et la date d'écriture. Au chargement, le compteur repart à sa valeur enregistrée augmentée du temps réellement passé, mesuré à l'horloge de l'ordinateur.</p>
-      <p>La zone SN_SYS0 est alimentée en permanence sur la puce et garde son contenu cœur éteint. La restituer entière permet au firmware de retrouver la trace de son réveil : ranger la console revient à l'endormir, et la relance ressemble à une sortie de veille. Sans cela, le démarrage repassait par l'écran continuer ou effacer puis par le réglage de l'heure.</p>
-    </div>
-
-    <h3>Comment le firmware relit sa sauvegarde</h3>
-    <p>Deux pages de 4 Ko, en <code>0xEFE000</code> et <code>0xEFF000</code>, lues à
-      travers la fenêtre mappée en <code>0x60EFE000</code>. La vérification, en
-      <code>0x0000B574</code>, alloue un tampon de 4 Ko, lit la page, calcule sa
-      somme de contrôle sur ses <code>0xFFC</code> octets utiles et la compare à
-      l'en-tête, qui porte la somme puis son complément. Si elle est valide, la même
-      fonction recopie la page dans <code>0x18000BA0</code> : c'est là, et nulle part
-      ailleurs, que la partie entre en mémoire.</p>
-    <p>Le gestionnaire de démarrage, en <code>0x00009026</code>, initialise d'abord
-      une sauvegarde neuve, puis vérifie les deux pages et répare celle qui est
-      mauvaise. La sauvegarde forcée, en <code>0x00009078</code>, compare la somme de
-      l'état courant à celle des deux pages et n'écrit que si elles diffèrent, ou si
-      l'appelant l'impose. Toute écriture passe par un tampon de page de 4 Ko, en
-      <code>0x0000B586</code> pour la vérification et <code>0x0000B826</code> pour
-      l'écriture : c'est cette demande de 4 Ko qui butte sur le tas plein.</p>
-    <div class="cards">
-      <div class="card">
-        <div class="k">Piège corrigé</div>
-        <h4>La restauration perdait la Flash</h4>
-        <p>La restauration d'instantané ne parcourait que les pages de Flash déjà
-          salies par la machine courante. Une machine fraîchement chargée n'en a
-          aucune : les pages de l'instantané étaient donc purement ignorées, la
-          sauvegarde perdue à chaque chargement, et le firmware relisait celle du
-          dump d'origine. D'où un rallumage qui repartait sur l'écran de choix de
-          langue alors que la partie existait. Il parcourt maintenant l'union des
-          deux ensembles.</p>
-      </div>
-    </div>
-
-    <h3>Le tas, et pourquoi un vieil instantané fige la console</h3>
-    <p>Le tas fait 32 Ko, posé en dur par <code>heap_init(0x18005D70, 0x8000)</code>. L'allocateur ne tient pas de liste de blocs libres : il parcourt les blocs alloués et cherche un trou assez grand, et saute à l'assertion de <code>0x1005B4AC</code>, qui boucle sur place, quand il n'en trouve pas.</p>
-    <p>Toute sauvegarde demande un tampon de page de 4 Ko. La scène de jeu occupe environ 30,9 Ko du tas. Reprendre un vieil instantané pris en scène de jeu avec une sauvegarde en attente mène donc à l'assertion. Ce n'est pas un défaut du modèle, mais un instantané pris dans un état que la console n'atteint pas d'elle-même. On le reconnaît tout de suite : la sonde de temps montre 97 % du temps passé en <code>0x1005B4C4</code>.</p>
-
-    <h3>La chaîne de la mesure de pile</h3>
-    <p>Elle sert de modèle méthodologique pour les prochaines enquêtes : partir de la comparaison, remonter à la lecture, puis à l'écriture, puis à l'accumulation, puis au gestionnaire d'interruption.</p>
-    <pre><code>0x10003754  compare la tension au seuil 0x23332
-0x10003830  la lit dans le mot 0x18005C68
-0x1000397E  l'y ecrit, a partir des echantillons accumules
-0x10003924  n'accumule que si le gestionnaire a pose son drapeau
-0x10078774  gestionnaire de l'IRQ 9, extrait par UBFX #6, #10</code></pre>
-    <p>Sans tension, le firmware pose un bit dans l'état sauvegardé, imprime <code>** LOW BATTERY FLAG DETECTED **</code> et s'éteint. Les dumps Earth et Land portent déjà ce drapeau.</p>
-  </section>
-
-  <!-- ===== VITESSE ===== -->
-  <section id="vitesse">
-    <div class="sec-head"><span class="sec-code">PERF</span><h2>Vitesse</h2></div>
-    <p class="sec-intro">Ça a longtemps été le seul défaut qu'on voyait. L'émulation plafonnait à 0,78 fois le temps de la console : la planète de l'écran d'accueil oscillait toutes les deux secondes au lieu d'une, et les mélodies traînaient d'autant. C'est réglé depuis le 28 août 2026.</p>
-
-    <p>Une seconde de console vaut 96 millions de cycles, ce que le firmware déclare en armant son SysTick à 95999 pour une milliseconde. L'interface est gouvernée : elle n'accorde à la console que le temps qui lui revient. Tant que la mesure restait sous 1, ce gouverneur ne servait à rien et les réglages au-dessus de « temps réel » ne changeaient rien, la machine donnait déjà tout. Maintenant qu'elle dépasse, il fait son travail.</p>
-
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Boucle</th><th>Cycles par seconde</th><th>Fois le temps réel</th></tr></thead>
-        <tbody>
-          <tr><td><code>step</code>, le cœur seul</td><td class="hex">134 M</td><td>1,40</td></tr>
-          <tr><td><code>run_frame</code>, ce que l'interface appelle</td><td class="hex">131 M</td><td>1,37</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="cap">Water, état 111, meilleure de quatre passes. L'horloge de la console avance de 8 secondes en 5 secondes réelles. La dispersion entre passes est de trois centièmes.</p>
-
-    <h3>Ce qui a payé</h3>
-    <p>Huit changements, de 0,36 à 1,40. Aucun n'a été gros, et aucun ne se devinait sans mesure.</p>
-    <ul>
-      <li><strong>Périphériques entretenus par paquets de 256 cycles</strong> au lieu de chaque instruction. C'était sept appels par pas, dont une division 64 bits pour le signal de trame. 256 cycles valent moins de trois microsecondes, cent fois plus fin que la plus courte échéance du firmware.</li>
-      <li><strong>Recherche d'interruption conditionnée à un drapeau.</strong> Elle parcourait huit mots avant chaque instruction, alors qu'il n'y a presque jamais rien à prendre.</li>
-      <li><strong>Optimisation entre modules activée</strong>, en une seule unité de génération. Le cœur passe son temps dans une poignée de fonctions appelées des millions de fois par seconde.</li>
-      <li><strong>Chemins rapides en 32 bits pour la mémoire vive.</strong> En 16 bits ils n'avaient rien donné, en 32 si.</li>
-      <li><strong>Les deux demi-mots d'une instruction en une seule résolution de région</strong>, au lieu de deux traversées de la carte mémoire.</li>
-      <li><strong>Les instructions longues aiguillées sur l'octet haut</strong>, ce qui coupe la chaîne de tests en deux dès le premier examen.</li>
-      <li><strong>La table de points d'arrêt sortie du chemin chaud.</strong> C'est une table de hachage, et <code>run_frame</code> l'interrogeait à chaque instruction : un hachage complet par pas, plus cher que le décodage lui-même, et pour rien la quasi-totalité du temps.</li>
-      <li><strong><code>reveil_materiel</code> précédé du test de son drapeau.</strong> Il sert une fois par mise en veille et était appelé des millions de fois par seconde.</li>
-    </ul>
-
-    <div class="note">
-      <p><strong>Les deux derniers ont mis des mois à se voir, et pour une raison bête.</strong> La sonde de vitesse mesurait <code>step</code>. L'interface, elle, appelle <code>run_frame</code>. Les deux freins étaient dans <code>run_frame</code>, donc invisibles à l'instrument. La sonde donne les deux boucles maintenant. J'ai passé des mois à optimiser en regardant la mauvaise.</p>
-    </div>
-
-    <h3>Ce qui n'a rien donné, pour ne pas le refaire</h3>
-    <p>Les chemins rapides en mémoire vive 16 bits, la recopie de trame en bloc, <code>target-cpu</code> adapté à la machine, et remonter les instructions les plus fréquentes en tête de la chaîne de décodage. Tous essayés, tous mesurés, tous nuls ou dans le bruit.</p>
-
-    <p>S'il fallait plus de marge un jour, pour une cible plus modeste qu'un ordinateur de bureau, restent la table de saut indexée sur les quatre bits de tête plutôt que la chaîne de tests, et le coût du chemin de récupération d'instruction dans la fenêtre XIP.</p>
-  </section>
-
-  <!-- ===== EXTRACTION ===== -->
-  <section id="extraction">
-    <div class="sec-head"><span class="sec-code">EXT</span><h2>Procédures d'extraction</h2></div>
-    <p class="sec-intro">Trois voies, plus une. La A donne la Flash, les B et C la Boot ROM, la D la deviceKey sans laquelle rien ne démarre.</p>
-
-    <h3>A. Dump de la Flash SPI</h3>
-    <ol>
-      <li>Câbler CS (TP24), CLK (TP26), MISO (TP27), MOSI (TP28), GND (TP29) et VCC (TP22) vers un CH341A, un Raspberry Pi ou un FT232H.</li>
-      <li>Laisser TP30 et TP31 flottants, le programmateur parlera en SPI single.</li>
-      <li><strong>Maintenir RST bas</strong> (TP21 ou TP45), sinon le MCU pilote le bus en parallèle et corrompt la lecture.</li>
-      <li>Lire deux fois et comparer. Un dump par clip qui ne se reproduit pas à l'identique est un dump faux.</li>
+  <div class="panel" data-panel="mac">
+    <a class="get" href="https://github.com/infinition/capybara/releases/latest" data-asset="macos-apple-silicon.zip">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 12l5 5 5-5M4 20h16"/></svg>
+      <span><span data-t="get.mac_arm">Download for Apple Silicon Mac</span><span class="file" data-file>capybara · zip · arm64</span></span>
+    </a>
+    <a class="get" href="https://github.com/infinition/capybara/releases/latest" data-asset="macos-intel.zip">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 12l5 5 5-5M4 20h16"/></svg>
+      <span><span data-t="get.mac_intel">Download for Intel Mac</span><span class="file" data-file>capybara · zip · x86_64</span></span>
+    </a>
+    <ol class="steps">
+      <li data-t="step.mac_drag">Open the archive and drag Capybara into Applications.</li>
+      <li><span data-t="step.mac_quarantine">The app is not signed with an Apple certificate, so macOS refuses the first launch. Clear the quarantine flag once:</span>
+        <span class="cmd"><code>xattr -dr com.apple.quarantine /Applications/Capybara.app</code></span>
+      </li>
+      <li data-t="step.mac_open">Open Capybara from Launchpad. macOS asks nothing after that.</li>
     </ol>
-    <pre><code>flashrom -p ch341a_spi -c "MX25L12835F/MX25L12845E/MX25L12865E" -r flash.bin
-sha256sum flash.bin
-# attendu: 16777216 octets, magic de load table en tete</code></pre>
-    <p>Alimenter en 3V3 uniquement. Beaucoup de CH341A du commerce sortent du 5 V sur le bus de données, ce qui détruit la puce.</p>
+    <p class="panel-note" data-t="note.mac">Two native builds, Apple Silicon and Intel. Your games go in ~/Library/Application Support/Capybara.<code>~/Library/Application Support/Capybara</code>.</p>
+  </div>
 
-    <h3>B. Boot ROM par SWD et patch FPB</h3>
-    <p>La ROM masque 0x08008000 à 0x0800BFFF avant activation du SWD. L'exploit utilise l'unité Flash Patch and Breakpoint pour remplacer par un NOP l'instruction qui arme le masquage, puis déclenche un reset watchdog.</p>
-    <ol>
-      <li>Compiler <code>firmware.bin</code> depuis <code>snc7330-hidden-rom</code>.</li>
-      <li>Charger via OpenOCD sur SWDIO (P0.14) et SWCLK (P0.13).</li>
-      <li>Laisser tourner <strong>sans débogueur attaché</strong> le temps du reset.</li>
-      <li>Se reconnecter et lire 0x10000 octets à 0x08000000.</li>
+  <div class="panel" data-panel="linux">
+    <a class="get" href="https://github.com/infinition/capybara/releases/latest" data-asset="linux-x64.AppImage">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 12l5 5 5-5M4 20h16"/></svg>
+      <span><span data-t="get.appimage">Download the AppImage</span><span class="file" data-file>capybara · AppImage · x86_64</span></span>
+    </a>
+    <a class="get" href="https://github.com/infinition/capybara/releases/latest" data-asset="linux-x64.deb">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 12l5 5 5-5M4 20h16"/></svg>
+      <span><span data-t="get.deb">Download the Debian package</span><span class="file" data-file>capybara · deb · amd64</span></span>
+    </a>
+    <ol class="steps">
+      <li><span data-t="step.appimage_exec">For the AppImage, make the file executable and run it:</span>
+        <span class="cmd"><code>chmod +x capybara-*.AppImage &amp;&amp; ./capybara-*.AppImage</code></span>
+      </li>
+      <li><span data-t="step.deb_install">For the Debian package:</span>
+        <span class="cmd"><code>sudo dpkg -i capybara-*.deb</code></span>
+      </li>
     </ol>
+    <p class="panel-note" data-t="note.linux">x86_64. Your games go in ~/.local/share/capybara.<code>~/.local/share/capybara</code>.</p>
+  </div>
 
-    <h3>C. Boot ROM par console UART</h3>
-    <p>Variante sans débogueur, via le bootloader UART qui accepte des lectures et écritures mémoire. Câbler UART0 : TXD sur P0.0, RXD sur TP48. Installer <code>pyserial</code> et <code>xmodem</code>, lancer <code>dump_bootrom.py</code>.</p>
+  <div class="note warn">
+    <p><strong data-t="need.title">You need your own console.</strong></p>
+    <p data-t="need.body">Capybara ships no game data, and never will. You supply a flash dump of your device, 16 MB, and its key, read over SWD and burned into the chip fuses. That is the only honest and lawful way to use it: you emulate the machine you already own. Without them, the application opens and asks for them.</p>
+    <p data-t="need.why">Tamagotchi Paradise is a product still on sale, not an abandoned one. Nothing here replaces buying it, and nothing here lets you play without it: you must physically own a console, open it, and read its own memory. What Capybara gives back is what you already paid for, on a screen that does not run on a coin cell. That is the honest line, and the project holds it even where it makes the software harder to start using.</p>
+  </div>
+</section>
 
-    <h3>D. deviceKey</h3>
-    <p>Lecture directe en SWD, une fois la session établie : mot complet à <code>0x4500003C</code>, ou 16 bits de poids fort à <code>0x45000038</code>. C'est un fusible, il ne figure dans aucun dump de Flash et ne peut pas être déduit du fichier.</p>
-
-    <div class="note warn">
-      <p><strong>Avant toute écriture sur la Flash.</strong> Sauvegardez 0xEFE000 et 0xEFF000 séparément : sauvegarde du personnage et copie de secours. Un reflash complet efface une créature élevée sur plusieurs semaines, sans récupération.</p>
+<section id="quoi">
+  <div class="sec-head"><span class="sec-code">WHAT</span><h2 data-t="what.h2">What it does</h2></div>
+  <div class="cards">
+    <div class="card">
+      <h3 data-t="card.play">Playing</h3>
+      <p data-t="card.play_b">Three buttons and a dial, from keyboard or mouse. Held keys combine, which is how you revive a character. Everything remaps, and the mapping is remembered.</p>
     </div>
-  </section>
-
-  <!-- ===== AUDIT ===== -->
-  <section id="audit">
-    <div class="sec-head"><span class="sec-code">AUD</span><h2>Audit de l'émulateur</h2></div>
-    <p class="sec-intro">Relevé sur 7 567 lignes de Rust, branche <code>feat/real-firmware-boot</code>, commit <code>0acaa7f</code>. Douze constats résolus, huit ouverts, deux nouveaux, un retiré.</p>
-
-    <div class="note win">
-      <p><strong>État à la révision 5.</strong> Le relevé ci-dessous date de la révision 3 et il est conservé intact, parce qu'il documente un moment du projet. Voici ce qu'il en reste aujourd'hui : <strong>tous les constats P0 sont fermés</strong>, ainsi que les P1 sur le framebuffer, le SysTick, l'écran SPI, la RTC et l'ordonnancement des interruptions. Le décodeur signale les encodages inconnus, les drapeaux C et V sont posés, <code>STMDB</code> est séparé de <code>STMIA</code>, <code>LDREX</code> et <code>STREX</code> restent non implémentés mais visibles. Le catalogue complet des corrections de cœur est en section CPU.</p>
-      <p><strong>Reste ouvert :</strong> l'émulation mono-cœur, la molette modélisée en appuis simples au lieu d'un signal à deux phases, et le périphérique de sortie du son, jamais trouvé.</p>
+    <div class="card">
+      <h3 data-t="card.save">Saves</h3>
+      <p data-t="card.save_b">One slot per game, kept per dump. A new game leaves the previous one untouched. The clock keeps running with the window closed, like a real device left in a drawer.</p>
     </div>
-
-    <div class="note warn">
-      <p><strong>Correction de la révision 2.</strong> Le constat NEW-4 sur le framebuffer était faux. J'avais lu <code>display.rs</code> dans la copie d'origine du dépôt, pas dans celle où le travail avance. <code>fb_base_addr</code> y vaut bien <code>0x18008000</code>, corrigé dans <code>c7d6034</code>, et la garde de <code>sync_from_sram</code> passe : offset 0x8000, longueur 0x8000, dans les 128 Ko de SRAM. Le constat est retiré.</p>
+    <div class="card">
+      <h3 data-t="card.rewind">Recovery points</h3>
+      <p data-t="card.rewind_b">The whole machine frozen, core and peripherals included. One point every minute, kept twelve hours, rewinding to the second.</p>
     </div>
-
-    <h3>Résolu depuis la révision 1</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Ancien constat</th><th>Résolution</th></tr></thead>
-        <tbody>
-          <tr><td><span class="chip c-p0">P0</span> Carte MMIO inventée</td><td>Remplacée par la carte du datasheet V1.7. Vingt et une pages nommées, routage par page de 4 Ko, offset relatif propre</td></tr>
-          <tr><td><span class="chip c-p0">P0</span> Aucun bloc AES</td><td><code>emulator/aes.rs</code>, AES-128 et 256 sans dépendance, testés sur FIPS-197</td></tr>
-          <tr><td><span class="chip c-p0">P0</span> Couverture Thumb-2 minimale</td><td>ALU immédiat et registre décalé avec <code>ThumbExpandImm</code>, MUL / MLA / MLS, SDIV / UDIV, UBFX / SBFX / BFI / BFC, CLZ, LDR/STR toutes largeurs et trois modes d'adressage, LDMIA</td></tr>
-          <tr><td><span class="chip c-p1">P1</span> Lecture 32 bits MMIO en quatre accès</td><td><code>read_u32</code> et <code>read_u16</code> font un accès unique sur la plage périphérique. Les FIFO ne sont plus vidées à tort</td></tr>
-          <tr><td><span class="chip c-p1">P1</span> Loader ne suivant pas la séquence de boot</td><td>Réécrit : détection Sonix, parse de table, déchiffrement, copie en PRAM, lecture du vrai vecteur. Retourne un <code>LoadReport</code> factuel</td></tr>
-          <tr><td><span class="chip c-p2">P2</span> Firmware de démonstration fabriqué</td><td>Supprimé. <code>install_idle_state</code> laisse la machine à l'arrêt, écran vide, ce qui est la vérité tant qu'aucun dump n'est chargé</td></tr>
-          <tr><td><span class="chip c-p2">P2</span> Accès hors carte silencieux</td><td>Tracés dans <code>MmioTrace::off_map</code>, avec compteurs et dernière valeur écrite</td></tr>
-          <tr><td><span class="chip c-p0">P0</span> TBB décodé en LDMIA fantôme</td><td>Cause racine du blocage à 0xB950. Condition resserrée sur le bit 6, décodage TBB / TBH réel, test de régression. Voir section BOOT</td></tr>
-          <tr><td><span class="chip c-p1">P1</span> Framebuffer désynchronisé</td><td>Constat erroné de ma part, retiré. <code>fb_base_addr</code> était déjà migré vers <code>0x18008000</code></td></tr>
-          <tr><td><span class="chip c-p0">P0</span> Instruction inconnue en NOP silencieux</td><td>Partiellement. Voir constat NEW-1 ci-dessous</td></tr>
-        </tbody>
-      </table>
+    <div class="card">
+      <h3 data-t="card.skin">Appearance</h3>
+      <p data-t="card.skin_b">The shell takes your own images, with a cut-out mask that replaces the silhouette. Colours, opacity, depth, shadows, layer rotation, button size and spacing.</p>
     </div>
-
-    <div class="note win">
-      <p><strong>Le vrai gain n'est pas dans la liste.</strong> C'est <code>MmioTrace</code>. Trois compteurs séparés, registres non modélisés, tous les registres périphériques, adresses hors carte, plus un classement par fréquence avec le nom du bloc. Combiné à <code>boot_probe</code>, ça transforme la question « quel périphérique implémenter ensuite » en une réponse mesurée au lieu d'une intuition. C'est l'outil qui rend le reste du projet tractable.</p>
+    <div class="card">
+      <h3 data-t="card.uart">Serial link</h3>
+      <p data-t="card.uart_b">The console's UART is modelled, with a bridge to a port on your computer at 460800 baud. That is how a real device receives items.</p>
     </div>
-
-    <h3>Reste ouvert</h3>
-    <div class="legend">
-      <div><span class="chip c-p0">P0</span> Empêche la progression du firmware</div>
-      <div><span class="chip c-p1">P1</span> Bloque une fonctionnalité entière</div>
-      <div><span class="chip c-p2">P2</span> Bug ponctuel</div>
+    <div class="card">
+      <h3 data-t="card.web">Browser view</h3>
+      <p data-t="card.web_b">A local server publishes the screen and accepts the controls. The console can be watched and played from a phone on the same network.</p>
     </div>
+  </div>
+</section>
 
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Sév.</th><th>Constat</th><th class="hex">Emplacement</th><th>Symptôme</th></tr></thead>
-        <tbody>
-          <tr>
-            <td><span class="chip c-p0">P0</span></td>
-            <td><strong>NEW-1. Thumb-2 inconnu toujours exécuté en NOP</strong><br>Le mécanisme <code>Undefined</code> existe et fonctionne : <code>thumb16.rs:219</code> l'émet, <code>Machine::run_frame</code> s'arrête dessus et enregistre un <code>StopReason</code>. Mais le décodeur 32 bits n'en émet jamais, il retombe sur <code>Ok(1)</code>.</td>
-            <td class="hex">thumb32.rs:312</td>
-            <td>C'est précisément là que la couverture est la plus fine. TBB/TBH, LDRD/STRD, LDRSB/LDRSH et les blocs IT passent en silence et faussent l'état sans rien signaler. Correctif d'une ligne, gain de diagnostic maximal.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p0">P0</span></td>
-            <td><strong>NEW-2. Les drapeaux C et V ne sont jamais posés par l'ALU 32 bits</strong><br>Le suffixe S n'appelle que <code>set_nz</code>. <code>set_flag_c</code> existe dans <code>registers.rs</code> mais n'est pas utilisé ici. ADC et SBC lisent le carry sans jamais l'écrire.</td>
-            <td class="hex">thumb32.rs:191, 219</td>
-            <td>Toute arithmétique multi-précision est fausse. Tout <code>BCS</code>, <code>BCC</code>, <code>BHI</code>, <code>BLS</code>, <code>BVS</code> après une opération 32 bits branche au hasard. Sur une comparaison non signée, c'est un faux chemin garanti.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p0">P0</span></td>
-            <td><strong>NEW-3. STMDB décodé comme STMIA</strong><br>Le masque ne distingue toujours pas les bits 8 et 9 qui séparent les modes IA et DB. L'écriture se fait en incrément après, et le writeback sur Rn reste inconditionnel, sans tester le bit W.<br><em>Même bloc de code que le bug TBB, autre collision.</em> J'avais signalé le masque trop large en révision 2, mais sur la mauvaise victime : la collision coûteuse était <code>0xE8DF</code>, pas <code>0xE92D</code>. Celle-ci reste ouverte.</td>
-            <td class="hex">thumb32.rs:298-317</td>
-            <td><code>PUSH.W {r4-r11, lr}</code> écrit <em>au-dessus</em> de SP au lieu d'en dessous, et laisse SP pointant plus haut. Pile corrompue au premier prologue de fonction volumineuse.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p1">P1</span></td>
-            <td><strong>NEW-7. LDREX et STREX avalés en silence</strong><br>Effet de bord du resserrage de la section 8 : les encodages <code>0xE84x</code> et <code>0xE85x</code> ne sont plus captés par personne et retombent sur le NOP silencieux.</td>
-            <td class="hex">thumb32.rs:298</td>
-            <td>Sans conséquence tant que le firmware ne fait pas d'accès exclusif, mais à surveiller. NEW-1 le rendrait visible immédiatement.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p2">P2</span></td>
-            <td><strong>NEW-8. TBB à base registre non gérée</strong><br>La condition est <code>w1 == 0xE8DF</code>, donc seule la forme <code>[PC, Rm]</code> est décodée. Les encodages <code>0xE8D0</code> à <code>0xE8DE</code> tombent dans le NOP silencieux.</td>
-            <td class="hex">thumb32.rs:275</td>
-            <td>GCC émet presque toujours la forme PC-relative, donc faible probabilité. Élargir à <code>(w1 &amp; 0xFFF0) == 0xE8D0</code> coûte un caractère.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p1">P1</span></td>
-            <td><strong>SysTick routé vers la mauvaise exception</strong><br><code>request_irq(15)</code> arme ISPR bit 15, puis <code>enter_exception(15 + 16)</code> vectorise sur l'exception 31.</td>
-            <td class="hex">cpu/mod.rs:84</td>
-            <td>SysTick est l'exception 15. Et son activation passe par SYST_CSR, pas par ISER bit 15, donc il ne se déclenche généralement jamais. Inchangé depuis la révision 1.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p1">P1</span></td>
-            <td><strong>Écran SPI toujours absent</strong><br>Le modèle reste un framebuffer linéaire. Le matériel est un TFT piloté par SPI1, base connue désormais : <code>0x40020000</code>.</td>
-            <td class="hex">peripherals/display.rs</td>
-            <td>Aucune image ne sortira tant qu'un maître SPI et un modèle de dalle type ST7789 n'interprètent pas CASET, RASET et RAMWR.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p1">P1</span></td>
-            <td><strong>RTC absente</strong><br>Base pourtant connue : <code>0x40003000</code>.</td>
-            <td class="hex">peripherals/</td>
-            <td>Sur un jeu d'élevage, c'est la source de temps qui fait vieillir la créature.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p1">P1</span></td>
-            <td><strong>Émulation mono-cœur</strong><br>La mailbox est mappée à la bonne adresse mais rien ne vit en face.</td>
-            <td class="hex">emulator/mod.rs</td>
-            <td>Le cœur principal bloquera sur un handshake que personne ne satisfait, dès qu'il ira le chercher.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p1">P1</span></td>
-            <td><strong>NVIC sans priorités</strong><br>Ni IPR, ni SHPR, ni AIRCR, ni ICSR. <code>get_highest_pending_irq</code> retourne l'index le plus bas.</td>
-            <td class="hex">cpu/nvic.rs:101</td>
-            <td>Ordonnancement faux dès deux interruptions en attente.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p2">P2</span></td>
-            <td><strong>NEW-5. MUL 16 bits déborde encore</strong><br>Corrigé côté 32 bits avec <code>wrapping_mul</code>, oublié côté 16 bits.</td>
-            <td class="hex">thumb16.rs:271</td>
-            <td>Panique du processus en build debug au premier dépassement.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p2">P2</span></td>
-            <td><strong>NEW-6. RRX approximé sans carry</strong><br><code>shift_operand</code> traite ROR avec décalage nul comme un simple <code>rm &gt;&gt; 1</code>. Le vrai RRX injecte le carry en bit 31.</td>
-            <td class="hex">thumb32.rs:345</td>
-            <td>Rare, mais faux silencieusement. Le commentaire le reconnaît, ce qui est la bonne pratique.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p2">P2</span></td>
-            <td><strong>Masquage de la Boot ROM sur le mauvais bloc</strong><br><code>SysRegisters</code> et son « bit 3 » inventé sont routés sur SYSCTRL0, alors que le masquage relève d'OSC_CTRL dans SN_SYS0.</td>
-            <td class="hex">sys.rs:28, mmu/mod.rs</td>
-            <td>Sans conséquence tant que le bootrom réel n'est pas exécuté, mais l'incohérence piégera plus tard.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p2">P2</span></td>
-            <td><strong>MRS / MSR ne traite que xPSR</strong><br>Le champ SYSm n'est pas décodé, MSP, PSP, PRIMASK, BASEPRI et CONTROL sont ignorés.</td>
-            <td class="hex">thumb32.rs:300-310</td>
-            <td>Toute bascule de pile ou masquage d'interruption échoue en silence.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p2">P2</span></td>
-            <td><strong>EXC_RETURN figé, pas de fautes</strong><br><code>LR = 0xFFFFFFF9</code> systématiquement. Ni HardFault, ni MemManage, ni UsageFault, malgré des vecteurs de fautes bien présents dans le firmware.</td>
-            <td class="hex">cpu/mod.rs</td>
-            <td>Le firmware installe ses handlers à 0x321, 0x323, 0x325. On sait donc qu'il compte dessus. Un accès fautif retourne 0 au lieu de brancher là.</td>
-          </tr>
-          <tr>
-            <td><span class="chip c-p2">P2</span></td>
-            <td><strong>GPIO au mauvais brochage</strong><br>Boutons mappés sur les bits 0, 1, 2 alors que le matériel les place sur P0.9, P0.11, P0.10.</td>
-            <td class="hex">peripherals/gpio.rs:20</td>
-            <td>Entrées non reconnues par le firmware réel. La base GPIO0 est maintenant juste, le brochage interne non.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+<section id="etat">
+  <div class="sec-head"><span class="sec-code">STATE</span><h2 data-t="state.h2">Where it stands</h2></div>
+  <p class="sec-intro" data-t="state.intro">The work is not finished, and this page says so rather than hiding it.</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th data-t="state.col1">Area</th><th data-t="state.col2">State</th></tr></thead>
+      <tbody>
+        <tr><td data-t="state.core">ARMv7-M core, Thumb-2</td><td><span class="chip c-done" data-t="chip.ok">complete</span></td></tr>
+        <tr><td data-t="state.screen">128 × 128 RGB565 display</td><td><span class="chip c-done" data-t="chip.ok2">complete</span></td></tr>
+        <tr><td data-t="state.input">Buttons, dial, sleep and wake</td><td><span class="chip c-done" data-t="chip.ok3">complete</span></td></tr>
+        <tr><td data-t="state.clock">Clock, calendar, ageing</td><td><span class="chip c-done" data-t="chip.ok4">complete</span></td></tr>
+        <tr><td data-t="state.save">Saves and recovery points</td><td><span class="chip c-done" data-t="chip.ok5">complete</span></td></tr>
+        <tr><td data-t="state.sound">Sound</td><td><span class="chip c-p1" data-t="chip.partial">the notes come out, the peripheral is not identified</span></td></tr>
+        <tr><td data-t="state.uart">Serial link</td><td><span class="chip c-p1" data-t="chip.partial2">modelled, transfers not completing yet</span></td></tr>
+        <tr><td data-t="state.ed">Editions</td><td><span class="chip c-ok" data-t="chip.ed">all five run</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <p data-t="state.note">The technical dossier holds the detail: pinout, memory map, Sonix load table format, AES key derivation, extraction procedures, and the sixteen ARMv7-M decoding faults found by running real code.<a href="docs/dossier.html">Ouvrir le dossier</a>.</p>
+  </div>
+</section>
 
-    <h3>Hygiène du dépôt, et la purge de l'historique</h3>
-    <p>Pendant longtemps la deviceKey était en clair dans <code>tests/emulator_tests.rs</code>, avec un chemin absolu personnel vers le dump juste au-dessus. Ce n'étaient pas des bugs, mais le genre de détail qui coûte cher le jour où le dépôt part sur GitHub : la valeur serait partie avec, dans tout l'historique, et un <code>git rm</code> ultérieur n'y aurait rien changé.</p>
+<section id="source">
+  <div class="sec-head"><span class="sec-code">SRC</span><h2 data-t="src.h2">Build it yourself</h2></div>
+  <p class="sec-intro" data-t="src.intro">Nothing obliges you to trust a binary. The code is open and building takes one line.</p>
+  <div class="cmd"><code>git clone https://github.com/infinition/capybara &amp;&amp; cd capybara &amp;&amp; cargo build --release</code></div>
+  <p class="panel-note" data-t="src.note">The binary lands in target/release/capybara. The reverse engineering probes live in examples/ and stay in the repository, because the work continues.<code>target/release/capybara</code>. Les sondes de rétro-ingénierie sont dans <code>examples/</code> et restent dans le dépôt, parce que le travail continue.</p>
+</section>
 
-    <p>C'est réglé, le 28 août 2026, et voici comment, parce que la manœuvre est plus délicate qu'elle en a l'air.</p>
+<footer>
+  <p data-t="legal.1">Capybara is an independent work of reverse engineering for interoperability. It is not affiliated with, endorsed by, or connected to Bandai. Tamagotchi and Tamagotchi Paradise are trademarks of Bandai. No firmware, no ROM, no key and no graphic or sound asset from the console is contained in this repository or in the published executables.</p>
+  <p data-t="legal.2">Distributed under the GNU General Public License v3.0.</p>
+  <p><a href="https://github.com/infinition/capybara">GitHub</a> · <a href="https://www.buymeacoffee.com/infinition" data-t="legal.coffee">Support this work</a></p>
+</footer>
 
-    <ol>
-      <li><strong>Le filet d'abord.</strong> Une branche de sauvegarde, un tag, et surtout une copie complète du dossier hors du dépôt. <code>git filter-branch</code> réécrit tout ; s'il se passe mal, seule la copie hors git sauve la mise.</li>
-      <li><strong>Vérifier qu'aucun remote n'existe.</strong> Le dépôt n'avait jamais été poussé. C'est ce qui rend la réécriture sûre : personne d'autre n'a les anciens hachages.</li>
-      <li><strong>Assainir l'arbre de travail avant de toucher à l'historique.</strong> Les tests lisent maintenant <code>SONIX_DEVICE_KEY</code> et <code>SONIX_DUMPS</code>, et restent neutres quand ces variables manquent, ce qu'ils faisaient déjà pour les dumps. La clé vit dans <code>cle-device.txt</code>, non suivi.</li>
-      <li><strong>Prouver que le garde-fou marche dans les deux sens.</strong> 73 tests passent sans les variables, en 0,19 s, les tests sur dump se sautant proprement. Les mêmes 73 passent avec, en 2,25 s, les tests sur dump s'exécutant réellement. Sans cette double vérification on ne sait pas si les tests passent ou s'ils ne font plus rien.</li>
-      <li><strong>Réécrire.</strong> <code>git filter-branch --tree-filter</code> sur <code>--all</code>, avec un script qui remplace la clé par <code>&lt;CLE&gt;</code> et les chemins personnels par les variables. C'est ici que les choses se sont mal passées, deux fois, et les trois pièges ci-dessous disent pourquoi.</li>
-    </ol>
-
-    <p>Il a fallu trois passes. Les deux premières ont échoué sans le dire.</p>
-
-    <div class="note">
-      <p><strong>Premier piège, la fausse alerte.</strong> Juste après la réécriture, <code>git log --all -S"&lt;la clé&gt;"</code> renvoyait encore six commits. La purge avait pourtant marché : <code>filter-branch</code> range les anciennes références sous <code>refs/original/</code>, et <code>--all</code> les inclut. Un balayage de tous les blobs, lui, ne trouvait déjà plus rien. Il faut supprimer <code>refs/original/</code>, faire expirer le reflog et passer <code>git gc --prune=now</code> pour que la mesure dise la vérité.</p>
-    </div>
-
-    <div class="note">
-      <p><strong>Deuxième, le fichier jamais ouvert.</strong> Le script de purge ne balayait qu'une liste d'extensions, <code>.md .rs .toml .json .txt .html .yml</code>. Un <code>mesurer.ps1</code> écrit après coup, le même jour, portait la clé et deux chemins absolus : <code>.ps1</code> n'était pas dans la liste, le fichier n'a jamais été ouvert, et la purge s'est déclarée satisfaite. La version qui a marché ne filtre plus sur l'extension du tout : elle ouvre tout et laisse <code>grep -I</code> écarter le binaire.</p>
-    </div>
-
-    <div class="note">
-      <p><strong>Troisième, la substitution muette.</strong> Les chemins personnels ont résisté à deux purges complètes. La raison tient dans une expression : <code>s|C:\\Users\\infinition\\Downloads|…|</code> ne remplace rien dans ce sed, alors que <code>s|C:[\\/]Users[\\/]infinition[\\/]Downloads|…|</code> remplace. Une substitution qui ne matche pas n'est pas une erreur pour sed : il ne dit rien, sort en code 0, et <code>filter-branch</code> réécrit consciencieusement les commits à l'identique. La clé, elle, partait bien à chaque fois, ce qui rendait la purge crédible.</p>
-      <p><strong>Ce que j'en retiens.</strong> Je ne crois plus une purge sur ce qu'elle affiche. Je rebalaie tous les blobs atteignables, reflog expiré et <code>gc</code> passé, avec un motif que je réécris à la main. La première fois j'avais copié le motif depuis le script de purge : les deux avaient le même bug et se confirmaient l'un l'autre.</p>
-    </div>
-
-    <p>Résultat après la troisième passe : 99 fichiers suivis, rien de perdu, les tests verts, et zéro occurrence de la clé comme des chemins sur les six écritures possibles. Le seul <code>infinition</code> qui subsiste est l'identifiant d'organisation de l'application, dans <code>ProjectDirs::from("com", "infinition", …)</code>, qui n'est pas un chemin personnel mais le nom du dossier de configuration.</p>
-
-    <p>Le fichier de clé local est recréé après coup, hors suivi. <code>.gitignore</code> ne portait toujours pas sa règle au moment de la première purge, et un <code>git add -A</code> l'avait repris dans un commit ultérieur. La règle y est maintenant, avec les dumps, les instantanés et les sauvegardes.</p>
-
-    <div class="note">
-      <p><strong>Sur le README.</strong> Il a longtemps annoncé « Full support for Thumb-16 and Thumb-2 » et un « Hardware LCD controller ». La première affirmation était fausse, la seconde décrivait un composant qui n'existe pas sur ce matériel. C'était le genre de détail qui ne coûte rien à corriger et qui, laissé en place, finit par vous faire vous faire confiance à tort sur votre propre travail. Réécrit le 28 août 2026, aligné sur le code.</p>
-    </div>
-  </section>
-
-  <!-- ===== PLAN ===== -->
-  <section id="plan">
-    <div class="sec-head"><span class="sec-code">PLAN</span><h2>Feuille de route</h2></div>
-    <p class="sec-intro">Je garde les phases ci-dessous telles que je les avais écrites en révision 3. Toutes sont franchies. Voici ce qui reste à la révision 5.</p>
-
-    <div class="stack" style="margin-bottom:34px">
-      <div class="phase is-done">
-        <div class="phase-n">✓</div>
-        <div>
-          <h3>La vitesse</h3>
-          <div class="phase-meta"><span class="chip c-done">fait le 28 août 2026</span></div>
-          <p>1,40 fois le temps réel sur <code>step</code>, 1,37 sur <code>run_frame</code>. Il ne manquait pas vingt-deux pour cent de décodage, il manquait deux tests posés au mauvais endroit dans une boucle que la sonde ne regardait pas. Section PERF.</p>
-        </div>
-      </div>
-      <div class="phase">
-        <div class="phase-n">1</div>
-        <div>
-          <h3>Le périphérique de sortie du son</h3>
-          <div class="phase-meta"><span class="chip c-p2">énigme ouverte</span></div>
-          <p>Le moteur calcule ses notes mais n'écrit sur aucun périphérique connu. Ni PWM, ni port 1. En attendant, l'interface rend les fréquences déjà calculées en signal carré, ce qui sonne juste mais contourne la question.</p>
-        </div>
-      </div>
-      <div class="phase">
-        <div class="phase-n">2</div>
-        <div>
-          <h3>Les quatre autres éditions</h3>
-          <div class="phase-meta"><span class="chip c-neutral">vérification</span></div>
-          <p>Seule Water a été menée jusqu'au bout, Jade affiche son œuf. Earth, Sky et Land n'ont pas été suivies jusqu'à l'image.</p>
-        </div>
-      </div>
-      <div class="phase">
-        <div class="phase-n">3</div>
-        <div>
-          <h3>La molette en quadrature</h3>
-          <div class="phase-meta"><span class="chip c-neutral">fidélité</span></div>
-          <p>Modélisée en appuis simples sur deux broches, pas en signal à deux phases décalées. Suffisant à l'usage, faux sur le principe.</p>
-        </div>
-      </div>
-      <div class="phase">
-        <div class="phase-n">4</div>
-        <div>
-          <h3>Le second cœur</h3>
-          <div class="phase-meta"><span class="chip c-neutral">jamais réclamé</span></div>
-          <p>Toujours pas émulé, et le firmware ne l'a jamais réclamé jusqu'ici. La mailbox reste le canal à surveiller si un blocage inexpliqué réapparaît.</p>
-        </div>
-      </div>
-    </div>
-
-    <h3>Feuille de route de la révision 3, pour mémoire</h3>
-    <p class="sec-intro">Je l'avais réordonnée à l'époque. Les phases 1 à 3 de la révision 1 étaient franchies, et la question de passer à Unicorn ne s'est jamais reposée : mon décodeur fait tourner le vrai firmware.</p>
-
-    <div class="stack">
-      <div class="phase is-done">
-        <div class="phase-n">✓</div>
-        <div>
-          <h3>Instrumentation, carte mémoire, déchiffrement</h3>
-          <div class="phase-meta"><span class="chip c-done">fait</span></div>
-          <p>Traçage MMIO, datasheet intégré, AES, load tables, boot en PRAM. Le firmware réel démarre et progresse.</p>
-        </div>
-      </div>
-
-      <div class="phase">
-        <div class="phase-n">1</div>
-        <div>
-          <h3>Fermer les trois P0 du décodeur</h3>
-          <div class="phase-meta"><span class="chip c-neutral">une journée</span><span class="chip c-p0">bloquant</span></div>
-          <p>Dans cet ordre : émettre <code>Undefined</code> depuis <code>thumb32</code>, séparer STMDB de STMIA avec writeback conditionnel, poser C et V dans l'ALU 32 bits.</p>
-          <p>Les trois se tiennent. Le premier vous dira ce qui manque encore, les deux autres corrompent l'état sans le dire. Tant qu'ils sont là, chaque heure passée à traquer un blocage risque de traquer un artefact de l'émulateur plutôt qu'un comportement du firmware.</p>
-        </div>
-      </div>
-
-      <div class="phase">
-        <div class="phase-n">2</div>
-        <div>
-          <h3>Reprendre la traque de 0xB950</h3>
-          <div class="phase-meta"><span class="chip c-neutral">après la phase 1</span></div>
-          <p><code>dis_probe</code> et <code>trace_probe</code> sont bien construits, mais lancés contre un CPU dont la pile et les drapeaux peuvent mentir. Rejouez-les une fois la phase 1 close : le point d'arrêt aura peut-être bougé tout seul.</p>
-          <p>Pensez aussi à commiter ces deux sondes, elles sont encore non suivies.</p>
-        </div>
-      </div>
-
-      <div class="phase">
-        <div class="phase-n">3</div>
-        <div>
-          <h3>Compléter Thumb-2 à la demande</h3>
-          <div class="phase-meta"><span class="chip c-neutral">itératif</span></div>
-          <p>Guidé par les <code>Undefined</code> que la phase 1 fera remonter. Les manques probables, par ordre de fréquence dans du code GCC : TBB/TBH, LDRD/STRD, LDRSB/LDRSH, blocs IT. Ne les écrivez pas d'avance.</p>
-        </div>
-      </div>
-
-      <div class="phase">
-        <div class="phase-n">4</div>
-        <div>
-          <h3>Périphériques, guidés par la trace</h3>
-          <div class="phase-meta"><span class="chip c-neutral">le gros du travail</span></div>
-          <p>Laissez tourner <code>boot_probe</code>, prenez le classement des registres non modélisés, implémentez le premier de la liste, recommencez. Corrigez au passage <code>fb_base_addr</code>, le brochage GPIO et le routage du masquage ROM.</p>
-          <p>Ordre attendu d'après la carte : SN_SYS0 est déjà là, viendront ensuite SPI1, les CT32B, la RTC, le SAR ADC, le WDT.</p>
-        </div>
-      </div>
-
-      <div class="phase">
-        <div class="phase-n">5</div>
-        <div>
-          <h3>Écran</h3>
-          <div class="phase-meta"><span class="chip c-neutral">livrable visible</span></div>
-          <p>Maître SPI1 plus modèle de dalle ST7789. Première image réelle, donc première preuve tangible que la chaîne complète tient debout.</p>
-        </div>
-      </div>
-
-      <div class="phase">
-        <div class="phase-n">6</div>
-        <div>
-          <h3>Interruptions correctes</h3>
-          <div class="phase-meta"><span class="chip c-neutral">avant le second cœur</span></div>
-          <p>Priorités NVIC, SysTick au bon vecteur, EXC_RETURN dynamique, exceptions de faute réelles. Le firmware installe des handlers de faute, donc il attend qu'ils servent.</p>
-        </div>
-      </div>
-
-      <div class="phase">
-        <div class="phase-n">7</div>
-        <div>
-          <h3>Second cœur et mailbox</h3>
-          <div class="phase-meta"><span class="chip c-neutral">en dernier</span></div>
-          <p>À n'aborder qu'une fois le cœur principal en boucle de jeu. Le partage du temps et la sémantique de la mailbox demanderont une phase d'analyse dédiée.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== RESSOURCES ===== -->
-  <section id="ressources">
-    <div class="sec-head"><span class="sec-code">REF</span><h2>Ressources</h2></div>
-
-    <h3>Documentation et outils</h3>
-    <div class="links">
-      <a class="lnk" href="https://github.com/GMMan/tama-para-research"><b>tama-para-research</b><span>Dépôt central. Formats sprites et archives, charset CJK, ghost data, protocoles, dossier hardware complet.</span><em>github.com/GMMan/tama-para-research</em></a>
-      <a class="lnk" href="https://github.com/GMMan/snc7330-hidden-rom"><b>snc7330-hidden-rom</b><span>Extraction de la Boot ROM masquée par patch FPB. Sources C, script Python UART, couvre le SNC73410.</span><em>github.com/GMMan/snc7330-hidden-rom</em></a>
-      <a class="lnk" href="https://github.com/GMMan/sonix-boot-decrypter"><b>sonix-boot-decrypter</b><span>Déchiffreur SNC7320 / 7330 / 7340 en C#. Utilisé ici comme documentation seulement, pour la sémantique des drapeaux d'en-tête. Le programme n'a jamais tourné sur l'image.</span><em>github.com/GMMan/sonix-boot-decrypter</em></a>
-      <a class="lnk" href="https://github.com/GMMan/tamacom"><b>tamacom</b><span>Bibliothèque Python pour le protocole TCP de l'appareil.</span><em>github.com/GMMan/tamacom</em></a>
-      <a class="lnk" href="https://github.com/GMMan/tama-paradise-items-list"><b>tama-paradise-items-list</b><span>Liste d'items extraite du firmware.</span><em>github.com/GMMan/tama-paradise-items-list</em></a>
-      <a class="lnk" href="https://www.sonix.com.tw/article-en-5180-42810"><b>Page produit SNC73410</b><span>Datasheet officiel Sonix. La V1.7 du SNC7340 est la source de la section MEM.</span><em>sonix.com.tw</em></a>
-    </div>
-
-    <h3>Écrits et fils de recherche</h3>
-    <div class="links">
-      <a class="lnk" href="https://hackaday.com/2025/09/10/using-an-mcus-own-debug-peripheral-to-defeat-bootrom-protection/"><b>Hackaday, 10 septembre 2025</b><span>Synthèse de la technique FPB contre le masquage de Boot ROM.</span><em>hackaday.com</em></a>
-      <a class="lnk" href="https://x.com/GMMan_BZFlag/status/1944557437098639436"><b>Fil X : dump Flash obtenu</b><span>13 juillet 2025. Première annonce publique.</span><em>x.com/GMMan_BZFlag</em></a>
-      <a class="lnk" href="https://x.com/GMMan_BZFlag/status/1947434475262288284"><b>Fil X : identification du PCB</b><span>Photos de carte, identification du MCU et de la Flash.</span><em>x.com/GMMan_BZFlag</em></a>
-      <a class="lnk" href="https://x.com/GMMan_BZFlag/status/1948208170675154944"><b>Fil X : Boot ROM masquée</b><span>Documentation d'origine de l'exploit FPB.</span><em>x.com/GMMan_BZFlag</em></a>
-      <a class="lnk" href="https://bsky.app/profile/sudo.caralynx.com"><b>Bluesky, sudo.caralynx.com</b><span>Second canal de publication.</span><em>bsky.app</em></a>
-    </div>
-
-    <h3>Outils communautaires</h3>
-    <div class="links">
-      <a class="lnk" href="https://ko-fi.com/s/e380a5cffc"><b>Paradise Firmware Extractor</b><span>catalystwyrm, payant. Extrait ghosts et items laboratoire depuis un dump. Python 3.6+, sans dépendance.</span><em>ko-fi.com</em></a>
-      <a class="lnk" href="https://bbamorachi.us/"><b>TamaHome Toolkit</b><span>Payant. Dongle UART, application compagnon, extracteur, guide de flash, catalogue de plus de 1400 sprites.</span><em>bbamorachi.us</em></a>
-    </div>
-  </section>
-
-  <footer>
-    <p>Révision 5, compilée le 28 août 2026 à partir de sources publiques et de l'état du dépôt <code>tamagotchi-paradise-rs</code>, branche <code>feat/real-firmware-boot</code>, 16 415 lignes de Rust. Le document est cumulatif : les révisions précédentes sont conservées, y compris leurs constats démentis, avec la mention de ce qui les a remplacés. Aucun binaire propriétaire, aucune clé de puce et aucun secret n'y sont reproduits. Les procédures d'extraction décrites s'appliquent à un appareil dont vous êtes propriétaire.</p>
-    <p>Tamagotchi et Tamagotchi Paradise sont des marques de Bandai. Ce document n'est ni affilié ni approuvé par Bandai.</p>
-  </footer>
-
-  </main>
-</div>
 </div>
 
 <script>
 (function(){
-  var c = document.getElementById('lcd');
-  if(!c || !c.getContext) return;
-  var g = c.getContext('2d');
-  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  "use strict";
 
-  var SKY_TOP='#7FD8C6', SKY_BOT='#CFF0E4', HILL='#4FB79F', HILL2='#3A9E88',
-      SOIL='#8C6A46', SOIL2='#6F5236', GRASS='#5FC48A',
-      PET='#F6C7D6', PET_SH='#E39CB4', EYE='#22343A', BEAK='#F2A65A',
-      LEAF='#3FA97B', STEM='#2F8060', SHROOM='#E86F8C', SHROOM_D='#FFF0F4',
-      HUD='#0F2B27', HUD_F='#CFF0E4';
+  /* Choix du systeme. Devine d'abord, puis obeit au clic. */
+  var onglets = document.querySelectorAll('.os-row button');
+  var panneaux = document.querySelectorAll('.panel');
+  function choisir(os){
+    onglets.forEach(function(b){ b.setAttribute('aria-selected', String(b.dataset.os === os)); });
+    panneaux.forEach(function(p){ p.classList.toggle('on', p.dataset.panel === os); });
+  }
+  onglets.forEach(function(b){ b.addEventListener('click', function(){ choisir(b.dataset.os); }); });
+  var ua = navigator.userAgent || '';
+  if (/Mac|iPhone|iPad/.test(ua)) { choisir('mac'); }
+  else if (/Linux|X11|Android|CrOS/.test(ua)) { choisir('linux'); }
 
-  function px(x,y,w,h,col){ g.fillStyle=col; g.fillRect(x,y,w,h); }
-
-  function draw(t){
-    var grd = g.createLinearGradient(0,0,0,86);
-    grd.addColorStop(0,SKY_TOP); grd.addColorStop(1,SKY_BOT);
-    g.fillStyle = grd; g.fillRect(0,0,128,128);
-
-    px(98,16,10,10,'#FFF3C4'); px(96,18,14,6,'#FFF3C4'); px(100,14,6,14,'#FFF3C4');
-
-    for(var i=0;i<128;i+=2){
-      var h1 = Math.round(10*Math.sin(i/22)+66);
-      px(i,h1,2,128-h1,HILL2);
-      var h2 = Math.round(7*Math.sin(i/15+2)+76);
-      px(i,h2,2,128-h2,HILL);
-    }
-
-    px(0,92,128,36,SOIL); px(0,92,128,5,GRASS); px(0,112,128,16,SOIL2);
-
-    px(16,80,3,14,STEM); px(11,74,6,5,LEAF); px(18,76,7,5,LEAF); px(14,70,7,5,LEAF);
-    px(104,84,4,9,SHROOM_D); px(98,78,16,7,SHROOM); px(101,75,10,4,SHROOM);
-    px(102,80,2,2,SHROOM_D); px(108,81,2,2,SHROOM_D);
-
-    var bob = reduce ? 0 : (Math.sin(t/520) > 0 ? 0 : 1);
-    var bx = 50, by = 58 + bob;
-
-    px(bx+4,by+30,20,4,SOIL2);
-    px(bx+2,by+6,24,26,PET_SH);
-    px(bx+3,by+5,22,26,PET);
-    px(bx,by+14,3,8,PET_SH); px(bx+25,by+14,3,8,PET_SH);
-    px(bx+6,by+31,5,3,PET_SH); px(bx+17,by+31,5,3,PET_SH);
-    px(bx+9,by+1,10,5,PET); px(bx+11,by-2,6,4,LEAF);
-
-    var blink = reduce ? false : (Math.floor(t/160) % 26 === 0);
-    if(blink){ px(bx+8,by+15,4,2,EYE); px(bx+16,by+15,4,2,EYE); }
-    else{
-      px(bx+8,by+12,4,6,EYE); px(bx+16,by+12,4,6,EYE);
-      px(bx+9,by+13,2,2,'#FFFFFF'); px(bx+17,by+13,2,2,'#FFFFFF');
-    }
-    px(bx+12,by+21,4,3,BEAK);
-    px(bx+5,by+19,3,2,'#F09BB4'); px(bx+20,by+19,3,2,'#F09BB4');
-
-    px(0,0,128,12,HUD);
-    px(5,4,4,4,HUD_F); px(11,4,4,4,HUD_F); px(17,4,4,4,'#3A6F66');
-    px(104,3,20,6,'#3A6F66'); px(105,4,Math.round(14+(reduce?0:2*Math.sin(t/900))),4,HUD_F);
+  /* Les liens pointent sur la derniere publication. Le nom exact du fichier
+     porte le numero de version : on le demande au depot plutot que de l'ecrire
+     en dur, ou il vieillirait a chaque publication. Sans reseau, le lien reste
+     celui de la page des publications, qui marche toujours. */
+  var liens = document.querySelectorAll('.get[data-asset]');
+  if (liens.length && window.fetch) {
+    fetch('https://api.github.com/repos/infinition/capybara/releases/latest', {
+      headers: { 'Accept': 'application/vnd.github+json' }
+    }).then(function(r){ return r.ok ? r.json() : null; }).then(function(pub){
+      if (!pub || !pub.assets) { return; }
+      liens.forEach(function(a){
+        var suffixe = a.dataset.asset;
+        var trouve = pub.assets.filter(function(x){
+          return x.name && x.name.slice(-suffixe.length) === suffixe;
+        })[0];
+        if (!trouve) { return; }
+        a.href = trouve.browser_download_url;
+        var etiquette = a.querySelector('[data-file]');
+        if (etiquette) {
+          var mo = trouve.size ? ' · ' + (trouve.size / 1048576).toFixed(1) + ' Mo' : '';
+          etiquette.textContent = trouve.name + mo;
+        }
+      });
+    }).catch(function(){ /* hors ligne : les liens de secours suffisent */ });
   }
 
-  if(reduce){ draw(0); return; }
-  var start = performance.now();
-  function loop(now){ draw(now-start); requestAnimationFrame(loop); }
-  requestAnimationFrame(loop);
-})();
+  /* Traduction. L'anglais est ce qui est ecrit dans la page ; le francais vit
+     dans ce dictionnaire. Un seul endroit a tenir a jour, et la page reste
+     lisible sans script. */
+  var fr = {
+    "nav.get":"Télécharger",
+    "nav.what":"Ce que c'est",
+    "nav.state":"État",
+    "nav.dossier":"Dossier technique",
+    "hero.eyebrow":"Émulateur bare-metal · Sonix SNC73410",
+    "hero.lede":"Le vrai firmware d'usine de votre Tamagotchi Paradise, sur votre ordinateur. Pas une réimplémentation du jeu : un cœur ARMv7-M écrit de zéro en Rust, avec les périphériques non documentés du SNC73410 modélisés à la mesure.",
+    "spec.mcu":"MCU",
+    "spec.mcu_sub":"Cortex-M3 double cœur",
+    "spec.flash":"Flash",
+    "spec.flash_sub":"SPI quad, chiffrée",
+    "spec.speed":"Vitesse",
+    "spec.speed_v":"Plus vite que la console",
+    "spec.speed_sub":"régulée sur le temps réel",
+    "spec.license":"Licence",
+    "spec.license_sub":"code ouvert",
+    "get.h2":"Télécharger",
+    "get.intro":"Choisissez votre système. Les paquets sont construits par la chaîne de publication du dépôt, à partir du code que vous pouvez lire.",
+    "get.win":"Télécharger pour Windows",
+    "get.mac_arm":"Télécharger pour Mac Apple Silicon",
+    "get.mac_intel":"Télécharger pour Mac Intel",
+    "get.appimage":"Télécharger l'AppImage",
+    "get.deb":"Télécharger le paquet Debian",
+    "step.win_unzip":"Décompressez l'archive où vous voulez. Rien ne s'installe.",
+    "step.win_run":"Lancez ",
+    "note.win":"Windows 64 bits. Vos parties vont dans ",
+    "step.mac_drag":"Ouvrez l'archive et glissez Capybara dans Applications.",
+    "step.mac_quarantine":"L'application n'est pas signée par un certificat Apple, macOS refuse donc le premier lancement. Levez la mise en quarantaine une fois :",
+    "step.mac_open":"Ouvrez Capybara depuis le Launchpad. macOS ne demande plus rien ensuite.",
+    "note.mac":"Deux constructions natives, Apple Silicon et Intel. Vos parties vont dans ",
+    "step.appimage_exec":"Pour l'AppImage, rendez le fichier exécutable puis lancez le :",
+    "step.deb_install":"Pour le paquet Debian :",
+    "note.linux":"x86_64. Vos parties vont dans ",
+    "need.title":"Il vous faut votre propre console.",
+    "need.why":"Tamagotchi Paradise est un produit toujours en vente, pas une console abandonnée. Rien ici ne remplace son achat, et rien ici ne permet d'y jouer sans elle : il faut posséder physiquement un boîtier, l'ouvrir, et lire sa propre mémoire. Ce que Capybara vous rend, c'est ce que vous avez déjà payé, sur un écran qui ne tient pas sur une pile bouton. C'est la ligne honnête, et le projet s'y tient même quand elle rend le logiciel plus difficile à prendre en main.",
+    "need.body":"Capybara ne distribue aucune donnée de jeu, et ne le fera jamais. Vous fournissez un dump de la flash de votre appareil, 16 Mo, et sa clé, lue en SWD et gravée dans les fusibles de la puce. C'est la seule façon honnête et licite de s'en servir : vous émulez la machine que vous possédez déjà. Sans eux, l'application s'ouvre et vous les demande.",
+    "what.h2":"Ce qu'il sait faire",
+    "card.play":"Jouer",
+    "card.play_b":"Trois boutons, une molette, au clavier ou à la souris. Les touches tenues se combinent, c'est ainsi qu'on ranime un personnage. Tout se remappe et le réglage est retenu.",
+    "card.save":"Sauvegardes",
+    "card.save_b":"Un emplacement par partie, propres à chaque dump. Une nouvelle partie laisse la précédente intacte. L'horloge continue de tourner fenêtre fermée, comme un vrai boîtier rangé dans un tiroir.",
+    "card.rewind":"Points de reprise",
+    "card.rewind_b":"Toute la machine figée, cœur et périphériques compris. Un point chaque minute, gardé douze heures, et le retour en arrière à la seconde près.",
+    "card.skin":"Habillage",
+    "card.skin_b":"La coque prend vos images, avec un masque de découpe qui remplace la silhouette. Couleurs, opacité, relief, ombres, rotation du calque, taille et écartement des boutons.",
+    "card.uart":"Liaison série",
+    "card.uart_b":"L'UART de la console est modélisé, avec un pont vers un port de l'ordinateur à 460800 bauds. C'est par là qu'un vrai boîtier reçoit des objets.",
+    "card.web":"Vue navigateur",
+    "card.web_b":"Un serveur local publie l'écran et accepte les commandes. La console se regarde et se joue depuis un téléphone sur le même réseau.",
+    "state.h2":"Où ça en est",
+    "state.intro":"Le travail n'est pas fini, et la page le dit plutôt que de le taire.",
+    "state.col1":"Domaine",
+    "state.col2":"État",
+    "state.core":"Cœur ARMv7-M, Thumb-2",
+    "state.screen":"Écran 128 × 128 RGB565",
+    "state.input":"Boutons, molette, veille et réveil",
+    "state.clock":"Horloge, calendrier, vieillissement",
+    "state.save":"Sauvegardes et points de reprise",
+    "state.sound":"Son",
+    "state.uart":"Liaison série",
+    "state.ed":"Éditions",
+    "chip.ok":"complet",
+    "chip.ok2":"complet",
+    "chip.ok3":"complet",
+    "chip.ok4":"complet",
+    "chip.ok5":"complet",
+    "chip.partial":"les notes sortent, le périphérique n'est pas identifié",
+    "chip.partial2":"modélisée, transferts pas encore aboutis",
+    "chip.ed":"les cinq tournent",
+    "state.note":"Le dossier technique garde tout le détail : brochage, carte mémoire, format des load tables Sonix, dérivation de clé AES, procédures d'extraction, et les seize défauts de décodage ARMv7-M trouvés en faisant tourner du vrai code. ",
+    "src.h2":"Compiler soi-même",
+    "src.intro":"Rien n'oblige à faire confiance à un binaire. Le code est ouvert et la compilation tient en une ligne.",
+    "src.note":"Le binaire arrive dans ",
+    "legal.1":"Capybara est un travail indépendant de rétro-ingénierie à des fins d'interopérabilité. Il n'est ni affilié, ni approuvé, ni lié à Bandai. Tamagotchi et Tamagotchi Paradise sont des marques de Bandai. Aucun firmware, aucune ROM, aucune clé et aucun élément graphique ou sonore de la console n'est contenu dans ce dépôt ni dans les exécutables publiés.",
+    "legal.2":"Distribué sous licence GNU General Public License v3.0.",
+    "legal.coffee":"Soutenir ce travail"
+  };
+  var en = {};
+  document.querySelectorAll('[data-t]').forEach(function(n){ en[n.dataset.t] = n.innerHTML; });
 
-(function(){
-  var links = Array.prototype.slice.call(document.querySelectorAll('#rail-nav a'));
-  var secs = links.map(function(a){ return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
-  if(!secs.length || !('IntersectionObserver' in window)) return;
-  var io = new IntersectionObserver(function(entries){
-    entries.forEach(function(e){
-      if(!e.isIntersecting) return;
-      links.forEach(function(a){
-        a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id);
-      });
+  function traduire(langue){
+    var dico = langue === 'fr' ? fr : en;
+    document.querySelectorAll('[data-t]').forEach(function(n){
+      var v = dico[n.dataset.t];
+      if (v !== undefined) { n.innerHTML = v; }
     });
-  }, { rootMargin: '-12% 0px -70% 0px', threshold: 0 });
-  secs.forEach(function(s){ io.observe(s); });
+    document.documentElement.lang = langue;
+    document.querySelectorAll('.lang button').forEach(function(b){
+      b.setAttribute('aria-pressed', String(b.dataset.lang === langue));
+    });
+    try { localStorage.setItem('capybara.langue', langue); } catch (e) { /* navigation privee */ }
+  }
+  document.querySelectorAll('.lang button').forEach(function(b){
+    b.addEventListener('click', function(){ traduire(b.dataset.lang); });
+  });
+  var voulue = null;
+  try { voulue = localStorage.getItem('capybara.langue'); } catch (e) { voulue = null; }
+  if (!voulue) { voulue = /^fr/i.test(navigator.language || '') ? 'fr' : 'en'; }
+  if (voulue === 'fr') { traduire('fr'); }
+
+  /* Un peu de vie dans l'ecran dessine : une planete qui tourne, comme
+     l'accueil de la console. Rien de fidele, une vignette. */
+  var toile = document.getElementById('lcd');
+  if (toile && toile.getContext) {
+    var ctx = toile.getContext('2d');
+    var t = 0;
+    var etoiles = [];
+    for (var i = 0; i < 26; i++) {
+      etoiles.push({ x: Math.random() * 128, y: Math.random() * 128, p: Math.random() * 6.28 });
+    }
+    setInterval(function(){
+      t += 0.03;
+      ctx.fillStyle = '#0B1030';
+      ctx.fillRect(0, 0, 128, 128);
+      for (var i = 0; i < etoiles.length; i++) {
+        var e = etoiles[i];
+        var a = 0.35 + 0.35 * Math.sin(t * 2 + e.p);
+        ctx.fillStyle = 'rgba(255,240,190,' + a.toFixed(2) + ')';
+        ctx.fillRect(e.x | 0, e.y | 0, 2, 2);
+      }
+      var cx = 64 + Math.cos(t) * 5, cy = 74 + Math.sin(t * 0.8) * 3;
+      var g = ctx.createRadialGradient(cx - 8, cy - 8, 3, cx, cy, 26);
+      g.addColorStop(0, '#7FE3F5'); g.addColorStop(0.6, '#2E86C8'); g.addColorStop(1, '#134A78');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(cx, cy, 24, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = 'rgba(120,220,160,.55)';
+      ctx.beginPath(); ctx.ellipse(cx - 7, cy + 4, 9, 5, 0.4, 0, 6.2832); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx + 9, cy - 7, 6, 4, -0.3, 0, 6.2832); ctx.fill();
+    }, 66);
+  }
 })();
 </script>
 </body>
