@@ -7,6 +7,9 @@ mod emulator;
 mod gui;
 mod hw_bridge;
 mod i18n;
+mod maj;
+mod touches;
+mod tray;
 mod ui;
 mod web;
 

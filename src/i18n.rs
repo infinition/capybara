@@ -63,6 +63,15 @@ impl I18n {
         self.current_lang
     }
 
+    /// Choisit un libelle court sans obliger chaque panneau a creer une cle
+    /// JSON pour ses termes techniques.
+    pub fn choisir<'a>(&self, francais: &'a str, anglais: &'a str) -> &'a str {
+        match self.current_lang {
+            Language::Fr => francais,
+            Language::En => anglais,
+        }
+    }
+
     pub fn t(&self, key: &str) -> String {
         let dict = match self.current_lang {
             Language::Fr => &self.fr_dict,
@@ -97,6 +106,7 @@ mod tests {
 
     #[test]
     fn test_i18n_translation() {
+        assert_eq!(I18n::default().language(), Language::Fr);
         let i18n = I18n::new(Language::Fr);
         assert_eq!(i18n.t("stage_baby"), "Bébé");
         assert_eq!(

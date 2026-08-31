@@ -1,6 +1,7 @@
 use egui::{Button, Color32, RichText, ScrollArea, Ui};
 
 use crate::emulator::cpu::DisassembledInst;
+use crate::i18n::I18n;
 
 pub struct DisasmPanel;
 
@@ -14,21 +15,22 @@ impl DisasmPanel {
         on_step_into: impl FnOnce(),
         on_reset: impl FnOnce(),
         on_set_pc: impl FnOnce(u32),
+        i18n: &I18n,
     ) {
         ui.horizontal(|ui| {
             if *is_running {
                 if ui.button(RichText::new("⏸ Pause").strong()).clicked() {
                     *is_running = false;
                 }
-            } else if ui.button(RichText::new("▶ Run").strong().color(Color32::GREEN)).clicked() {
+            } else if ui.button(RichText::new(i18n.choisir("▶ Demarrer", "▶ Run")).strong().color(Color32::GREEN)).clicked() {
                 *is_running = true;
             }
 
-            if ui.add_enabled(!*is_running, Button::new("⏭ Step Into (F10)")).clicked() {
+            if ui.add_enabled(!*is_running, Button::new(i18n.choisir("⏭ Pas a pas (F10)", "⏭ Step Into (F10)"))).clicked() {
                 on_step_into();
             }
 
-            if ui.button("🔄 Reset CPU").clicked() {
+            if ui.button(i18n.choisir("🔄 Reinitialiser le CPU", "🔄 Reset CPU")).clicked() {
                 on_reset();
             }
         });
@@ -37,8 +39,8 @@ impl DisasmPanel {
 
         // Address navigation & preset jump buttons
         ui.horizontal_wrapped(|ui| {
-            ui.label("Jump:");
-            if ui.button(format!("Current PC (0x{:08X})", current_pc)).clicked() {
+            ui.label(i18n.choisir("Aller a :", "Jump:"));
+            if ui.button(format!("{} (0x{:08X})", i18n.choisir("PC courant", "Current PC"), current_pc)).clicked() {
                 *view_addr = current_pc;
             }
             if ui.button("XIP (0x60011000)").clicked() {
@@ -57,13 +59,13 @@ impl DisasmPanel {
 
         ui.horizontal(|ui| {
             let mut addr_hex = format!("{:08X}", *view_addr);
-            ui.label("Addr: 0x");
+            ui.label(i18n.choisir("Adresse : 0x", "Addr: 0x"));
             if ui.add(egui::TextEdit::singleline(&mut addr_hex).desired_width(75.0)).changed() {
                 if let Ok(val) = u32::from_str_radix(&addr_hex, 16) {
                     *view_addr = val;
                 }
             }
-            if ui.button("Set PC").on_hover_text("Définit le registre PC du CPU à cette adresse").clicked() {
+            if ui.button(i18n.choisir("Definir PC", "Set PC")).on_hover_text(i18n.choisir("Definit le registre PC du CPU a cette adresse", "Sets the CPU PC register to this address")).clicked() {
                 on_set_pc(*view_addr);
             }
         });

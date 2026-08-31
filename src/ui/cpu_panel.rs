@@ -6,15 +6,19 @@ use crate::i18n::I18n;
 pub struct CpuPanel;
 
 impl CpuPanel {
-    pub fn render(ui: &mut Ui, regs: &Registers, cycles: u64, is_running: bool, _i18n: &I18n) {
+    pub fn render(ui: &mut Ui, regs: &Registers, cycles: u64, is_running: bool, i18n: &I18n) {
         ui.heading(RichText::new("ARM Cortex-M3 (SNC73410)").size(15.0));
 
         let status_color = if is_running { Color32::GREEN } else { Color32::YELLOW };
-        let status_text = if is_running { "Running (48 MHz)" } else { "Paused / Breakpoint" };
+        let status_text = if is_running {
+            i18n.choisir("En marche (48 MHz)", "Running (48 MHz)")
+        } else {
+            i18n.choisir("En pause / Point d'arret", "Paused / Breakpoint")
+        };
         ui.horizontal(|ui| {
-            ui.label("Status:");
+            ui.label(i18n.choisir("Etat :", "Status:"));
             ui.colored_label(status_color, status_text);
-            ui.label(format!("Cycles: {}", cycles));
+            ui.label(format!("{}: {}", i18n.choisir("Cycles", "Cycles"), cycles));
         });
 
         ui.separator();
@@ -50,13 +54,13 @@ impl CpuPanel {
 
         // APSR Condition Flags
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Flags:").strong());
+            ui.label(RichText::new(i18n.choisir("Drapeaux :", "Flags:")).strong());
             Self::flag_label(ui, "N", regs.flag_n());
             Self::flag_label(ui, "Z", regs.flag_z());
             Self::flag_label(ui, "C", regs.flag_c());
             Self::flag_label(ui, "V", regs.flag_v());
             ui.label(format!("PRIMASK: {}", regs.primask));
-            ui.label(format!("Mode: {:?}", regs.mode));
+            ui.label(format!("{}: {:?}", i18n.choisir("Mode", "Mode"), regs.mode));
         });
     }
 

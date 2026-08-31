@@ -55,6 +55,23 @@ impl PointDeReprise {
             format!("il y a {} h {:02}", heures, reste)
         }
     }
+
+    pub fn age_lisible_en(&self) -> String {
+        let minutes = self.age().num_minutes().max(0);
+        if minutes < 1 {
+            return "just now".to_string();
+        }
+        if minutes < 60 {
+            return format!("{} min ago", minutes);
+        }
+        let heures = minutes / 60;
+        let reste = minutes % 60;
+        if reste == 0 {
+            format!("{} h ago", heures)
+        } else {
+            format!("{} h {:02} ago", heures, reste)
+        }
+    }
 }
 
 /// Journal des points de reprise d'une console.

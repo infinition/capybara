@@ -203,9 +203,16 @@ impl MmioTrace {
             return;
         }
         let par_page = self.log_page == Some(addr & !0xFFF);
-        let par_pc = self.log_pc.is_some_and(|(bas, haut)| (bas..haut).contains(&pc));
+        let par_pc = self
+            .log_pc
+            .is_some_and(|(bas, haut)| (bas..haut).contains(&pc));
         if (par_page || par_pc) && self.log.len() < 60000 {
-            self.log.push(LogEntry { pc, addr, is_write, value });
+            self.log.push(LogEntry {
+                pc,
+                addr,
+                is_write,
+                value,
+            });
         }
     }
 
@@ -350,19 +357,15 @@ impl MemoryBus {
         }
         match addr {
             map::PRAM_BASE..=map::PRAM_END => self.pram.read_u8(addr as usize),
-            map::ROM_BASE..=map::ROM_END => {
-                self.boot_rom.read_u8((addr - map::ROM_BASE) as usize)
-            }
+            map::ROM_BASE..=map::ROM_END => self.boot_rom.read_u8((addr - map::ROM_BASE) as usize),
             map::ICACHE_BASE..=map::ICACHE_END => {
                 let off = periph.xip.flash_offset(addr - map::ICACHE_BASE);
                 self.flash.read_u8(off)
             }
-            map::SRAM_BASE..=map::SRAM_END => {
-                self.sram.read_u8((addr - map::SRAM_BASE) as usize)
-            }
-            map::MAILBOX_BASE..=map::MAILBOX_END => {
-                self.sram.read_mailbox_u8((addr - map::MAILBOX_BASE) as usize)
-            }
+            map::SRAM_BASE..=map::SRAM_END => self.sram.read_u8((addr - map::SRAM_BASE) as usize),
+            map::MAILBOX_BASE..=map::MAILBOX_END => self
+                .sram
+                .read_mailbox_u8((addr - map::MAILBOX_BASE) as usize),
             0x4000_0000..=0x4FFF_FFFF => {
                 let aligned = addr & !3;
                 let val = self.read_mmio_u32(aligned, periph);
@@ -408,9 +411,9 @@ impl MemoryBus {
             map::SRAM_BASE..=map::SRAM_END => {
                 self.sram.write_u8((addr - map::SRAM_BASE) as usize, val)
             }
-            map::MAILBOX_BASE..=map::MAILBOX_END => {
-                self.sram.write_mailbox_u8((addr - map::MAILBOX_BASE) as usize, val)
-            }
+            map::MAILBOX_BASE..=map::MAILBOX_END => self
+                .sram
+                .write_mailbox_u8((addr - map::MAILBOX_BASE) as usize, val),
             0x4000_0000..=0x4FFF_FFFF => {
                 let aligned = addr & !3;
                 let mut current = self.read_mmio_u32(aligned, periph);
@@ -599,7 +602,11 @@ impl MemoryBus {
     /// Le controleur ne voit pas la memoire ; c'est ici qu'on lit la flash et
     /// qu'on ecrit la destination, en passant par les memes chemins que le
     /// coeur pour que la region visee soit resolue normalement.
-    fn executer_transfert(&mut self, t: crate::emulator::peripherals::Transfer, p: &mut Peripherals) {
+    fn executer_transfert(
+        &mut self,
+        t: crate::emulator::peripherals::Transfer,
+        p: &mut Peripherals,
+    ) {
         // Une longueur aberrante trahirait un descripteur mal renseigne : on
         // borne pour ne pas parcourir toute la memoire.
         const MAX: u32 = 1 << 20;
@@ -632,8 +639,8 @@ impl MemoryBus {
         t: crate::emulator::peripherals::dma::Transfert,
         p: &mut Peripherals,
     ) {
-        use crate::emulator::peripherals::dma::LARGEUR_UNITE;
         use crate::emulator::peripherals::display::PANNEAU_DONNEES;
+        use crate::emulator::peripherals::dma::LARGEUR_UNITE;
 
         const MAX: u32 = 1 << 20;
         let est_peripherique = |a: u32| (0x4000_0000..0x5000_0000).contains(&a);
@@ -642,8 +649,16 @@ impl MemoryBus {
             return;
         }
         let mut nvic = Nvic::default();
-        let pas_source = if est_peripherique(t.source) { 0 } else { LARGEUR_UNITE };
-        let pas_dest = if est_peripherique(t.destination) { 0 } else { LARGEUR_UNITE };
+        let pas_source = if est_peripherique(t.source) {
+            0
+        } else {
+            LARGEUR_UNITE
+        };
+        let pas_dest = if est_peripherique(t.destination) {
+            0
+        } else {
+            LARGEUR_UNITE
+        };
         // Une trame poussee vers le panneau est aussi rendue a l'afficheur : le
         // firmware ne fait jamais ecrire l'ecran par le coeur.
         let vers_panneau = t.destination == PANNEAU_DONNEES;
@@ -685,9 +700,9 @@ impl MemoryBus {
             map::SRAM_BASE..=map::SRAM_END => {
                 self.sram.write_u8((addr - map::SRAM_BASE) as usize, val)
             }
-            map::MAILBOX_BASE..=map::MAILBOX_END => {
-                self.sram.write_mailbox_u8((addr - map::MAILBOX_BASE) as usize, val)
-            }
+            map::MAILBOX_BASE..=map::MAILBOX_END => self
+                .sram
+                .write_mailbox_u8((addr - map::MAILBOX_BASE) as usize, val),
             _ => {}
         }
     }
@@ -707,7 +722,11 @@ impl MemoryBus {
             let octet = self.read_u8(c.source.wrapping_add(i), p, &nvic);
             crc ^= octet as u16;
             for _ in 0..8 {
-                crc = if crc & 1 != 0 { (crc >> 1) ^ c.polynome } else { crc >> 1 };
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ c.polynome
+                } else {
+                    crc >> 1
+                };
             }
         }
         p.crc.resultat = crc as u32;
@@ -728,16 +747,17 @@ impl MemoryBus {
         match page {
             periph::CHECKSUM => p.crc.read_reg(off),
             // 0x4000E000 et 0x40007000 restent hors modele, et 0x4000A000
-            // avec 0x4000B000 aussi. La premiere porte l'interface serie de la
-            // dalle : la modeliser en SPI ordinaire intercepte les registres
-            // que le pilote d'ecran scrute, et l'ecran reste noir quoi qu'on
-            // charge. Les rendre a la voie non modelisee, qui rend zero et
-            // journalise, est ce qui marche.
+            // (UART0) aussi. La premiere porte l'interface serie de la dalle :
+            // la modeliser en SPI ordinaire intercepte les registres que le
+            // pilote d'ecran scrute, et l'ecran reste noir quoi qu'on charge.
+            // Les rendre a la voie non modelisee, qui rend zero et journalise,
+            // est ce qui marche. 0x4000B000, lui, est route vers l'UART : c'est
+            // UART1, mesure, pas l'ADC qu'annonce l'etiquette SAR_ADC1.
             periph::SAR_ADC0 if crate::emulator::peripherals::SarAdc::handles(off) => {
                 p.adc[0].read_reg(off)
             }
-            periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
-                p.adc[1].read_reg(off)
+            periph::UART1 if crate::emulator::peripherals::UartController::handles(off) => {
+                p.uart.read_reg(off)
             }
             periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
                 p.pmu.read_reg(off)
@@ -787,8 +807,8 @@ impl MemoryBus {
             periph::SAR_ADC0 if crate::emulator::peripherals::SarAdc::handles(off) => {
                 p.adc[0].write_reg(off, val)
             }
-            periph::SAR_ADC1 if crate::emulator::peripherals::SarAdc::handles(off) => {
-                p.adc[1].write_reg(off, val)
+            periph::UART1 if crate::emulator::peripherals::UartController::handles(off) => {
+                p.uart.write_reg(off, val)
             }
             periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
                 p.pmu.write_reg(off, val);

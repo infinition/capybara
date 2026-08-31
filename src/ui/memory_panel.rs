@@ -2,6 +2,7 @@ use egui::{Color32, RichText, ScrollArea, Ui};
 
 use crate::emulator::mmu::MemoryBus;
 use crate::emulator::peripherals::Peripherals;
+use crate::i18n::I18n;
 
 pub struct MemoryPanel;
 
@@ -12,9 +13,10 @@ impl MemoryPanel {
         periph: &mut Peripherals,
         nvic: &crate::emulator::cpu::Nvic,
         base_address: &mut u32,
+        i18n: &I18n,
     ) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Memory Hex Viewer:").strong());
+            ui.label(RichText::new(i18n.choisir("Memoire hexadecimale :", "Memory hex viewer:")).strong());
             if ui.button("XIP (0x60000000)").clicked() {
                 *base_address = 0x6000_0000;
             }

@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 /// Controleur USB officiel Sonix SNC73410 (`0x40007000`).
 ///
 /// Permet l'emulation du peripherique USB CDC/HID integre, facilitant la
-/// communication directe avec les logiciels tiers (P-COM, TamaHome Toolkit).
+/// communication directe avec les logiciels tiers de transfert.
 ///
 /// Registres principaux :
 /// - `0x00` : USB_CTRL (validation du peripherique USB, signal de connexion)
@@ -75,7 +75,7 @@ impl UsbController {
                 self.ep0_rx.pop_front().unwrap_or(0) as u32
             }
             0x34 => {
-                // Lecture FIFO EP1 (donnees P-COM)
+                // Lecture FIFO EP1 (donnees de l'outil de transfert)
                 self.ep1_rx.pop_front().unwrap_or(0) as u32
             }
             _ => 0,
