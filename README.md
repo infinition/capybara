@@ -36,7 +36,7 @@ of your computer.
 | Real time clock, calendar, ageing | Complete |
 | Persistent saves per dump | Complete |
 | Sound | Notes are the ones the firmware composes, output peripheral not identified |
-| Serial link, page `0x4000B000` | Located, not yet modelled |
+| Serial link, page `0x4000B000` | UART1 modelled, bidirectional host bridge at 460800 baud |
 | Editions | Water and Jade Forest played end to end, three others partially |
 
 ### What you need
@@ -71,6 +71,11 @@ export SONIX_DUMPS=<folder holding the .bin files>
 ```
 
 Without them, the tests that depend on a dump skip cleanly.
+
+For a serial transfer tool, create a virtual null-modem pair. Open one port in
+Capybara from the UART console, and open the other port in the transfer tool.
+Both sides use 460800 baud, 8 data bits, no parity and 1 stop bit. A single COM
+port cannot be opened by both programs at the same time.
 
 ### Probes
 
@@ -133,7 +138,7 @@ l'extinction de l'ordinateur.
 | Horloge temps reel, calendrier, vieillissement | Complet |
 | Sauvegardes persistantes par dump | Complet |
 | Son | Les notes sont celles que le firmware compose, la sortie n'est pas identifiee |
-| Lien serie, page `0x4000B000` | Trouve, pas encore modelise |
+| Lien serie, page `0x4000B000` | UART1 modelise, pont hote bidirectionnel a 460800 bauds |
 | Editions | Water et Jade Forest menees de bout en bout, trois autres partiellement |
 
 ### Ce qu'il vous faut
@@ -168,6 +173,12 @@ export SONIX_DUMPS=<dossier contenant les .bin>
 ```
 
 Sans elles, les tests qui dependent d'un dump se sautent proprement.
+
+Pour un outil de transfert serie, creez une paire null-modem virtuelle. Ouvrez
+un port dans Capybara depuis la console UART, puis l'autre port dans l'outil de
+transfert. Les deux cotes utilisent 460800 bauds, 8 bits de donnees, aucune
+parite et 1 bit d'arret. Un meme port COM ne peut pas etre ouvert simultanement
+par les deux programmes.
 
 ### Les sondes
 

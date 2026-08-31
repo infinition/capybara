@@ -609,7 +609,7 @@ footer p{max-width:70ch}
     <p>Trois temps. Modéliser le bloc, en commençant par le bit 10. Retomber sur 460 800 bauds, faute de quoi la lecture est fausse quelque part. Puis l'ouvrir vers l'extérieur.</p>
     <p>Ce dernier point n'est pas une affaire de langage. Aucune application ne peut déclarer un port série sous Windows : c'est un pilote qui le fait, et un pilote doit être signé pour se charger. Rust sait écrire un pilote Windows, mais la signature reste due, et un port série virtuel en mode noyau est un chantier à lui seul. La voie praticable est une paire de ports virtuels installée une fois, com0com ou équivalent : l'émulateur ouvre un bout, TamaHome voit l'autre comme un port ordinaire. Sous Linux et macOS un pseudo terminal suffit et ne demande rien à personne.</p>
 
-    <p class="cap">À jeter avant de commencer : <code>src/hw_bridge/uart_pcom.rs</code> et <code>src/emulator/peripherals/uart.rs</code> datent d'avant la rétro-ingénierie. Registres inventés, compteurs d'octets écrits en dur. Ils ne décrivent pas <code>0x4000B000</code>.</p>
+    <p class="cap">À jeter avant de commencer : <code>src/hw_bridge/uart_terminal.rs</code> et <code>src/emulator/peripherals/uart.rs</code> datent d'avant la rétro-ingénierie. Registres inventés, compteurs d'octets écrits en dur. Ils ne décrivent pas <code>0x4000B000</code>.</p>
   </section>
 
   <!-- ===== FLASH ===== -->

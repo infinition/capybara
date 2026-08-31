@@ -68,7 +68,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libasound2-dev libgtk-3-dev libxkbcommon-dev \
             libwayland-dev libxcb1-dev libx11-dev libxrandr-dev \
-            libxi-dev libxcursor-dev fuse libfuse2
+            libxi-dev libxcursor-dev libxdo-dev \
+            libayatana-appindicator3-dev fuse libfuse2
 
       - name: Compiler
         run: cargo build --release --locked --target ${{ matrix.cible }}
@@ -80,6 +81,7 @@ jobs:
           set -e
           mkdir -p paquet
           cp "target/${{ matrix.cible }}/release/capybara.exe" paquet/
+          cp assets/capybara.ico paquet/
           cp README.md LICENSE index.html paquet/
           7z a "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.zip" ./paquet/*
 
@@ -133,6 +135,7 @@ jobs:
             <key>CFBundleVersion</key><string>${GITHUB_REF_NAME#v}</string>
             <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
             <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSUIElement</key><false/>
             <key>LSMinimumSystemVersion</key><string>10.15</string>
             <key>NSHighResolutionCapable</key><true/>
           </dict></plist>
