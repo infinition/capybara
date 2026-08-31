@@ -6,6 +6,8 @@
 
 **A bare-metal emulator for the Sonix SNC73410, compatible with Tamagotchi Paradise firmware.**
 
+https://infinition.github.io/capybara/
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/infinition/capybara?include_prereleases)](https://github.com/infinition/capybara/releases)
 
