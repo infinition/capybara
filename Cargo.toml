@@ -36,6 +36,16 @@ image = { version = "0.25", default-features = false, features = [
     "gif",
     "webp",
 ] }
+tray-icon = "0.19.2"
+# Verification des mises a jour, a la demande. Un client bloquant suffit :
+# l'appel a lieu dans un fil dedie et une seule fois par clic.
+ureq = { version = "2.10", default-features = false, features = ["tls", "gzip"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+serialport = { version = "4.8", default-features = false }
 
 # Le coeur est un interpreteur : il passe son temps dans une poignee de
 # fonctions qui s'appellent des millions de fois par seconde. L'optimisation

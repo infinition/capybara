@@ -1,3 +1,5 @@
+pub mod touches_panel;
+pub mod aide;
 pub mod console_panel;
 pub mod cpu_panel;
 pub mod disasm_panel;
