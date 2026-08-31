@@ -101,6 +101,25 @@ right-clicking it opens everything without going back to the panel.
 <img src="assets/screenshots/game-mode.png" alt="Game mode: the console alone on the desktop" width="360">
 </div>
 
+> **If you see a black square around the console.** Cutting the shell out of the
+> desktop needs per-pixel transparency, and on Windows that is the graphics
+> driver's decision, not the program's. Some cards simply do not offer a surface
+> that can carry alpha, and there is nothing an application can ask for that
+> changes their mind. The same binary is cut out on one machine and boxed in
+> black on the next.
+>
+> If yours is one of those, open **Appearance** and tick **Cut the window to the
+> shape of the shell**. Windows then clips the window itself and never consults
+> the graphics card at all, so it works everywhere.
+>
+> It is a workaround, not a repair, and it shows: the cut is all or nothing per
+> pixel, so the outline is crisp and slightly jagged instead of softly faded.
+> That is the whole cost, and it only applies to the machines that need it.
+>
+> macOS composes transparency reliably and needs none of this. On Linux it
+> depends on your compositor; without one, turn the transparent background off
+> in the same panel and the window becomes an ordinary opaque one.
+
 **Saves.** A slot is a game: the character, its age, its gauges, its diary. Each
 dump keeps its own slots. Starting a new game asks for a name and leaves the
 current one untouched on disk. A slot can be deleted, with its recovery points,
@@ -342,6 +361,26 @@ le panneau.
 <div align="center">
 <img src="assets/screenshots/game-mode.png" alt="Mode jeu : la console seule sur le bureau" width="360">
 </div>
+
+> **Si un carre noir entoure la console.** Decouper la coque sur le bureau
+> demande une transparence par pixel, et sous Windows c'est le pilote graphique
+> qui en decide, pas le programme. Certaines cartes n'offrent tout simplement
+> pas de surface capable de porter une couche alpha, et aucune demande d'une
+> application ne les fera changer d'avis. Le meme binaire est donc decoupe sur
+> une machine et enferme dans du noir sur la suivante.
+>
+> Si la votre est de celles la, ouvrez **Personnalisation** et cochez **Decouper
+> la fenetre a la forme de la coque**. Windows clippe alors la fenetre lui meme
+> et ne consulte jamais la carte graphique, ce qui marche partout.
+>
+> C'est un contournement, pas une reparation, et cela se voit : la decoupe est
+> du tout ou rien par pixel, donc le contour devient net et legerement dentele
+> au lieu d'etre fondu. C'est tout le prix a payer, et il ne se paie que sur les
+> machines qui en ont besoin.
+>
+> macOS compose la transparence sans faute et n'a besoin de rien de tout cela.
+> Sous Linux cela depend de votre compositeur ; sans lui, decochez le fond
+> transparent dans le meme panneau et la fenetre redevient ordinaire.
 
 **Sauvegardes.** Un emplacement est une partie : le personnage, son age, ses
 jauges, son journal. Chaque dump garde les siens. Une nouvelle partie demande

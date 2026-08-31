@@ -30,13 +30,33 @@ pub struct Enfonces {
 }
 
 /// Etat des commandes rendu par le panneau pour une image.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone)]
 pub struct Commandes {
     pub bouton_a: EtatBouton,
     pub bouton_b: EtatBouton,
     pub bouton_c: EtatBouton,
     pub molette: EtatBouton,
     pub molette_tournee: i32,
+    /// Silhouette de la coque, en points, telle qu'elle vient d'etre dessinee.
+    /// Elle sert a decouper la fenetre elle meme quand la carte graphique
+    /// refuse de composer une transparence.
+    pub contour: Vec<Pos2>,
+    /// Logement de la molette, qui deborde a droite de l'oeuf.
+    pub antenne: Rect,
+}
+
+impl Default for Commandes {
+    fn default() -> Self {
+        Self {
+            bouton_a: EtatBouton::default(),
+            bouton_b: EtatBouton::default(),
+            bouton_c: EtatBouton::default(),
+            molette: EtatBouton::default(),
+            molette_tournee: 0,
+            contour: Vec::new(),
+            antenne: Rect::NOTHING,
+        }
+    }
 }
 
 /// Contour d'un oeuf, du sommet et dans le sens des aiguilles.
@@ -724,6 +744,7 @@ impl LcdPanel {
         }
 
         let _ = display;
+        commandes.contour = contour.clone();
 
         // La calotte passe en dernier, au dessus de la fenetre et de l'ecran :
         // sur la vraie console c'est une demi coque qui recouvre l'avant, et
@@ -960,6 +981,10 @@ impl LcdPanel {
             commandes.molette.maintenu |= reponse.is_pointer_button_down_on();
         }
         commandes.molette.clique |= reponse.clicked();
+        // La roue est ce qui deborde a droite de l'oeuf : c'est elle que la
+        // decoupe de fenetre doit inclure, pas le rectangle d'accroche qui la
+        // porte et qui est plus large qu'elle.
+        commandes.antenne = molette;
 
         let roulette = ui.input(|i| i.raw_scroll_delta.y);
         let survol = ui

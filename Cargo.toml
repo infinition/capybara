@@ -1,6 +1,6 @@
 [package]
 name = "capybara"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "Emulateur bare-metal du Sonix SNC73410, compatible avec le firmware Tamagotchi Paradise"
@@ -37,6 +37,9 @@ image = { version = "0.25", default-features = false, features = [
     "webp",
 ] }
 tray-icon = "0.19.2"
+# Le handle de la fenetre, pour poser la couleur de transparence de Windows
+# quand la carte graphique refuse la composition par pixel.
+raw-window-handle = "0.6"
 # Verification des mises a jour, a la demande. Un client bloquant suffit :
 # l'appel a lieu dans un fil dedie et une seule fois par clic.
 ureq = { version = "2.10", default-features = false, features = ["tls", "gzip"] }

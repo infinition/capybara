@@ -264,6 +264,19 @@ pub struct TamagotchiApp {
     souris: crate::touches::Souris,
     /// Fond du mode jeu decoupe sur le bureau.
     fond_transparent: bool,
+    /// Moteur graphique retenu, et s'il sait composer la transparence. Sans
+    /// cette ligne, un carre noir chez quelqu'un d'autre reste une devinette.
+    moteur: String,
+    /// Repli de Windows quand la carte refuse la transparence par pixel.
+    couleur_cle_active: bool,
+    couleur_cle: [u8; 3],
+    /// Silhouette de la coque, en points, telle qu'elle vient d'etre dessinee,
+    /// avec la roue qui deborde a droite.
+    silhouette: (Vec<egui::Pos2>, egui::Rect),
+    /// Menus et fenetres surgissantes ouverts, a ajouter a la decoupe.
+    menus_ouverts: Vec<egui::Rect>,
+    /// Decoupe deja posee sur la fenetre, pour ne pas la reposer a chaque image.
+    decoupe_posee: Option<(bool, u64)>,
     /// Le papier doit etre relu a la prochaine image.
     ///
     /// Il faut un contexte egui pour en faire une texture, et le chargement
@@ -407,6 +420,25 @@ impl TamagotchiApp {
             capture_touche: None,
             souris: crate::touches::Souris::default(),
             fond_transparent: true,
+            moteur: cc
+                .wgpu_render_state
+                .as_ref()
+                .map(|etat| {
+                    let info = etat.adapter.get_info();
+                    let modes = etat
+                        .target_format
+                        .is_srgb()
+                        .then_some("")
+                        .unwrap_or("");
+                    let _ = modes;
+                    format!("{:?} sur {}", info.backend, info.name)
+                })
+                .unwrap_or_else(|| "inconnu".to_string()),
+            couleur_cle_active: false,
+            couleur_cle: [255, 0, 255],
+            silhouette: (Vec::new(), egui::Rect::NOTHING),
+            menus_ouverts: Vec::new(),
+            decoupe_posee: None,
             partage,
             port_web,
             serveur_actif: None,
@@ -578,6 +610,8 @@ impl TamagotchiApp {
                 touches: self.touches.clone(),
                 souris: self.souris,
                 fond_transparent: self.fond_transparent,
+                couleur_cle_active: self.couleur_cle_active,
+                couleur_cle: self.couleur_cle,
             },
         );
     }
@@ -600,6 +634,8 @@ impl TamagotchiApp {
         self.touches = partie.touches.clone();
         self.souris = partie.souris;
         self.fond_transparent = partie.fond_transparent;
+        self.couleur_cle_active = partie.couleur_cle_active;
+        self.couleur_cle = partie.couleur_cle;
         self.i18n.set_language(if partie.langue == "en" {
             Language::En
         } else {
@@ -968,6 +1004,7 @@ impl TamagotchiApp {
              pas executes  {}   debit {:.1} millions par seconde\n\
              vitesse       demandee {}   atteinte {:.2} fois le temps reel\n\
              cout interface {:.1} ms par image\n\
+             moteur        {}\n\
              PC            {:#010x}   mode {}   PRIMASK {}\n\
              trames ecran  {}   instantanes {}\n\
              etat du jeu   courant {} {}   transition demandee {} {}\n\
@@ -989,6 +1026,7 @@ impl TamagotchiApp {
             },
             self.debit / crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as f64,
             self.cout_ui,
+            self.moteur,
             self.machine.cpu.regs.pc,
             mode,
             self.machine.cpu.regs.primask,
@@ -1139,6 +1177,8 @@ impl TamagotchiApp {
             },
             self.souris,
         );
+
+        self.silhouette = (commandes.contour.clone(), commandes.antenne);
 
         // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
         // P0.11, C en P0.10, appui de molette en P0.8, encodeur sur P2.0 et
@@ -2351,6 +2391,132 @@ impl TamagotchiApp {
         });
     }
 
+    /// Decoupe la fenetre a la forme de la coque, sous Windows.
+    ///
+    /// C'est le systeme qui clippe : il ne dessine pas ce qui tombe hors de la
+    /// region, et aucune carte graphique n'intervient. C'est le seul chemin qui
+    /// marche partout.
+    ///
+    /// Les deux autres ont ete essayes et ne peuvent pas aboutir. La couleur de
+    /// transparence exige une fenetre en couches, incompatible avec la chaine
+    /// d'echange en mode flip qu'utilise wgpu. Et la composition par pixel
+    /// depend du pilote : certaines cartes ne l'annoncent pas, meme sous
+    /// Vulkan, et le mode jeu se retrouve dans un carre noir.
+    ///
+    /// La contrepartie est que la decoupe est nette : le contour perd le
+    /// lissage qu'il a sur une machine ou la transparence marche.
+    #[cfg(target_os = "windows")]
+    fn decouper_la_fenetre(&mut self, ctx: &Context, frame: &eframe::Frame) {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+        let actif = self.couleur_cle_active && self.mode == Mode::Jeu;
+        let (contour, antenne) = &self.silhouette;
+        // Une empreinte de la geometrie : inutile de refaire la region tant que
+        // la coque n'a ni bouge ni change de taille.
+        let empreinte = if actif && contour.len() >= 3 {
+            let p = |v: f32| (v * 8.0) as i64 as u64;
+            let mut e = p(contour[0].x)
+                ^ p(contour[contour.len() / 2].y).rotate_left(17)
+                ^ p(antenne.max.x).rotate_left(33)
+                ^ (contour.len() as u64).rotate_left(51)
+                ^ p(ctx.pixels_per_point()).rotate_left(7);
+            for r in &self.menus_ouverts {
+                e ^= p(r.min.x).rotate_left(5)
+                    ^ p(r.min.y).rotate_left(11)
+                    ^ p(r.max.x).rotate_left(23)
+                    ^ p(r.max.y).rotate_left(41);
+            }
+            e
+        } else {
+            0
+        };
+        if self.decoupe_posee == Some((actif, empreinte)) {
+            return;
+        }
+
+        let Ok(poignee) = frame.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::Win32(w) = poignee.as_raw() else {
+            return;
+        };
+        let hwnd = w.hwnd.get() as isize;
+
+        #[link(name = "gdi32")]
+        extern "system" {
+            fn CreatePolygonRgn(points: *const i32, nombre: i32, mode: i32) -> isize;
+            fn CreateRoundRectRgn(g: i32, h: i32, d: i32, b: i32, l: i32, t: i32) -> isize;
+            fn CreateRectRgn(g: i32, h: i32, d: i32, b: i32) -> isize;
+            fn CombineRgn(sortie: isize, a: isize, b: isize, mode: i32) -> i32;
+            fn DeleteObject(objet: isize) -> i32;
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            fn SetWindowRgn(hwnd: isize, region: isize, redessiner: i32) -> i32;
+        }
+        const ALTERNATE: i32 = 1;
+        const RGN_OR: i32 = 2;
+
+        if !actif || contour.len() < 3 {
+            // Region nulle : la fenetre redevient rectangulaire.
+            unsafe {
+                SetWindowRgn(hwnd, 0, 1);
+            }
+            self.decoupe_posee = Some((actif, empreinte));
+            return;
+        }
+
+        // Les points sont en points d'interface, la region en pixels.
+        let echelle = ctx.pixels_per_point();
+        let mut sommets: Vec<i32> = Vec::with_capacity(contour.len() * 2);
+        for p in contour {
+            sommets.push((p.x * echelle).round() as i32);
+            sommets.push((p.y * echelle).round() as i32);
+        }
+
+        unsafe {
+            let oeuf = CreatePolygonRgn(sommets.as_ptr(), contour.len() as i32, ALTERNATE);
+            if oeuf == 0 {
+                return;
+            }
+            let e = |v: f32| (v * echelle).round() as i32;
+            // La roue deborde a droite de l'oeuf. Son arrondi suit celui du
+            // dessin, et une marge d'un pixel evite un lisere sombre au
+            // raccord avec la coque.
+            if antenne.is_positive() {
+                let arrondi = e(antenne.width() * 0.72).max(2);
+                let roue = CreateRoundRectRgn(
+                    e(antenne.min.x) - 1,
+                    e(antenne.min.y) - 1,
+                    e(antenne.max.x) + 2,
+                    e(antenne.max.y) + 2,
+                    arrondi,
+                    arrondi,
+                );
+                if roue != 0 {
+                    CombineRgn(oeuf, oeuf, roue, RGN_OR);
+                    DeleteObject(roue);
+                }
+            }
+            // Les menus, eux, ont des angles droits.
+            for r in &self.menus_ouverts {
+                let bloc = CreateRectRgn(
+                    e(r.min.x) - 1,
+                    e(r.min.y) - 1,
+                    e(r.max.x) + 2,
+                    e(r.max.y) + 2,
+                );
+                if bloc != 0 {
+                    CombineRgn(oeuf, oeuf, bloc, RGN_OR);
+                    DeleteObject(bloc);
+                }
+            }
+            // La fenetre prend la region a sa charge : ne pas la detruire.
+            SetWindowRgn(hwnd, oeuf, 1);
+        }
+        self.decoupe_posee = Some((actif, empreinte));
+    }
+
     /// Lance la recherche de la cle sur le dump charge.
     ///
     /// Rien ne se passe si une recherche tourne deja ou si aucun dump n'est
@@ -2510,6 +2676,19 @@ impl TamagotchiApp {
                 // Le fond sert de poignee. Il est alloue avant la console pour
                 // que les boutons et l'ecran gardent la priorite du pointeur :
                 // egui donne la main au dernier element pose.
+                // Les menus vivent dans la meme fenetre que la coque : sans
+                // les ajouter a la decoupe, la region les tranche au bord de
+                // l'oeuf et il n'en reste qu'un morceau.
+                self.menus_ouverts = ctx.memory(|m| {
+                    m.areas()
+                        .visible_layer_ids()
+                        .into_iter()
+                        .filter(|couche| couche.order != egui::Order::Background)
+                        .filter_map(|couche| m.area_rect(couche.id))
+                        .filter(|r| r.is_positive())
+                        .collect()
+                });
+
                 let fond = ui.allocate_rect(zone, egui::Sense::drag());
                 if fond.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
@@ -2836,6 +3015,8 @@ impl eframe::App for TamagotchiApp {
 
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let now = std::time::Instant::now();
+        #[cfg(target_os = "windows")]
+        self.decouper_la_fenetre(ctx, _frame);
         // Resultat de la recherche de cle, s'il est arrive.
         if let Some((_, _, reception)) = &self.recherche_cle {
             if let Ok(resultat) = reception.try_recv() {
@@ -3333,6 +3514,26 @@ impl eframe::App for TamagotchiApp {
                                         .on_hover_text(self.i18n.choisir(
                                             "Decoupe la console sur le bureau. Si votre carte graphique refuse la transparence, vous voyez un carre noir : decochez.",
                                             "Cuts the console out on the desktop. If your graphics card refuses transparency you get a black square: uncheck this.",
+                                        ))
+                                        .changed()
+                                    {
+                                        self.retenir_la_partie();
+                                    }
+                                    // Le repli n'existe que sous Windows :
+                                    // macOS compose la transparence sans faute,
+                                    // et X ne connait pas ce decoupage la.
+                                    #[cfg(target_os = "windows")]
+                                    if ui
+                                        .checkbox(
+                                            &mut self.couleur_cle_active,
+                                            self.i18n.choisir(
+                                                "Decouper la fenetre a la forme de la coque",
+                                                "Cut the window to the shape of the shell",
+                                            ),
+                                        )
+                                        .on_hover_text(self.i18n.choisir(
+                                            "A cocher si un carre noir entoure la console en mode jeu. Certaines cartes graphiques refusent de composer une transparence, et aucune demande du programme n'y change rien : le systeme decoupe alors la fenetre lui meme. C'est un contournement et non une reparation, le contour devient net au lieu d'etre fondu, mais il marche partout.",
+                                            "Tick this if a black square surrounds the console in game mode. Some graphics cards refuse to compose transparency, and nothing the program asks will change that: the system then cuts the window itself. It is a workaround rather than a repair, the outline becomes crisp instead of faded, but it works everywhere.",
                                         ))
                                         .changed()
                                     {

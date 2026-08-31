@@ -537,6 +537,20 @@ pub struct DernierePartie {
     /// decouper devient alors un defaut, pas un agrement.
     #[serde(default = "vrai")]
     pub fond_transparent: bool,
+    /// Repli de Windows : une couleur devient transparente a l'affichage. Il
+    /// sert quand la carte refuse la composition par pixel et rend un carre
+    /// noir a la place.
+    #[serde(default)]
+    pub couleur_cle_active: bool,
+    #[serde(default = "magenta")]
+    pub couleur_cle: [u8; 3],
+}
+
+/// Couleur de transparence par defaut. Un magenta franc, qui n'apparait ni
+/// dans les coques ni dans l'ecran de la console : tout pixel de cette teinte
+/// devient un trou, autant en choisir une qu'on ne dessine jamais.
+fn magenta() -> [u8; 3] {
+    [255, 0, 255]
 }
 
 fn vrai() -> bool {
@@ -570,6 +584,8 @@ impl Default for DernierePartie {
             touches: crate::touches::Touches::default(),
             souris: crate::touches::Souris::default(),
             fond_transparent: true,
+            couleur_cle_active: false,
+            couleur_cle: magenta(),
             langue: langue_par_defaut(),
         }
     }

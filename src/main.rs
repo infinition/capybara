@@ -50,25 +50,26 @@ fn main() -> eframe::Result<()> {
     let mut native_options =
         eframe::NativeOptions { viewport: fenetre, ..Default::default() };
 
-    // Sous Windows, wgpu choisit son moteur selon la machine. DX12 sait
-    // composer une surface avec de la transparence par pixel ; Vulkan y
-    // annonce le plus souvent l'opacite seule, et le mode jeu se retrouve
-    // alors dans un carre noir au lieu d'etre decoupe sur le bureau. Le meme
-    // binaire marchait donc sur une machine et pas sur la suivante.
+    // Sous Windows, wgpu choisit son moteur selon la machine, et ce choix
+    // decide de la transparence du mode jeu. Une chaine d'echange DX12 sur une
+    // fenetre ordinaire n'expose aucun mode de composition autre qu'opaque :
+    // la coque se retrouve alors dans un carre noir, quoi qu'on demande.
+    // Vulkan, lui, sait composer une surface avec de la transparence par pixel
+    // sous Windows comme sous Linux.
     //
-    // On demande DX12, mais seulement apres avoir verifie qu'un adaptateur
-    // existe. L'imposer sans regarder est pire que le defaut d'origine : sans
-    // adaptateur, wgpu n'en trouve aucun et l'application ne s'ouvre pas du
-    // tout.
+    // Le meme binaire etait donc decoupe sur une machine et enferme sur la
+    // suivante, selon le moteur tire au sort. On demande Vulkan, mais seulement
+    // apres avoir verifie qu'un adaptateur existe : l'imposer sans regarder
+    // empecherait l'application de s'ouvrir la ou il manque.
     #[cfg(target_os = "windows")]
     {
         use eframe::wgpu;
         let sonde = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::DX12,
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
-        if !sonde.enumerate_adapters(wgpu::Backends::DX12).is_empty() {
-            native_options.wgpu_options.supported_backends = wgpu::Backends::DX12;
+        if !sonde.enumerate_adapters(wgpu::Backends::VULKAN).is_empty() {
+            native_options.wgpu_options.supported_backends = wgpu::Backends::VULKAN;
         }
     }
 
