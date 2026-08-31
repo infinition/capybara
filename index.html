@@ -221,19 +221,15 @@ footer p{max-width:78ch;margin:0 0 12px}
     </a>
     <ol class="steps">
       <li data-t="step.win_unzip">Unzip it wherever you like. Nothing is installed.</li>
-      <li data-t="step.win_run">Run capybara.exe. Windows may warn that the publisher is unknown: the executable is not signed with a commercial certificate.<code>capybara.exe</code>. Windows peut prévenir que l'éditeur est inconnu : l'exécutable n'est pas signé par un certificat commercial.</li>
+      <li data-t="step.win_run">Run <code>capybara.exe</code>. Windows may warn that the publisher is unknown: the executable is not signed with a commercial certificate.</li>
     </ol>
-    <p class="panel-note" data-t="note.win">64-bit Windows. Your games go in %APPDATA%\Capybara\data, never next to the program.<code>%APPDATA%\Capybara\data</code>, jamais à côté du programme.</p>
+    <p class="panel-note" data-t="note.win">64-bit Windows. Your games go in <code>%APPDATA%\Capybara\data</code>, never next to the program.</p>
   </div>
 
   <div class="panel" data-panel="mac">
     <a class="get" href="https://github.com/infinition/capybara/releases/latest" data-asset="macos-apple-silicon.zip">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 12l5 5 5-5M4 20h16"/></svg>
-      <span><span data-t="get.mac_arm">Download for Apple Silicon Mac</span><span class="file" data-file>capybara · zip · arm64</span></span>
-    </a>
-    <a class="get" href="https://github.com/infinition/capybara/releases/latest" data-asset="macos-intel.zip">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 12l5 5 5-5M4 20h16"/></svg>
-      <span><span data-t="get.mac_intel">Download for Intel Mac</span><span class="file" data-file>capybara · zip · x86_64</span></span>
+      <span><span data-t="get.mac_arm">Download for macOS</span><span class="file" data-file>capybara · zip · arm64</span></span>
     </a>
     <ol class="steps">
       <li data-t="step.mac_drag">Open the archive and drag Capybara into Applications.</li>
@@ -242,7 +238,7 @@ footer p{max-width:78ch;margin:0 0 12px}
       </li>
       <li data-t="step.mac_open">Open Capybara from Launchpad. macOS asks nothing after that.</li>
     </ol>
-    <p class="panel-note" data-t="note.mac">Two native builds, Apple Silicon and Intel. Your games go in ~/Library/Application Support/Capybara.<code>~/Library/Application Support/Capybara</code>.</p>
+    <p class="panel-note" data-t="note.mac">Apple Silicon. On an Intel Mac, build from source. Your games go in <code>~/Library/Application Support/Capybara</code>.</p>
   </div>
 
   <div class="panel" data-panel="linux">
@@ -262,7 +258,7 @@ footer p{max-width:78ch;margin:0 0 12px}
         <span class="cmd"><code>sudo dpkg -i capybara-*.deb</code></span>
       </li>
     </ol>
-    <p class="panel-note" data-t="note.linux">x86_64. Your games go in ~/.local/share/capybara.<code>~/.local/share/capybara</code>.</p>
+    <p class="panel-note" data-t="note.linux">x86_64. Your games go in <code>~/.local/share/capybara</code>.</p>
   </div>
 
   <div class="note warn">
@@ -329,7 +325,7 @@ footer p{max-width:78ch;margin:0 0 12px}
   <div class="sec-head"><span class="sec-code">SRC</span><h2 data-t="src.h2">Build it yourself</h2></div>
   <p class="sec-intro" data-t="src.intro">Nothing obliges you to trust a binary. The code is open and building takes one line.</p>
   <div class="cmd"><code>git clone https://github.com/infinition/capybara &amp;&amp; cd capybara &amp;&amp; cargo build --release</code></div>
-  <p class="panel-note" data-t="src.note">The binary lands in target/release/capybara. The reverse engineering probes live in examples/ and stay in the repository, because the work continues.<code>target/release/capybara</code>. Les sondes de rétro-ingénierie sont dans <code>examples/</code> et restent dans le dépôt, parce que le travail continue.</p>
+  <p class="panel-note" data-t="src.note">The binary lands in <code>target/release/capybara</code>. The reverse engineering probes live in <code>examples/</code> and stay in the repository, because the work continues.</p>
 </section>
 
 <footer>
@@ -403,20 +399,19 @@ footer p{max-width:78ch;margin:0 0 12px}
     "get.h2":"Télécharger",
     "get.intro":"Choisissez votre système. Les paquets sont construits par la chaîne de publication du dépôt, à partir du code que vous pouvez lire.",
     "get.win":"Télécharger pour Windows",
-    "get.mac_arm":"Télécharger pour Mac Apple Silicon",
-    "get.mac_intel":"Télécharger pour Mac Intel",
+    "get.mac_arm":"Télécharger pour macOS",
     "get.appimage":"Télécharger l'AppImage",
     "get.deb":"Télécharger le paquet Debian",
     "step.win_unzip":"Décompressez l'archive où vous voulez. Rien ne s'installe.",
-    "step.win_run":"Lancez ",
-    "note.win":"Windows 64 bits. Vos parties vont dans ",
+    "step.win_run":"Lancez <code>capybara.exe</code>. Windows peut prévenir que l'éditeur est inconnu : l'exécutable n'est pas signé par un certificat commercial.",
+    "note.win":"Windows 64 bits. Vos parties vont dans <code>%APPDATA%\\Capybara\\data</code>, jamais à côté du programme.",
     "step.mac_drag":"Ouvrez l'archive et glissez Capybara dans Applications.",
     "step.mac_quarantine":"L'application n'est pas signée par un certificat Apple, macOS refuse donc le premier lancement. Levez la mise en quarantaine une fois :",
     "step.mac_open":"Ouvrez Capybara depuis le Launchpad. macOS ne demande plus rien ensuite.",
-    "note.mac":"Deux constructions natives, Apple Silicon et Intel. Vos parties vont dans ",
+    "note.mac":"Apple Silicon. Sur un Mac Intel, compilez depuis la source. Vos parties vont dans <code>~/Library/Application Support/Capybara</code>.",
     "step.appimage_exec":"Pour l'AppImage, rendez le fichier exécutable puis lancez le :",
     "step.deb_install":"Pour le paquet Debian :",
-    "note.linux":"x86_64. Vos parties vont dans ",
+    "note.linux":"x86_64. Vos parties vont dans <code>~/.local/share/capybara</code>.",
     "need.title":"Il vous faut votre propre console.",
     "need.why":"Tamagotchi Paradise est un produit toujours en vente, pas une console abandonnée. Rien ici ne remplace son achat, et rien ici ne permet d'y jouer sans elle : il faut posséder physiquement un boîtier, l'ouvrir, et lire sa propre mémoire. Ce que Capybara vous rend, c'est ce que vous avez déjà payé, sur un écran qui ne tient pas sur une pile bouton. C'est la ligne honnête, et le projet s'y tient même quand elle rend le logiciel plus difficile à prendre en main.",
     "need.body":"Capybara ne distribue aucune donnée de jeu, et ne le fera jamais. Vous fournissez un dump de la flash de votre appareil, 16 Mo, et sa clé, lue en SWD et gravée dans les fusibles de la puce. C'est la seule façon honnête et licite de s'en servir : vous émulez la machine que vous possédez déjà. Sans eux, l'application s'ouvre et vous les demande.",
@@ -456,7 +451,7 @@ footer p{max-width:78ch;margin:0 0 12px}
     "state.note":"Derrière tout cela : le brochage, la vraie carte mémoire, le format des load tables Sonix, la dérivation de clé AES, et les seize défauts de décodage ARMv7-M trouvés en faisant tourner du vrai code. Tout a été mesuré sur le matériel, rien n'a été supposé.",
     "src.h2":"Compiler soi-même",
     "src.intro":"Rien n'oblige à faire confiance à un binaire. Le code est ouvert et la compilation tient en une ligne.",
-    "src.note":"Le binaire arrive dans ",
+    "src.note":"Le binaire arrive dans <code>target/release/capybara</code>. Les sondes de rétro-ingénierie sont dans <code>examples/</code> et restent dans le dépôt, parce que le travail continue.",
     "legal.1":"Capybara est un travail indépendant de rétro-ingénierie à des fins d'interopérabilité. Il n'est ni affilié, ni approuvé, ni lié à Bandai. Tamagotchi et Tamagotchi Paradise sont des marques de Bandai. Aucun firmware, aucune ROM, aucune clé et aucun élément graphique ou sonore de la console n'est contenu dans ce dépôt ni dans les exécutables publiés.",
     "legal.2":"Distribué sous licence GNU General Public License v3.0.",
     "legal.coffee":"Soutenir ce travail"

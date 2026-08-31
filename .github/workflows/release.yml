@@ -38,12 +38,10 @@ jobs:
           - os: ubuntu-22.04
             cible: x86_64-unknown-linux-gnu
             nom: linux-x64
-          # macOS 13 tourne sur Intel, macOS 14 sur Apple Silicon. Deux
-          # constructions natives coutent moins cher a maintenir qu'un binaire
-          # universel assemble a la main.
-          - os: macos-13
-            cible: x86_64-apple-darwin
-            nom: macos-intel
+          # Apple Silicon seulement. Les images macOS Intel sont en fin de vie
+          # chez GitHub et la file ne se vidait plus : le travail restait en
+          # attente d'un runner pendant que les trois autres avaient fini. Un
+          # Mac Intel compile depuis la source.
           - os: macos-14
             cible: aarch64-apple-darwin
             nom: macos-apple-silicon
@@ -194,8 +192,7 @@ jobs:
           | Windows | `windows-x64.zip` |
           | Debian, Ubuntu | `linux-x64.deb` |
           | Autres Linux | `linux-x64.AppImage`, a rendre executable |
-          | macOS Intel | `macos-intel.zip` |
-          | macOS Apple Silicon | `macos-apple-silicon.zip` |
+          | macOS | `macos-apple-silicon.zip`, Apple Silicon |
 
           Sur macOS le bundle n'est pas signe. Gatekeeper annonce alors que
           l'application est endommagee, ce qui est faux : c'est le message
