@@ -9,7 +9,7 @@ use crate::audio::AudioEngine;
 use crate::emulator::Machine;
 use crate::gui::{ActiveModal, GuiWidgets, ShellColor};
 use crate::hw_bridge::{FlashInspector, UartBridge};
-use crate::i18n::I18n;
+use crate::i18n::{I18n, Language};
 use crate::ui::{ConsolePanel, CpuPanel, DisasmPanel, LcdPanel, MemoryPanel};
 
 /// Entete repliable du menu du clic droit, une seule section ouverte a la fois.
@@ -37,10 +37,10 @@ fn section<R>(
 }
 
 /// Ouvre le choix d'une image.
-fn choisir_une_image() -> Option<std::path::PathBuf> {
+fn choisir_une_image(i18n: &I18n) -> Option<std::path::PathBuf> {
     rfd::FileDialog::new()
         .add_filter("Image", &["png", "jpg", "jpeg", "bmp", "gif", "webp"])
-        .set_title("Choisir une image")
+        .set_title(i18n.choisir("Choisir une image", "Choose an image"))
         .pick_file()
 }
 
@@ -53,21 +53,46 @@ fn cadrage_reglable(
     ui: &mut egui::Ui,
     cadrage: &mut crate::gui::fond::Cadrage,
     quoi: &str,
+    i18n: &I18n,
 ) -> (bool, bool) {
     let mut change = false;
+    // Trois decimales et un pas fin : un curseur large de deux cents pixels
+    // pour une course de trois ne permettait pas de poser une image au pixel
+    // pres. La valeur reste saisissable au clavier, et les fleches la font
+    // avancer d'un cran.
     change |= ui
-        .add(egui::Slider::new(&mut cadrage.zoom, 0.1..=4.0).text(format!("zoom {}", quoi)))
+        .add(
+            egui::Slider::new(&mut cadrage.zoom, 0.1..=4.0)
+                .text(format!("zoom {}", quoi))
+                .fixed_decimals(3)
+                .step_by(0.001),
+        )
         .changed();
     change |= ui
-        .add(egui::Slider::new(&mut cadrage.dx, -1.5..=1.5).text("gauche / droite"))
+        .add(
+            egui::Slider::new(&mut cadrage.dx, -1.5..=1.5)
+                .text(i18n.choisir("gauche / droite", "left / right"))
+                .fixed_decimals(3)
+                .step_by(0.001),
+        )
         .changed();
     change |= ui
-        .add(egui::Slider::new(&mut cadrage.dy, -1.5..=1.5).text("haut / bas"))
+        .add(
+            egui::Slider::new(&mut cadrage.dy, -1.5..=1.5)
+                .text(i18n.choisir("haut / bas", "up / down"))
+                .fixed_decimals(3)
+                .step_by(0.001),
+        )
         .changed();
     change |= ui
-        .add(egui::Slider::new(&mut cadrage.rotation, -180.0..=180.0).text("rotation"))
+        .add(
+            egui::Slider::new(&mut cadrage.rotation, -180.0..=180.0)
+                .text("rotation")
+                .fixed_decimals(2)
+                .step_by(0.1),
+        )
         .changed();
-    if ui.button(format!("Recentrer le {}", quoi)).clicked() {
+    if ui.button(format!("{} {}", i18n.choisir("Recentrer le", "Center"), quoi)).clicked() {
         *cadrage = Default::default();
         change = true;
     }
@@ -110,6 +135,8 @@ fn open_dossier(chemin: &std::path::Path) -> std::io::Result<()> {
 pub enum Onglet {
     /// Chargement du dump, console du firmware, vitesse et diagnostic.
     Console,
+    /// Connexion serie, captures et console UART.
+    Uart,
     /// Points de reprise et emplacements de sauvegarde.
     Sauvegardes,
     /// Registres, memoire, desassemblage. Ces panneaux coutent plus cher a
@@ -118,6 +145,8 @@ pub enum Onglet {
     Inspection,
     /// Habillage de la coque.
     Personnalisation,
+    /// Mode d'emploi, et liens du projet.
+    Aide,
 }
 
 /// Ce que la fenetre montre.
@@ -134,6 +163,19 @@ pub enum Mode {
     Jeu,
     /// La fenetre complete, avec tous les panneaux.
     Inspection,
+}
+
+/// Ce que la fenetre de saisie du nom doit faire une fois validee.
+///
+/// Le meme champ de texte sert aux deux : nommer un emplacement pour y ranger
+/// la partie en cours, ou nommer la partie qu'on veut recommencer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ButDeLaSaisie {
+    /// Attache l'etat en cours a un emplacement neuf.
+    EnregistrerSous,
+    /// Ouvre un emplacement neuf : la flash revient a l'image du dump et la
+    /// console redemarre dessus.
+    PartieNeuve,
 }
 
 pub struct TamagotchiApp {
@@ -198,6 +240,18 @@ pub struct TamagotchiApp {
     /// peut pas porter de champ de texte utilisable : il se referme au premier
     /// clic ailleurs.
     saisie_sauvegarde: Option<String>,
+    /// Ce que la fenetre de saisie fera du nom entre.
+    but_de_la_saisie: ButDeLaSaisie,
+    /// Emplacement dont la suppression attend une confirmation.
+    suppression_demandee: Option<String>,
+    /// Verification des mises a jour, a la demande.
+    maj: crate::maj::Maj,
+    /// Correspondance clavier, reglable et retenue.
+    touches: crate::touches::Touches,
+    /// Commande dont on attend la prochaine touche frappee.
+    capture_touche: Option<crate::touches::Commande>,
+    /// Ce que font les boutons de la souris sur l'ecran.
+    souris: crate::touches::Souris,
     /// Le papier doit etre relu a la prochaine image.
     ///
     /// Il faut un contexte egui pour en faire une texture, et le chargement
@@ -272,12 +326,21 @@ pub struct TamagotchiApp {
     /// La dette est bornee : apres un a coup de l'interface, il ne faut pas que
     /// l'emulation reparte en trombe pour se rattraper.
     pub cycles_dus: f64,
+    /// Icone de zone de notification. Son absence n'empeche pas l'application
+    /// de fonctionner sur un bureau qui ne fournit pas ce service.
+    tray: Option<crate::tray::Tray>,
 }
 
 impl TamagotchiApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let audio = AudioEngine::new();
         let i18n = I18n::default();
+        let message_initial = i18n
+            .choisir(
+                "Capybara est pret, emulation materielle Paradise.",
+                "Capybara is ready, Paradise hardware emulation.",
+            )
+            .to_string();
         let machine = Machine::new();
 
         // Le serveur local reste eteint au demarrage. Il coute une copie de la
@@ -302,7 +365,7 @@ impl TamagotchiApp {
             hex_base_addr: 0x6001_1000,
             last_frame_time: std::time::Instant::now(),
             load_path_input: String::new(),
-            status_msg: Some("Tamagotchi Paradise Hardware Emulation Ready.".to_string()),
+            status_msg: Some(message_initial),
             flash_inspector: FlashInspector::new(),
             active_modal: ActiveModal::None,
             disasm_view_addr: 0x6001_1000,
@@ -322,6 +385,12 @@ impl TamagotchiApp {
             coque_texture: None,
             papier_a_relire: true,
             saisie_sauvegarde: None,
+            but_de_la_saisie: ButDeLaSaisie::EnregistrerSous,
+            suppression_demandee: None,
+            maj: crate::maj::Maj::default(),
+            touches: crate::touches::Touches::default(),
+            capture_touche: None,
+            souris: crate::touches::Souris::default(),
             partage,
             port_web,
             serveur_actif: None,
@@ -345,6 +414,7 @@ impl TamagotchiApp {
             notes: Vec::new(),
             vitesse: 1.0,
             cycles_dus: 0.0,
+            tray: crate::tray::Tray::new(&cc.egui_ctx).ok(),
         };
         // La console reprend ou elle en etait, comme un vrai Tamagotchi
         // qu'on rallume : le dump et l'emplacement du dernier lancement sont
@@ -379,28 +449,38 @@ impl TamagotchiApp {
                 // relire depuis son demarrage, sinon il continue sur l'etat
                 // vide qu'il avait deja en memoire. On ne remet en marche que ce
                 // qui tournait deja : un dump non demarrable doit le rester.
+                // Les dumps ont ete extraits pile faible. La flash vient
+                // d'etre reecrite, donc le drapeau est revenu : sans cela le
+                // firmware affiche son message de pile et ne va pas plus loin.
+                self.machine.remplacer_la_pile();
                 let tournait = self.machine.is_running;
                 self.machine.reset();
                 self.machine.is_running = tournait;
                 self.historique.vider();
-                self.status_msg = Some(format!("Partie {} chargee", nom));
+                self.status_msg = Some(format!("{} {}", self.i18n.choisir("Partie chargee :", "Game loaded:"), nom));
             }
             Ok(false) => {
                 // La flash est revenue a l'image du dump : la console doit
                 // repartir dessus, sinon elle continue sur l'etat en memoire de
                 // la partie precedente et l'ecran ne bouge pas.
+                // Meme raison : l'image du dump porte le drapeau de pile usee.
+                self.machine.remplacer_la_pile();
                 let tournait = self.machine.is_running;
                 self.machine.reset();
                 self.machine.is_running = tournait;
                 self.historique.vider();
-                self.status_msg = Some(format!("Nouvelle partie {}", nom));
+                self.status_msg = Some(format!("{} {}", self.i18n.choisir("Nouvelle partie", "New game"), nom));
             }
             Err(e) => {
-                self.status_msg = Some(format!("Sauvegarde illisible : {}", e));
+                self.status_msg = Some(format!("{} : {}", self.i18n.choisir("Sauvegarde illisible", "Unreadable save"), e));
                 return;
             }
         }
         self.emplacement_choisi = nom;
+        crate::emulator::sauvegarde::retenir_emplacement(
+            &empreinte,
+            &self.emplacement_choisi,
+        );
         self.rafraichir_emplacements();
         self.retenir_la_partie();
         if let Some(empreinte) = self.machine.empreinte.clone() {
@@ -410,6 +490,44 @@ impl TamagotchiApp {
             );
             self.reprises.ouvrir(dossier);
         }
+    }
+
+    /// Donne un nom a la partie courante sans recharger la flash ni remettre
+    /// le processeur a zero. Si le nom existe deja, il conserve le comportement
+    /// annonce par l'interface et ouvre cet emplacement.
+    fn creer_emplacement_depuis_partie_courante(&mut self, nom: String) {
+        let nom = nettoyer_nom(&nom);
+        if nom.is_empty() {
+            return;
+        }
+        let Some(empreinte) = self.machine.empreinte.clone() else {
+            return;
+        };
+        let chemin = crate::emulator::sauvegarde::chemin(&empreinte, &nom);
+        if chemin.exists() {
+            self.ouvrir_emplacement(nom);
+            return;
+        }
+        if let Err(e) = self.machine.creer_sauvegarde_depuis_etat(chemin) {
+            self.status_msg = Some(format!("{} : {}", self.i18n.choisir("Sauvegarde non creee", "Save not created"), e));
+            return;
+        }
+        self.emplacement_choisi = nom;
+        crate::emulator::sauvegarde::retenir_emplacement(
+            &empreinte,
+            &self.emplacement_choisi,
+        );
+        self.rafraichir_emplacements();
+        self.retenir_la_partie();
+        self.reprises.ouvrir(crate::emulator::sauvegarde::dossier_reprises(
+            &empreinte,
+            &self.emplacement_choisi,
+        ));
+        self.status_msg = Some(format!(
+            "{} {}",
+            self.i18n.choisir("Partie courante enregistree dans", "Current game saved in"),
+            self.emplacement_choisi
+        ));
     }
 
     /// Note le dump et l'emplacement en cours, pour les retrouver au prochain
@@ -437,6 +555,9 @@ impl TamagotchiApp {
                 coque: self.shell_color.nom().to_string(),
                 zoom_jeu: self.zoom_jeu,
                 toujours_devant: self.toujours_devant,
+                langue: self.i18n.language().code().to_string(),
+                touches: self.touches.clone(),
+                souris: self.souris,
             },
         );
     }
@@ -456,6 +577,13 @@ impl TamagotchiApp {
         self.audio.hauteur = if partie.hauteur > 0.0 { partie.hauteur } else { 1.0 };
         self.zoom_jeu = if partie.zoom_jeu > 0.0 { partie.zoom_jeu.clamp(0.5, 3.0) } else { 1.0 };
         self.toujours_devant = partie.toujours_devant;
+        self.touches = partie.touches.clone();
+        self.souris = partie.souris;
+        self.i18n.set_language(if partie.langue == "en" {
+            Language::En
+        } else {
+            Language::Fr
+        });
 
         let chemin = std::path::PathBuf::from(&partie.dump);
         if !chemin.is_file() {
@@ -493,12 +621,25 @@ impl TamagotchiApp {
         }
         self.derniere_ecriture = std::time::Instant::now();
         if let Err(e) = self.machine.ecrire_sauvegarde() {
-            self.status_msg = Some(format!("Sauvegarde non ecrite : {}", e));
+            self.status_msg = Some(format!("{} : {}", self.i18n.choisir("Sauvegarde non ecrite", "Save not written"), e));
         }
     }
 
     fn load_firmware(&mut self, path: std::path::PathBuf) {
-        self.load_path_input = path.to_string_lossy().to_string();
+        let nouveau_chemin = path.to_string_lossy().to_string();
+        if self.load_path_input != nouveau_chemin {
+            if let Err(e) = self.machine.ecrire_sauvegarde() {
+                self.status_msg = Some(format!(
+                    "{} : {}",
+                    self.i18n.choisir(
+                        "Changement de console annule, sauvegarde non ecrite",
+                        "Console switch cancelled, save not written",
+                    ),
+                    e
+                ));
+                return;
+            }
+        }
         self.machine.console.clear();
         self.appuis.clear();
         self.phases_encodeur.clear();
@@ -507,6 +648,9 @@ impl TamagotchiApp {
         self.historique.vider();
         match self.machine.load_firmware_file(&path) {
             Ok(report) => {
+                self.load_path_input = nouveau_chemin;
+                self.ecran = None;
+                self.table_scenes = None;
                 // Les dumps Earth et Land ont ete extraits pile faible : sans
                 // cela le firmware affiche son message et s'eteint aussitot.
                 self.machine.remplacer_la_pile();
@@ -527,14 +671,22 @@ impl TamagotchiApp {
                 self.machine.bus.mmio_trace.clear();
                 self.shell_color = ShellColor::pour_edition(self.machine.edition);
                 self.status_msg = Some(format!(
-                    "{} charge, coque {}",
+                    "{} {}, {} {}",
                     self.machine.edition.nom(),
+                    self.i18n.choisir("charge", "loaded"),
+                    self.i18n.choisir("coque", "shell"),
                     self.shell_color.nom()
                 ));
                 self.rafraichir_emplacements();
-                self.ouvrir_emplacement(
-                    crate::emulator::sauvegarde::EMPLACEMENT_PAR_DEFAUT.to_string(),
-                );
+                let emplacement = self
+                    .machine
+                    .empreinte
+                    .as_deref()
+                    .and_then(crate::emulator::sauvegarde::dernier_emplacement)
+                    .unwrap_or_else(|| {
+                        crate::emulator::sauvegarde::EMPLACEMENT_PAR_DEFAUT.to_string()
+                    });
+                self.ouvrir_emplacement(emplacement);
                 // Le papier suit la console : il est relu a chaque changement.
                 self.papier_a_relire = true;
             }
@@ -631,6 +783,23 @@ impl TamagotchiApp {
     /// n'est pas ecoulee. Les deux se cumulent : relacher le pointeur pendant
     /// une impulsion ne coupe pas l'appui avant terme.
     fn appliquer_entrees(&mut self) {
+        let reveil_demande = !self.appuis.is_empty()
+            || !self.maintenus.is_empty()
+            || !self.phases_encodeur.is_empty();
+        if reveil_demande && self.machine.reveiller_par_broche() {
+            // Le reset remet le compteur de cycles a zero. Les echeances des
+            // impulsions appartenaient a l'ancien compteur et resteraient
+            // sinon actives pendant une duree demesuree.
+            self.appuis.clear();
+            self.maintenus.clear();
+            self.phases_encodeur.clear();
+            for broche in Self::COMMANDES {
+                self.machine.relacher(broche);
+            }
+            self.machine.relacher(Machine::ENCODEUR_1);
+            self.machine.relacher(Machine::ENCODEUR_2);
+            return;
+        }
         let maintenant = self.machine.cpu.cycles;
         self.appuis.retain(|_, fin| *fin > maintenant);
         for broche in Self::COMMANDES {
@@ -670,10 +839,10 @@ impl TamagotchiApp {
                 self.tenus_distants.clear();
                 self.phases_encodeur.clear();
                 self.debit_depart = (self.machine.cpu.cycles, std::time::Instant::now());
-                self.status_msg = Some(format!("Retour a {} pas executes.", cycles));
+                self.status_msg = Some(format!("{} {} {}.", self.i18n.choisir("Retour a", "Restored at"), cycles, self.i18n.choisir("pas executes", "executed steps")));
             }
             None => {
-                self.status_msg = Some("Aucun instantane a restaurer.".to_string());
+                self.status_msg = Some(self.i18n.choisir("Aucun instantane a restaurer.", "No snapshot to restore.").to_string());
             }
         }
     }
@@ -722,6 +891,21 @@ impl TamagotchiApp {
         partage.hauteur = self.machine.periph.display.height;
         partage.trames = self.machine.periph.display.trames;
         partage.diagnostic = rapport;
+        partage.edition = self.machine.edition.nom().to_string();
+        partage.sauvegarde = self.emplacement_choisi.clone();
+        partage.langue = self.i18n.language().code().to_string();
+        partage.en_marche = self.machine.is_running;
+        partage.vitesse = (self.vitesse * 100.0).clamp(0.0, 400.0) as u32;
+        partage.son = self.audio.enabled;
+        partage.volume = (self.audio.volume * 100.0).clamp(0.0, 100.0) as u8;
+        partage.titre = self.fond.titre.clone();
+        let palette = self.shell_color.couleurs();
+        partage.corps = [palette.corps.r(), palette.corps.g(), palette.corps.b()];
+        partage.calotte = [palette.calotte.r(), palette.calotte.g(), palette.calotte.b()];
+        partage.ombre = [palette.ombre.r(), palette.ombre.g(), palette.ombre.b()];
+        partage.bouton = [palette.bouton.r(), palette.bouton.g(), palette.bouton.b()];
+        partage.accent = [palette.accent.r(), palette.accent.g(), palette.accent.b()];
+        partage.motif = [palette.motif.r(), palette.motif.g(), palette.motif.b()];
     }
 
     /// Rapport d'etat copiable, pour signaler un blocage sans capture d'ecran.
@@ -751,7 +935,7 @@ impl TamagotchiApp {
         let console: String = self.machine.console.chars().rev().take(600).collect::<Vec<_>>()
             .into_iter().rev().collect();
         format!(
-            "== diagnostic emulateur Tamagotchi Paradise\n\
+            "== diagnostic Capybara\n\
              firmware      {}\n\
              pas executes  {}   debit {:.1} millions par seconde\n\
              vitesse       demandee {}   atteinte {:.2} fois le temps reel\n\
@@ -907,6 +1091,7 @@ impl TamagotchiApp {
             coque: self.coque_texture.as_ref(),
             papier: self.fond_texture.as_ref(),
             chapeau: self.chapeau_texture.as_ref(),
+            masque_impose: !self.fond.masque.is_empty(),
         };
         let commandes = LcdPanel::render(
             ui,
@@ -916,6 +1101,15 @@ impl TamagotchiApp {
             self.shell_color,
             self.angle_molette,
             &habits,
+            // L'animation suit la broche, pas le pointeur : un appui au clavier
+            // enfonce le bouton dessine comme un clic dessus.
+            crate::ui::lcd_panel::Enfonces {
+                a: self.machine.broche_basse(Machine::BOUTON_A),
+                b: self.machine.broche_basse(Machine::BOUTON_B),
+                c: self.machine.broche_basse(Machine::BOUTON_C),
+                molette: self.machine.broche_basse(Machine::BOUTON_MOLETTE),
+            },
+            self.souris,
         );
 
         // Les commandes vont sur les vraies broches : bouton A en P0.9, B en
@@ -1023,7 +1217,7 @@ impl TamagotchiApp {
         // Il etait dans la barre du haut, ou il n'avait rien a voir avec le
         // reste et poussait la barre hors de l'ecran.
         ui.group(|ui| {
-            ui.label(egui::RichText::new("Modele de coque").strong());
+            ui.label(egui::RichText::new(self.i18n.choisir("Modele de coque", "Shell model")).strong());
             ui.horizontal_wrapped(|ui| {
                 for coque in ShellColor::TOUTES {
                     if ui.selectable_label(self.shell_color == coque, coque.nom()).clicked() {
@@ -1032,29 +1226,32 @@ impl TamagotchiApp {
                 }
             });
             ui.label(
-                egui::RichText::new("Donne les couleurs de depart. Chaque reglage ci dessous s'y substitue.")
+                egui::RichText::new(self.i18n.choisir(
+                    "Donne les couleurs de depart. Chaque reglage ci dessous s'y substitue.",
+                    "Provides the base colors. Each setting below overrides them.",
+                ))
                     .small(),
             );
         });
         ui.add_space(8.0);
 
-        ui.label(egui::RichText::new("Habillage de la coque").strong());
+        ui.label(egui::RichText::new(self.i18n.choisir("Habillage de la coque", "Shell appearance")).strong());
         let Some(dossier) = self.dossier_du_papier() else {
-            ui.label(egui::RichText::new("Charge une console d'abord.").small());
+            ui.label(egui::RichText::new(self.i18n.choisir("Charge une console d'abord.", "Load a console first.")).small());
             return;
         };
         let mut change = false;
         let mut recomposer = false;
 
         // --- le fond de coque
-        ui.label(egui::RichText::new("Fond de la coque").strong());
+        ui.label(egui::RichText::new(self.i18n.choisir("Fond de la coque", "Shell background")).strong());
         ui.horizontal(|ui| {
             if ui
-                .button("Image...")
-                .on_hover_text("Couvre l'oeuf entier, derriere tout le reste")
+                .button(self.i18n.choisir("Image...", "Image..."))
+                .on_hover_text(self.i18n.choisir("Couvre l'oeuf entier, derriere tout le reste", "Covers the whole egg behind every other layer"))
                 .clicked()
             {
-                if let Some(chemin) = choisir_une_image() {
+                if let Some(chemin) = choisir_une_image(&self.i18n) {
                     match crate::gui::fond::adopter_image(&chemin, &dossier, "coque") {
                         Ok(nom) => {
                             self.fond.coque_fichier = nom;
@@ -1062,38 +1259,42 @@ impl TamagotchiApp {
                             change = true;
                             recomposer = true;
                         }
-                        Err(e) => self.status_msg = Some(format!("Image refusee : {}", e)),
+                        Err(e) => self.status_msg = Some(format!(
+                            "{} : {}",
+                            self.i18n.choisir("Image refusee", "Image rejected"),
+                            e
+                        )),
                     }
                 }
             }
-            if !self.fond.coque_fichier.is_empty() && ui.button("Retirer").clicked() {
+            if !self.fond.coque_fichier.is_empty() && ui.button(self.i18n.choisir("Retirer", "Remove")).clicked() {
                 self.fond.retirer_le_fond(&dossier);
                 recomposer = true;
             }
         });
         if !self.fond.coque_fichier.is_empty() {
-            let (c, r) = cadrage_reglable(ui, &mut self.fond.coque_cadrage, "fond");
+            let (c, r) = cadrage_reglable(ui, &mut self.fond.coque_cadrage, self.i18n.choisir("fond", "background"), &self.i18n);
             change |= c;
             recomposer |= r;
             change |= ui
-                .checkbox(&mut self.fond.inclut_le_chapeau, "monte jusque sur le chapeau")
+                .checkbox(&mut self.fond.inclut_le_chapeau, self.i18n.choisir("monte jusque sur le chapeau", "extends over the cap"))
                 .changed();
         }
 
         ui.separator();
 
         // --- le papier autour de l'ecran
-        ui.label(egui::RichText::new("Autour de l'ecran").strong());
+        ui.label(egui::RichText::new(self.i18n.choisir("Autour de l'ecran", "Around the screen")).strong());
         ui.horizontal(|ui| {
             if ui
-                .button("Image...")
+                .button(self.i18n.choisir("Image...", "Image..."))
                 .on_hover_text(
                     "L'image se glisse sous la fenetre transparente, comme le papier \
                      imprime de la vraie console.",
                 )
                 .clicked()
             {
-                if let Some(chemin) = choisir_une_image() {
+                if let Some(chemin) = choisir_une_image(&self.i18n) {
                     match crate::gui::fond::adopter_image(&chemin, &dossier, "fond") {
                         Ok(nom) => {
                             self.fond.fichier = nom;
@@ -1101,17 +1302,21 @@ impl TamagotchiApp {
                             change = true;
                             recomposer = true;
                         }
-                        Err(e) => self.status_msg = Some(format!("Image refusee : {}", e)),
+                        Err(e) => self.status_msg = Some(format!(
+                            "{} : {}",
+                            self.i18n.choisir("Image refusee", "Image rejected"),
+                            e
+                        )),
                     }
                 }
             }
-            if !self.fond.fichier.is_empty() && ui.button("Retirer").clicked() {
+            if !self.fond.fichier.is_empty() && ui.button(self.i18n.choisir("Retirer", "Remove")).clicked() {
                 self.fond.retirer_le_papier(&dossier);
                 recomposer = true;
             }
         });
         if !self.fond.fichier.is_empty() {
-            let (c, r) = cadrage_reglable(ui, &mut self.fond.papier, "papier");
+            let (c, r) = cadrage_reglable(ui, &mut self.fond.papier, self.i18n.choisir("papier", "paper"), &self.i18n);
             change |= c;
             recomposer |= r;
         }
@@ -1119,7 +1324,7 @@ impl TamagotchiApp {
         // --- le masque, qui decoupe ce papier la
         ui.horizontal(|ui| {
             if ui
-                .button("Masque...")
+                .button(self.i18n.choisir("Masque...", "Mask..."))
                 .on_hover_text(
                     "Decoupe l'image autour de l'ecran. Noir et blanc : le noir laisse \
                      voir l'image, le blanc la cache, et ce qui est hors de l'image est \
@@ -1127,7 +1332,7 @@ impl TamagotchiApp {
                 )
                 .clicked()
             {
-                if let Some(chemin) = choisir_une_image() {
+                if let Some(chemin) = choisir_une_image(&self.i18n) {
                     match crate::gui::fond::adopter_image(&chemin, &dossier, "masque") {
                         Ok(nom) => {
                             self.fond.masque = nom;
@@ -1135,32 +1340,44 @@ impl TamagotchiApp {
                             change = true;
                             recomposer = true;
                         }
-                        Err(e) => self.status_msg = Some(format!("Image refusee : {}", e)),
+                        Err(e) => self.status_msg = Some(format!(
+                            "{} : {}",
+                            self.i18n.choisir("Image refusee", "Image rejected"),
+                            e
+                        )),
                     }
                 }
             }
-            if !self.fond.masque.is_empty() && ui.button("Retirer").clicked() {
+            if !self.fond.masque.is_empty() && ui.button(self.i18n.choisir("Retirer", "Remove")).clicked() {
                 self.fond.retirer_le_masque(&dossier);
                 recomposer = true;
             }
         });
         if !self.fond.masque.is_empty() {
-            let (c, r) = cadrage_reglable(ui, &mut self.fond.masque_cadrage, "masque");
+            let (c, r) = cadrage_reglable(ui, &mut self.fond.masque_cadrage, self.i18n.choisir("masque", "mask"), &self.i18n);
             change |= c;
             recomposer |= r;
         }
 
         // La fenetre elle meme, taille et position, independamment de l'ecran.
         change |= ui
-            .add(egui::Slider::new(&mut self.fond.fenetre_taille, 0.3..=2.2).text("taille"))
+            .add(egui::Slider::new(&mut self.fond.fenetre_taille, 0.3..=2.2).text(self.i18n.choisir("taille", "size")).fixed_decimals(3).step_by(0.001))
             .changed();
         change |= ui
-            .add(egui::Slider::new(&mut self.fond.fenetre_dy, -0.4..=0.4).text("haut / bas"))
+            .add(egui::Slider::new(&mut self.fond.fenetre_dy, -0.4..=0.4).text(self.i18n.choisir("haut / bas", "up / down")).fixed_decimals(3).step_by(0.001))
             .changed();
         change |= ui
-            .checkbox(&mut self.fond.fenetre_deborde, "peut deborder de la coque")
+            .add(
+                egui::Slider::new(&mut self.fond.fenetre_rotation, -180.0..=180.0)
+                    .text(self.i18n.choisir("rotation du calque", "layer rotation"))
+                    .fixed_decimals(2)
+                    .step_by(0.1),
+            )
             .changed();
-        if ui.button("Fenetre d'origine").clicked() {
+        change |= ui
+            .checkbox(&mut self.fond.fenetre_deborde, self.i18n.choisir("peut deborder de la coque", "may extend beyond the shell"))
+            .changed();
+        if ui.button(self.i18n.choisir("Fenetre d'origine", "Original window")).clicked() {
             self.fond.fenetre_taille = 1.0;
             self.fond.fenetre_dy = 0.0;
             change = true;
@@ -1170,10 +1387,10 @@ impl TamagotchiApp {
 
         // --- le chapeau, quand il n'est pas couvert par le papier general
         if !(!self.fond.coque_fichier.is_empty() && self.fond.inclut_le_chapeau) {
-            ui.label(egui::RichText::new("Chapeau").strong());
+            ui.label(egui::RichText::new(self.i18n.choisir("Chapeau", "Cap")).strong());
             ui.horizontal(|ui| {
                 let mut teinte = self.fond.chapeau_couleur.is_some();
-                if ui.checkbox(&mut teinte, "couleur").changed() {
+                if ui.checkbox(&mut teinte, self.i18n.choisir("couleur", "color")).changed() {
                     self.fond.chapeau_couleur = if teinte {
                         let c = self.shell_color.couleurs().calotte;
                         Some([c.r(), c.g(), c.b()])
@@ -1185,12 +1402,12 @@ impl TamagotchiApp {
                 if let Some(rvb) = &mut self.fond.chapeau_couleur {
                     change |= ui.color_edit_button_srgb(rvb).changed();
                 } else {
-                    ui.label(egui::RichText::new("celle de la coque").small());
+                    ui.label(egui::RichText::new(self.i18n.choisir("celle de la coque", "shell default")).small());
                 }
             });
             ui.horizontal(|ui| {
-                if ui.button("Image du chapeau...").clicked() {
-                    if let Some(chemin) = choisir_une_image() {
+                if ui.button(self.i18n.choisir("Image du chapeau...", "Cap image...")).clicked() {
+                    if let Some(chemin) = choisir_une_image(&self.i18n) {
                         match crate::gui::fond::adopter_image(&chemin, &dossier, "chapeau") {
                             Ok(nom) => {
                                 self.fond.chapeau_fichier = nom;
@@ -1198,17 +1415,21 @@ impl TamagotchiApp {
                                 change = true;
                                 recomposer = true;
                             }
-                            Err(e) => self.status_msg = Some(format!("Image refusee : {}", e)),
+                            Err(e) => self.status_msg = Some(format!(
+                                "{} : {}",
+                                self.i18n.choisir("Image refusee", "Image rejected"),
+                                e
+                            )),
                         }
                     }
                 }
-                if !self.fond.chapeau_fichier.is_empty() && ui.button("Retirer").clicked() {
+                if !self.fond.chapeau_fichier.is_empty() && ui.button(self.i18n.choisir("Retirer", "Remove")).clicked() {
                     self.fond.retirer_le_chapeau(&dossier);
                     recomposer = true;
                 }
             });
             if !self.fond.chapeau_fichier.is_empty() {
-                let (c, r) = cadrage_reglable(ui, &mut self.fond.chapeau_cadrage, "chapeau");
+                let (c, r) = cadrage_reglable(ui, &mut self.fond.chapeau_cadrage, self.i18n.choisir("chapeau", "cap"), &self.i18n);
                 change |= c;
                 recomposer |= r;
             }
@@ -1217,22 +1438,30 @@ impl TamagotchiApp {
 
         // --- le mot imprime au dessus de l'ecran
         change |= ui
-            .checkbox(&mut self.fond.titre_visible, "Mot imprime")
+            .checkbox(&mut self.fond.titre_visible, self.i18n.choisir("Mot imprime", "Printed title"))
             .changed();
         if self.fond.titre_visible {
             change |= ui
                 .add(
                     egui::TextEdit::singleline(&mut self.fond.titre)
-                        .hint_text("TAMAGOTCHI")
+                        .hint_text("CAPYBARA")
                         .desired_width(180.0),
                 )
                 .changed();
             change |= ui
-                .add(egui::Slider::new(&mut self.fond.titre_taille, 0.3..=3.0).text("taille"))
+                .add(egui::Slider::new(&mut self.fond.titre_taille, 0.3..=3.0).text(self.i18n.choisir("taille", "size")).fixed_decimals(3).step_by(0.001))
+                .changed();
+            change |= ui
+                .add(
+                    egui::Slider::new(&mut self.fond.titre_dy, -0.6..=0.6)
+                        .text(self.i18n.choisir("haut / bas", "up / down"))
+                        .fixed_decimals(3)
+                        .step_by(0.001),
+                )
                 .changed();
             ui.horizontal(|ui| {
                 let mut choisie = self.fond.titre_couleur.is_some();
-                if ui.checkbox(&mut choisie, "couleur").changed() {
+                if ui.checkbox(&mut choisie, self.i18n.choisir("couleur", "color")).changed() {
                     self.fond.titre_couleur = if choisie {
                         let a = self.shell_color.couleurs().accent;
                         Some([a.r(), a.g(), a.b()])
@@ -1244,8 +1473,17 @@ impl TamagotchiApp {
                 if let Some(rvb) = &mut self.fond.titre_couleur {
                     change |= ui.color_edit_button_srgb(rvb).changed();
                 } else {
-                    ui.label(egui::RichText::new("celle de la coque").small());
+                    ui.label(egui::RichText::new(self.i18n.choisir("celle de la coque", "shell default")).small());
                 }
+                change |= ui
+                    .add(
+                        egui::DragValue::new(&mut self.fond.titre_opacite)
+                            .speed(0.005)
+                            .range(0.0..=1.0)
+                            .fixed_decimals(2),
+                    )
+                    .on_hover_text(self.i18n.choisir("opacite", "opacity"))
+                    .changed();
             });
         }
 
@@ -1253,13 +1491,15 @@ impl TamagotchiApp {
 
         // --- la vitre autour de la dalle
         change |= ui
-            .checkbox(&mut self.fond.vitre_visible, "Vitre autour de l'ecran")
+            .checkbox(&mut self.fond.vitre_visible, self.i18n.choisir("Vitre autour de l'ecran", "Glass around the screen"))
             .changed();
         if self.fond.vitre_visible {
             change |= ui
                 .add(
                     egui::Slider::new(&mut self.fond.vitre_epaisseur, 0.0..=0.10)
-                        .text("epaisseur"),
+                        .text(self.i18n.choisir("epaisseur", "thickness"))
+                        .fixed_decimals(4)
+                        .step_by(0.0002),
                 )
                 .changed();
             change |= ui
@@ -1267,7 +1507,7 @@ impl TamagotchiApp {
                 .changed();
         } else {
             ui.label(
-                egui::RichText::new("Sans vitre, c'est la dalle qui prend l'arrondi.")
+                egui::RichText::new(self.i18n.choisir("Sans vitre, c'est la dalle qui prend l'arrondi.", "Without glass, the display itself gets rounded corners."))
                     .small()
                     .color(egui::Color32::GRAY),
             );
@@ -1276,14 +1516,14 @@ impl TamagotchiApp {
         ui.separator();
 
         // --- la dalle
-        ui.label(egui::RichText::new("Ecran").strong());
+        ui.label(egui::RichText::new(self.i18n.choisir("Ecran", "Screen")).strong());
         change |= ui
-            .add(egui::Slider::new(&mut self.fond.ecran_taille, 0.3..=2.0).text("taille"))
+            .add(egui::Slider::new(&mut self.fond.ecran_taille, 0.3..=2.0).text(self.i18n.choisir("taille", "size")).fixed_decimals(3).step_by(0.001))
             .changed();
         change |= ui
-            .add(egui::Slider::new(&mut self.fond.ecran_dy, -0.4..=0.4).text("haut / bas"))
+            .add(egui::Slider::new(&mut self.fond.ecran_dy, -0.4..=0.4).text(self.i18n.choisir("haut / bas", "up / down")).fixed_decimals(3).step_by(0.001))
             .changed();
-        if ui.button("Ecran d'origine").clicked() {
+        if ui.button(self.i18n.choisir("Ecran d'origine", "Original screen")).clicked() {
             self.fond.ecran_taille = 1.0;
             self.fond.ecran_dy = 0.0;
             change = true;
@@ -1291,14 +1531,76 @@ impl TamagotchiApp {
 
         ui.separator();
 
+        // --- les trois boutons
+        ui.label(egui::RichText::new(self.i18n.choisir("Boutons", "Buttons")).strong());
+        change |= ui
+            .add(
+                egui::Slider::new(&mut self.fond.boutons_dy, -0.4..=0.4)
+                    .text(self.i18n.choisir("haut / bas", "up / down"))
+                    .fixed_decimals(3)
+                    .step_by(0.001),
+            )
+            .changed();
+        change |= ui
+            .add(
+                egui::Slider::new(&mut self.fond.boutons_ecart, 0.2..=2.5)
+                    .text(self.i18n.choisir("ecartement", "spacing"))
+                    .fixed_decimals(3)
+                    .step_by(0.001),
+            )
+            .changed();
+        change |= ui
+            .add(
+                egui::Slider::new(&mut self.fond.boutons_taille, 0.3..=2.5)
+                    .text(self.i18n.choisir("taille", "size"))
+                    .fixed_decimals(3)
+                    .step_by(0.001),
+            )
+            .changed();
+
+        ui.separator();
+
+        // --- le relief et les ombres
+        ui.label(egui::RichText::new(self.i18n.choisir("Relief", "Depth")).strong());
+        change |= ui
+            .add(
+                egui::Slider::new(&mut self.fond.relief_coque, -1.0..=1.0)
+                    .text(self.i18n.choisir("relief de la coque", "shell depth"))
+                    .fixed_decimals(3)
+                    .step_by(0.001),
+            )
+            .on_hover_text(self.i18n.choisir(
+                "Degrade et reflet, comme sur un plastique bombe. En negatif, la lumiere vient d'en bas.",
+                "Gradient and highlight, like curved plastic. Negative lights it from below.",
+            ))
+            .changed();
+        change |= ui
+            .add(
+                egui::Slider::new(&mut self.fond.ombre_fenetre, -0.25..=0.25)
+                    .text(self.i18n.choisir("ombre du calque", "layer shadow"))
+                    .fixed_decimals(3)
+                    .step_by(0.001),
+            )
+            .changed();
+        change |= ui
+            .add(
+                egui::Slider::new(&mut self.fond.ombre_ecran, -0.25..=0.25)
+                    .text(self.i18n.choisir("ombre de l'ecran", "screen shadow"))
+                    .fixed_decimals(3)
+                    .step_by(0.001),
+            )
+            .changed();
+
+        ui.separator();
+
         // --- les couleurs de la coque et des commandes
-        ui.label(egui::RichText::new("Couleurs").strong());
+        ui.label(egui::RichText::new(self.i18n.choisir("Couleurs", "Colors")).strong());
         for (etiquette, defaut, champ) in [
-            ("corps", self.shell_color.couleurs().corps, 0usize),
-            ("autour de l'ecran", self.shell_color.couleurs().motif, 1),
-            ("traits", self.shell_color.couleurs().ombre, 2),
-            ("boutons", self.shell_color.couleurs().bouton, 3),
-            ("molette", self.shell_color.couleurs().accent, 4),
+            (self.i18n.choisir("corps", "body"), self.shell_color.couleurs().corps, 0usize),
+            (self.i18n.choisir("autour de l'ecran", "around screen"), self.shell_color.couleurs().motif, 1),
+            (self.i18n.choisir("traits", "outlines"), self.shell_color.couleurs().ombre, 2),
+            (self.i18n.choisir("boutons", "buttons"), self.shell_color.couleurs().bouton, 3),
+            (self.i18n.choisir("molette", "wheel"), self.shell_color.couleurs().accent, 4),
         ] {
             ui.horizontal(|ui| {
                 let actuel = match champ {
@@ -1320,14 +1622,32 @@ impl TamagotchiApp {
                 if let Some(rvb) = actuel {
                     change |= ui.color_edit_button_srgb(rvb).changed();
                 } else {
-                    ui.label(egui::RichText::new("celle de la coque").small());
+                    ui.label(egui::RichText::new(self.i18n.choisir("celle de la coque", "shell default")).small());
                 }
+                // L'opacite vit a part de la couleur : une piece qui suit
+                // l'edition peut quand meme devenir translucide.
+                let opacite = match champ {
+                    0 => &mut self.fond.corps_opacite,
+                    1 => &mut self.fond.motif_opacite,
+                    2 => &mut self.fond.bordure_opacite,
+                    3 => &mut self.fond.bouton_opacite,
+                    _ => &mut self.fond.molette_opacite,
+                };
+                change |= ui
+                    .add(
+                        egui::DragValue::new(opacite)
+                            .speed(0.005)
+                            .range(0.0..=1.0)
+                            .fixed_decimals(2),
+                    )
+                    .on_hover_text(self.i18n.choisir("opacite", "opacity"))
+                    .changed();
             });
         }
 
         ui.separator();
         if ui
-            .button("Tout remettre par defaut")
+            .button(self.i18n.choisir("Tout remettre par defaut", "Restore all defaults"))
             .on_hover_text(
                 "Rend a la coque son apparence d'origine. Les images importees sont                  effacees.",
             )
@@ -1355,6 +1675,99 @@ impl TamagotchiApp {
     /// Elle est dessinee dans tous les modes : le mode jeu n'a pas de panneau
     /// ou loger un champ de texte, et le menu contextuel se referme des qu'on
     /// clique dedans.
+    /// Fenetre de confirmation avant d'effacer un emplacement.
+    ///
+    /// Une sauvegarde effacee ne se recupere pas : elle merite une question,
+    /// posee avec le nom sous les yeux.
+    fn dessiner_la_suppression(&mut self, ctx: &Context) {
+        let Some(nom) = self.suppression_demandee.clone() else {
+            return;
+        };
+        let mut ouverte = true;
+        let mut effacer = false;
+        let mut annuler = false;
+        egui::Window::new(self.i18n.choisir("Supprimer cette sauvegarde", "Delete this save"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .open(&mut ouverte)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new(&nom).strong());
+                ui.label(
+                    egui::RichText::new(self.i18n.choisir(
+                        "La partie et tous ses points de reprise seront effaces. C'est definitif.",
+                        "The game and all its recovery points will be erased. This cannot be undone.",
+                    ))
+                    .small(),
+                );
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(
+                            egui::RichText::new(self.i18n.choisir("Supprimer", "Delete"))
+                                .color(egui::Color32::from_rgb(240, 140, 130)),
+                        )
+                        .clicked()
+                    {
+                        effacer = true;
+                    }
+                    if ui.button(self.i18n.choisir("Annuler", "Cancel")).clicked() {
+                        annuler = true;
+                    }
+                });
+            });
+
+        if effacer {
+            self.suppression_demandee = None;
+            self.supprimer_l_emplacement(nom);
+        } else if annuler || !ouverte {
+            self.suppression_demandee = None;
+        }
+    }
+
+    /// Efface un emplacement, apres confirmation.
+    fn supprimer_l_emplacement(&mut self, nom: String) {
+        let Some(empreinte) = self.machine.empreinte.clone() else {
+            return;
+        };
+        // On cesse d'ecrire dedans avant d'effacer : sinon la prochaine
+        // sauvegarde automatique le recreerait dans la foulee. La console, elle,
+        // continue de tourner : effacer un fichier n'est pas une raison de
+        // couper la partie en cours sous les doigts de qui joue. Seule une
+        // nouvelle partie redemarre, et elle demande un nom avant.
+        let c_etait_la_partie_ouverte = self.emplacement_choisi == nom;
+        if c_etait_la_partie_ouverte {
+            self.machine.fermer_sauvegarde();
+            self.reprises.fermer();
+            self.emplacement_choisi.clear();
+        }
+        if let Err(e) = crate::emulator::sauvegarde::supprimer_emplacement(&empreinte, &nom) {
+            self.status_msg = Some(format!(
+                "{} : {}",
+                self.i18n.choisir("Suppression impossible", "Could not delete"),
+                e
+            ));
+            return;
+        }
+        self.rafraichir_emplacements();
+        self.status_msg = Some(if c_etait_la_partie_ouverte {
+            format!(
+                "{} {} {}",
+                self.i18n.choisir("Sauvegarde supprimee :", "Save deleted:"),
+                nom,
+                self.i18n.choisir(
+                    ". La console continue de tourner mais plus rien ne l'enregistre : ouvrez un emplacement ou choisissez Nouvelle partie.",
+                    ". The console keeps running but nothing is being saved: open a slot or choose New game.",
+                )
+            )
+        } else {
+            format!(
+                "{} {}",
+                self.i18n.choisir("Sauvegarde supprimee :", "Save deleted:"),
+                nom
+            )
+        });
+    }
+
     fn dessiner_la_saisie(&mut self, ctx: &Context) {
         let Some(mut nom) = self.saisie_sauvegarde.clone() else {
             return;
@@ -1362,26 +1775,42 @@ impl TamagotchiApp {
         let mut ouverte = true;
         let mut valider = false;
         let mut annuler = false;
-        egui::Window::new("Nouvelle sauvegarde")
+        let titre = match self.but_de_la_saisie {
+            ButDeLaSaisie::EnregistrerSous => self.i18n.choisir("Nouvelle sauvegarde", "Save as"),
+            ButDeLaSaisie::PartieNeuve => self.i18n.choisir("Nouvelle partie", "New game"),
+        };
+        egui::Window::new(titre)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .open(&mut ouverte)
             .show(ctx, |ui| {
-                ui.label(egui::RichText::new("Nom de la partie").small());
+                ui.label(egui::RichText::new(self.i18n.choisir("Nom de la partie", "Game name")).small());
                 let champ = ui.add(
                     egui::TextEdit::singleline(&mut nom)
-                        .hint_text("ma partie")
+                        .hint_text(self.i18n.choisir("ma partie", "my game"))
                         .desired_width(200.0),
                 );
                 champ.request_focus();
                 if champ.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     valider = true;
                 }
+                if self.but_de_la_saisie == ButDeLaSaisie::PartieNeuve {
+                    ui.label(
+                        egui::RichText::new(self.i18n.choisir(
+                            "La console repart a neuf et la partie s'enregistrera ici.",
+                            "The console starts over and the game will be saved here.",
+                        ))
+                        .small(),
+                    );
+                }
                 let existe = self.emplacements.iter().any(|e| *e == nettoyer_nom(&nom));
                 if existe {
                     ui.label(
-                        egui::RichText::new("Ce nom existe deja, il sera ouvert tel quel.")
+                        egui::RichText::new(self.i18n.choisir(
+                            "Ce nom existe deja, il sera ouvert tel quel.",
+                            "This name already exists and will be opened as-is.",
+                        ))
                             .small()
                             .color(egui::Color32::from_rgb(220, 200, 90)),
                     );
@@ -1390,13 +1819,13 @@ impl TamagotchiApp {
                     if ui
                         .add_enabled(
                             !nettoyer_nom(&nom).is_empty(),
-                            egui::Button::new("Creer"),
+                            egui::Button::new(self.i18n.choisir("Creer", "Create")),
                         )
                         .clicked()
                     {
                         valider = true;
                     }
-                    if ui.button("Annuler").clicked() {
+                    if ui.button(self.i18n.choisir("Annuler", "Cancel")).clicked() {
                         annuler = true;
                     }
                 });
@@ -1406,7 +1835,16 @@ impl TamagotchiApp {
             let propre = nettoyer_nom(&nom);
             self.saisie_sauvegarde = None;
             if !propre.is_empty() {
-                self.ouvrir_emplacement(propre);
+                match self.but_de_la_saisie {
+                    // Attacher l'etat en cours a un emplacement neuf.
+                    ButDeLaSaisie::EnregistrerSous => {
+                        self.creer_emplacement_depuis_partie_courante(propre)
+                    }
+                    // Ouvrir un emplacement neuf remet la flash a l'image du
+                    // dump et redemarre la console : c'est deja une partie
+                    // neuve, il n'y a rien a fermer ni a recharger.
+                    ButDeLaSaisie::PartieNeuve => self.ouvrir_emplacement(propre),
+                }
             }
         } else if annuler || !ouverte {
             self.saisie_sauvegarde = None;
@@ -1432,9 +1870,9 @@ impl TamagotchiApp {
     /// Pose un point de reprise tout de suite.
     fn poser_un_point(&mut self) {
         if self.reprises.prendre_maintenant(&self.machine) {
-            self.status_msg = Some("Point de reprise pose.".to_string());
+            self.status_msg = Some(self.i18n.choisir("Point de reprise pose.", "Recovery point created.").to_string());
         } else {
-            self.status_msg = Some("Ouvre une partie avant de poser un point.".to_string());
+            self.status_msg = Some(self.i18n.choisir("Ouvre une partie avant de poser un point.", "Open a game before creating a recovery point.").to_string());
         }
     }
 
@@ -1442,14 +1880,14 @@ impl TamagotchiApp {
     fn importer_un_point(&mut self) {
         let Some(chemin) = rfd::FileDialog::new()
             .add_filter("Instantane", &["tamastate"])
-            .set_title("Importer un instantane")
+            .set_title(self.i18n.choisir("Importer un instantane", "Import a snapshot"))
             .pick_file()
         else {
             return;
         };
         match self.reprises.adopter(&chemin) {
-            Ok(()) => self.status_msg = Some("Instantane importe.".to_string()),
-            Err(e) => self.status_msg = Some(format!("Instantane refuse : {}", e)),
+            Ok(()) => self.status_msg = Some(self.i18n.choisir("Instantane importe.", "Snapshot imported.").to_string()),
+            Err(e) => self.status_msg = Some(format!("{} : {}", self.i18n.choisir("Instantane refuse", "Snapshot rejected"), e)),
         }
     }
 
@@ -1460,7 +1898,7 @@ impl TamagotchiApp {
     /// celui ci.
     fn exporter_l_etat(&mut self) {
         if self.machine.empreinte.is_none() {
-            self.status_msg = Some("Charge une console avant d'exporter.".to_string());
+            self.status_msg = Some(self.i18n.choisir("Charge une console avant d'exporter.", "Load a console before exporting.").to_string());
             return;
         }
         let defaut = format!(
@@ -1471,14 +1909,14 @@ impl TamagotchiApp {
         let Some(chemin) = rfd::FileDialog::new()
             .add_filter("Instantane", &["tamastate"])
             .set_file_name(defaut)
-            .set_title("Exporter l'etat de la console")
+            .set_title(self.i18n.choisir("Exporter l'etat de la console", "Export console state"))
             .save_file()
         else {
             return;
         };
         match self.machine.instantane().ecrire(&chemin) {
-            Ok(()) => self.status_msg = Some("Etat exporte.".to_string()),
-            Err(e) => self.status_msg = Some(format!("Export impossible : {}", e)),
+            Ok(()) => self.status_msg = Some(self.i18n.choisir("Etat exporte.", "State exported.").to_string()),
+            Err(e) => self.status_msg = Some(format!("{} : {}", self.i18n.choisir("Export impossible", "Export failed"), e)),
         }
     }
 
@@ -1496,21 +1934,21 @@ impl TamagotchiApp {
         let Some(cible) = rfd::FileDialog::new()
             .add_filter("Instantane", &["tamastate"])
             .set_file_name(defaut)
-            .set_title("Exporter ce point de reprise")
+            .set_title(self.i18n.choisir("Exporter ce point de reprise", "Export this recovery point"))
             .save_file()
         else {
             return;
         };
         match std::fs::copy(&source, &cible) {
-            Ok(_) => self.status_msg = Some("Point exporte.".to_string()),
-            Err(e) => self.status_msg = Some(format!("Export impossible : {}", e)),
+            Ok(_) => self.status_msg = Some(self.i18n.choisir("Point exporte.", "Recovery point exported.").to_string()),
+            Err(e) => self.status_msg = Some(format!("{} : {}", self.i18n.choisir("Export impossible", "Export failed"), e)),
         }
     }
 
     /// Restaure un point de reprise et remet les commandes au repos.
     fn revenir_au_point(&mut self, indice: usize) {
         let Some(etat) = self.reprises.restaurer(indice) else {
-            self.status_msg = Some("Point de reprise illisible.".to_string());
+            self.status_msg = Some(self.i18n.choisir("Point de reprise illisible.", "Unreadable recovery point.").to_string());
             return;
         };
         let quand = self
@@ -1526,48 +1964,49 @@ impl TamagotchiApp {
         self.phases_encodeur.clear();
         self.historique.vider();
         self.debit_depart = (self.machine.cpu.cycles, std::time::Instant::now());
-        self.status_msg = Some(format!("Console revenue a {}.", quand));
+        self.status_msg = Some(format!("{} {}.", self.i18n.choisir("Console revenue a", "Console restored to"), quand));
     }
 
     /// Liste des points de reprise, avec l'heure et l'age de chacun.
     fn dessiner_les_reprises(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Points de reprise").strong());
+            ui.label(egui::RichText::new(self.i18n.choisir("Points de reprise", "Recovery points")).strong());
             ui.label(
                 egui::RichText::new(format!("{} points", self.reprises.points().len())).small(),
             );
         });
         if !self.reprises.actif() {
-            ui.label(egui::RichText::new("Ouvre une partie pour en garder.").small());
+            ui.label(egui::RichText::new(self.i18n.choisir("Ouvre une partie pour en garder.", "Open a game to keep recovery points.")).small());
             return;
         }
         ui.horizontal(|ui| {
-            if ui.button("Poser un point").clicked() {
+            if ui.button(self.i18n.choisir("Poser un point", "Create recovery point")).clicked() {
                 self.poser_un_point();
             }
             if ui
-                .button("Importer...")
-                .on_hover_text("Ajoute un fichier .tamastate a la liste ci dessous")
+                .button(self.i18n.choisir("Importer...", "Import..."))
+                .on_hover_text(self.i18n.choisir("Ajoute un fichier .tamastate a la liste ci dessous", "Adds a .tamastate file to the list below"))
                 .clicked()
             {
                 self.importer_un_point();
             }
-            if ui.button("Exporter l'etat").clicked() {
+            if ui.button(self.i18n.choisir("Exporter l'etat", "Export state")).clicked() {
                 self.exporter_l_etat();
             }
         });
         if self.reprises.points().is_empty() {
             ui.label(
-                egui::RichText::new("Le premier point est pris apres une minute de jeu.")
+                egui::RichText::new(self.i18n.choisir("Le premier point est pris apres une minute de jeu.", "The first recovery point is created after one minute of play."))
                     .small()
                     .color(egui::Color32::GRAY),
             );
             return;
         }
         ui.label(
-            egui::RichText::new(
-                "Cliquez sur une heure pour y ramener la console. Un point est pris                  chaque minute et garde jusqu'a douze heures.",
-            )
+            egui::RichText::new(self.i18n.choisir(
+                "Cliquez sur une heure pour y ramener la console. Un point est pris chaque minute et garde jusqu'a douze heures.",
+                "Click a time to restore the console. A point is created every minute and kept for up to twelve hours.",
+            ))
             .small()
             .color(egui::Color32::GRAY),
         );
@@ -1583,12 +2022,17 @@ impl TamagotchiApp {
                     ui.horizontal(|ui| {
                         if ui
                             .button(egui::RichText::new(point.quand.format("%H:%M").to_string()))
-                            .on_hover_text("Ramener la console a cet instant")
+                            .on_hover_text(self.i18n.choisir("Ramener la console a cet instant", "Restore the console to this point"))
                             .clicked()
                         {
                             a_restaurer = Some(indice);
                         }
-                        ui.label(egui::RichText::new(point.age_lisible()).small());
+                        let age = if self.i18n.language() == Language::En {
+                            point.age_lisible_en()
+                        } else {
+                            point.age_lisible()
+                        };
+                        ui.label(egui::RichText::new(age).small());
                         ui.label(
                             egui::RichText::new(point.quand.format("%d/%m").to_string())
                                 .small()
@@ -1596,12 +2040,12 @@ impl TamagotchiApp {
                         );
                         if ui
                             .small_button("^")
-                            .on_hover_text("Exporter ce point vers un fichier")
+                            .on_hover_text(self.i18n.choisir("Exporter ce point vers un fichier", "Export this point to a file"))
                             .clicked()
                         {
                             a_exporter = Some(indice);
                         }
-                        if ui.small_button("x").on_hover_text("Effacer ce point").clicked() {
+                        if ui.small_button("x").on_hover_text(self.i18n.choisir("Effacer ce point", "Delete this point")).clicked() {
                             a_oublier = Some(indice);
                         }
                     });
@@ -1628,13 +2072,14 @@ impl TamagotchiApp {
         let courant = std::path::Path::new(&self.load_path_input)
             .file_stem()
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "aucune".to_string());
+            .unwrap_or_else(|| self.i18n.choisir("aucune", "none").to_string());
         let mut voulue = None;
         ui.menu_button(format!("Console : {}", courant), |ui| {
             if connus.is_empty() {
-                ui.label(
-                    egui::RichText::new("Aucun dump dans le dossier de donnees.").small(),
-                );
+                ui.label(egui::RichText::new(self.i18n.choisir(
+                    "Aucun dump dans le dossier de donnees.",
+                    "No dump in the data folder.",
+                )).small());
             }
             for chemin in &connus {
                 let nom = chemin
@@ -1650,10 +2095,10 @@ impl TamagotchiApp {
                 }
             }
             ui.separator();
-            if ui.button("Importer un dump...").clicked() {
+            if ui.button(self.i18n.choisir("Importer un dump...", "Import a dump...")).clicked() {
                 if let Some(chemin) = rfd::FileDialog::new()
                     .add_filter("Dump de flash", &["bin", "rom", "dump", "raw"])
-                    .set_title("Choisir un dump de flash Tamagotchi")
+                    .set_title(self.i18n.choisir("Choisir un dump de flash", "Choose a flash dump"))
                     .pick_file()
                 {
                     voulue = Some(crate::emulator::sauvegarde::adopter_firmware(&chemin));
@@ -1664,6 +2109,21 @@ impl TamagotchiApp {
         if let Some(chemin) = voulue {
             self.load_firmware(chemin);
         }
+    }
+
+    fn dessiner_langue(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(self.i18n.choisir("Langue :", "Language:"));
+            for (langue, nom) in [(Language::Fr, "FR"), (Language::En, "EN")] {
+                if ui
+                    .selectable_label(self.i18n.language() == langue, nom)
+                    .clicked()
+                {
+                    self.i18n.set_language(langue);
+                    self.retenir_la_partie();
+                }
+            }
+        });
     }
 
     /// Pose la fenetre pour le mode courant, une seule fois par changement.
@@ -1704,11 +2164,15 @@ impl TamagotchiApp {
     /// Ecran de depart : le dump, l'emplacement, puis on joue.
     fn dessiner_accueil(&mut self, ctx: &Context) {
         CentralPanel::default().show(ctx, |ui| {
+            self.dessiner_langue(ui);
             ui.add_space(24.0);
             ui.vertical_centered(|ui| {
-                ui.label(egui::RichText::new("Tamagotchi Paradise").size(28.0).strong());
+                ui.label(egui::RichText::new("Capybara").size(28.0).strong());
                 ui.label(
-                    egui::RichText::new("emulateur du SoC Sonix SNC7340")
+                    egui::RichText::new(self.i18n.choisir(
+                        "emulateur du SoC Sonix SNC7340",
+                        "Sonix SNC7340 SoC emulator",
+                    ))
                         .small()
                         .color(egui::Color32::GRAY),
                 );
@@ -1722,7 +2186,10 @@ impl TamagotchiApp {
                 let connus = crate::emulator::sauvegarde::firmwares_connus();
                 if connus.is_empty() {
                     ui.label(
-                        egui::RichText::new("Aucun dump connu. Importes-en un.")
+                        egui::RichText::new(self.i18n.choisir(
+                            "Aucun dump connu. Importes-en un.",
+                            "No known dump. Import one.",
+                        ))
                             .small()
                             .color(egui::Color32::GRAY),
                     );
@@ -1742,10 +2209,10 @@ impl TamagotchiApp {
                     });
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Importer un dump...").clicked() {
+                    if ui.button(self.i18n.choisir("Importer un dump...", "Import a dump...")).clicked() {
                         if let Some(chemin) = rfd::FileDialog::new()
                             .add_filter("Dump de flash", &["bin", "rom", "dump", "raw"])
-                            .set_title("Choisir un dump de flash Tamagotchi")
+                            .set_title(self.i18n.choisir("Choisir un dump de flash", "Choose a flash dump"))
                             .pick_file()
                         {
                             // Le dump est recopie dans le dossier de donnees :
@@ -1754,7 +2221,7 @@ impl TamagotchiApp {
                             self.load_firmware(range);
                         }
                     }
-                    if ui.small_button("Ouvrir le dossier").clicked() {
+                    if ui.small_button(self.i18n.choisir("Ouvrir le dossier", "Open folder")).clicked() {
                         let dossier = crate::emulator::sauvegarde::dossier_firmwares();
                         let _ = std::fs::create_dir_all(&dossier);
                         let _ = open_dossier(&dossier);
@@ -1775,9 +2242,9 @@ impl TamagotchiApp {
             ui.add_space(8.0);
 
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Partie").strong());
+                ui.label(egui::RichText::new(self.i18n.choisir("Partie", "Game")).strong());
                 if self.machine.empreinte.is_none() {
-                    ui.label(egui::RichText::new("Charge d'abord un dump.").small());
+                    ui.label(egui::RichText::new(self.i18n.choisir("Charge d'abord un dump.", "Load a dump first.")).small());
                 } else {
                     ui.horizontal_wrapped(|ui| {
                         for nom in self.emplacements.clone() {
@@ -1792,18 +2259,21 @@ impl TamagotchiApp {
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.nouvel_emplacement)
-                                .hint_text("nouvelle partie")
+                                .hint_text(self.i18n.choisir("nouvelle partie", "new game"))
                                 .desired_width(180.0),
                         );
-                        if ui.button("Creer").clicked() && !self.nouvel_emplacement.is_empty() {
+                        if ui.button(self.i18n.choisir("Creer", "Create")).clicked() && !self.nouvel_emplacement.is_empty() {
                             let nom = self.nouvel_emplacement.clone();
                             self.nouvel_emplacement.clear();
-                            self.ouvrir_emplacement(nom);
+                            self.creer_emplacement_depuis_partie_courante(nom);
                         }
                     });
                     ui.label(
                         egui::RichText::new(
-                            "La partie s'ecrit toute seule et vieillit en temps reel, meme ordinateur eteint.",
+                            self.i18n.choisir(
+                                "La partie s'ecrit toute seule et vieillit en temps reel, meme ordinateur eteint.",
+                                "The game saves automatically and keeps aging in real time while the computer is off.",
+                            ),
                         )
                         .small()
                         .color(egui::Color32::GRAY),
@@ -1818,7 +2288,7 @@ impl TamagotchiApp {
                 if ui
                     .add_enabled(
                         pret,
-                        egui::Button::new(egui::RichText::new("Jouer").size(20.0).strong())
+                        egui::Button::new(egui::RichText::new(self.i18n.choisir("Jouer", "Play")).size(20.0).strong())
                             .min_size(egui::vec2(220.0, 44.0)),
                     )
                     .clicked()
@@ -1827,7 +2297,7 @@ impl TamagotchiApp {
                 }
                 ui.add_space(6.0);
                 if ui
-                    .add(egui::Button::new("Inspection").min_size(egui::vec2(220.0, 30.0)))
+                    .add(egui::Button::new(self.i18n.choisir("Reglages", "Settings")).min_size(egui::vec2(220.0, 30.0)))
                     .clicked()
                 {
                     self.mode = Mode::Inspection;
@@ -1859,6 +2329,9 @@ impl TamagotchiApp {
                 if fond.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
+                if fond.secondary_clicked() {
+                    self.uart_bridge.refresh_ports();
+                }
 
                 self.rafraichir_la_texture(ctx);
                 self.dessiner_la_console(ctx, ui, zone);
@@ -1883,6 +2356,9 @@ impl TamagotchiApp {
                 let mut basculer_le_son = false;
                 let mut basculer_le_dessus = false;
                 let mut ouvrir_la_saisie = false;
+                let mut port_uart_voulu = None;
+                let mut deconnecter_uart = false;
+                let mut langue_voulue = None;
                 fond.context_menu(|ui| {
                     menu_dessine = true;
                     // Des sections qui se deplient sur place, et non des sous
@@ -1891,9 +2367,9 @@ impl TamagotchiApp {
                     // renvoie a gauche, et il recouvre le menu qui l'a ouvert.
                     ui.set_min_width(210.0);
                     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                        section(ui, &mut section_ouverte, 0, "Partie", |ui| {
+                        section(ui, &mut section_ouverte, 0, self.i18n.choisir("Partie", "Game"), |ui| {
                             if self.machine.empreinte.is_none() {
-                                ui.label(egui::RichText::new("Aucune console chargee.").small());
+                                ui.label(egui::RichText::new(self.i18n.choisir("Aucune console chargee.", "No console loaded.")).small());
                             }
                             for nom in self.emplacements.clone() {
                                 let courant = self.emplacement_choisi == nom;
@@ -1905,16 +2381,16 @@ impl TamagotchiApp {
                                 }
                             }
                             if ui
-                                .button("Nouvelle partie")
-                                .on_hover_text("Cree une partie nommee toute seule")
+                                .button(self.i18n.choisir("Nouvelle partie", "New game"))
+                                .on_hover_text(self.i18n.choisir("Cree une partie nommee toute seule", "Starts a fresh game with an automatic name"))
                                 .clicked()
                             {
                                 partie_voulue = Some(self.nom_de_partie_libre());
                                 ui.close_menu();
                             }
                             if ui
-                                .button("Nouvelle sauvegarde...")
-                                .on_hover_text("Cree une partie et demande son nom")
+                                .button(self.i18n.choisir("Nouvelle sauvegarde...", "Save as..."))
+                                .on_hover_text(self.i18n.choisir("Enregistre la partie courante sous un nouveau nom", "Saves the current game under a new name"))
                                 .clicked()
                             {
                                 ouvrir_la_saisie = true;
@@ -1939,10 +2415,38 @@ impl TamagotchiApp {
                             }
                         });
 
-                        section(ui, &mut section_ouverte, 2, "Ramener la console a...", |ui| {
+                        section(ui, &mut section_ouverte, 4, "UART", |ui| {
+                            if self.uart_bridge.available_ports.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(self.i18n.choisir("Aucun port COM detecte.", "No COM port detected.")).small(),
+                                );
+                            }
+                            for port in self.uart_bridge.available_ports.clone() {
+                                let courant = self.uart_bridge.is_connected
+                                    && self.uart_bridge.port_name == port;
+                                if ui.selectable_label(courant, &port).clicked() {
+                                    if !courant {
+                                        port_uart_voulu = Some(port);
+                                    }
+                                    ui.close_menu();
+                                }
+                            }
+                            if ui.button(self.i18n.choisir("Actualiser les ports", "Refresh ports")).clicked() {
+                                self.uart_bridge.refresh_ports();
+                            }
+                            if self.uart_bridge.is_connected {
+                                ui.separator();
+                                if ui.button(self.i18n.choisir("Deconnecter", "Disconnect")).clicked() {
+                                    deconnecter_uart = true;
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+
+                        section(ui, &mut section_ouverte, 2, self.i18n.choisir("Ramener la console a...", "Restore console to..."), |ui| {
                             if self.reprises.points().is_empty() {
                                 ui.label(
-                                    egui::RichText::new("Aucun point pour l'instant.").small(),
+                                    egui::RichText::new(self.i18n.choisir("Aucun point pour l'instant.", "No recovery point yet.")).small(),
                                 );
                             }
                             // Du plus recent au plus ancien, et pas plus de dix :
@@ -1962,34 +2466,34 @@ impl TamagotchiApp {
                                 }
                             }
                             ui.separator();
-                            if ui.button("Poser un point maintenant").clicked() {
+                            if ui.button(self.i18n.choisir("Poser un point maintenant", "Create recovery point now")).clicked() {
                                 poser_un_point = true;
                                 ui.close_menu();
                             }
-                            if ui.button("Importer un instantane...").clicked() {
+                            if ui.button(self.i18n.choisir("Importer un instantane...", "Import snapshot...")).clicked() {
                                 importer_un_point = true;
                                 ui.close_menu();
                             }
-                            if ui.button("Exporter l'etat courant...").clicked() {
+                            if ui.button(self.i18n.choisir("Exporter l'etat courant...", "Export current state...")).clicked() {
                                 exporter_l_etat = true;
                                 ui.close_menu();
                             }
-                            if ui.button("Voir tous les points...").clicked() {
+                            if ui.button(self.i18n.choisir("Voir tous les points...", "View all recovery points...")).clicked() {
                                 mode_voulu = Some(Mode::Inspection);
                                 ui.close_menu();
                             }
                         });
 
-                        section(ui, &mut section_ouverte, 3, "Taille", |ui| {
-                            if ui.button("Agrandir de 25 %").clicked() {
+                        section(ui, &mut section_ouverte, 3, self.i18n.choisir("Taille", "Size"), |ui| {
+                            if ui.button(self.i18n.choisir("Agrandir de 25 %", "Increase by 25%" )).clicked() {
                                 zoom_voulu = Some((self.zoom_jeu * 1.25).min(3.0));
                                 ui.close_menu();
                             }
-                            if ui.button("Reduire de 25 %").clicked() {
+                            if ui.button(self.i18n.choisir("Reduire de 25 %", "Decrease by 25%" )).clicked() {
                                 zoom_voulu = Some((self.zoom_jeu / 1.25).max(0.5));
                                 ui.close_menu();
                             }
-                            if ui.button("Taille d'origine").clicked() {
+                            if ui.button(self.i18n.choisir("Taille d'origine", "Original size")).clicked() {
                                 zoom_voulu = Some(1.0);
                                 ui.close_menu();
                             }
@@ -1997,11 +2501,23 @@ impl TamagotchiApp {
 
                         ui.separator();
 
+                        ui.horizontal(|ui| {
+                            ui.label(self.i18n.choisir("Langue :", "Language:"));
+                            for (langue, nom) in [(Language::Fr, "FR"), (Language::En, "EN")] {
+                                if ui.selectable_label(self.i18n.language() == langue, nom).clicked() {
+                                    langue_voulue = Some(langue);
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+
+                        ui.separator();
+
                         if ui
                             .button(if self.audio.enabled {
-                                "Couper le son"
+                                self.i18n.choisir("Couper le son", "Mute")
                             } else {
-                                "Remettre le son"
+                                self.i18n.choisir("Remettre le son", "Unmute")
                             })
                             .clicked()
                         {
@@ -2010,9 +2526,9 @@ impl TamagotchiApp {
                         }
                         if ui
                             .button(if self.toujours_devant {
-                                "Ne plus rester au dessus"
+                                self.i18n.choisir("Ne plus rester au dessus", "Stop staying on top")
                             } else {
-                                "Rester au dessus"
+                                self.i18n.choisir("Rester au dessus", "Stay on top")
                             })
                             .clicked()
                         {
@@ -2022,20 +2538,21 @@ impl TamagotchiApp {
 
                         ui.separator();
 
-                        if ui.button("Inspection").clicked() {
+                        if ui.button(self.i18n.choisir("Reglages", "Settings")).clicked() {
                             mode_voulu = Some(Mode::Inspection);
                             ui.close_menu();
                         }
-                        if ui.button("Accueil").clicked() {
+                        if ui.button(self.i18n.choisir("Accueil", "Home")).clicked() {
                             mode_voulu = Some(Mode::Accueil);
                             ui.close_menu();
                         }
-                        if ui.button("Fermer").clicked() {
+                        if ui.button(self.i18n.choisir("Fermer", "Close")).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
                 });
                 if ouvrir_la_saisie {
+                    self.but_de_la_saisie = ButDeLaSaisie::EnregistrerSous;
                     self.saisie_sauvegarde = Some(String::new());
                 }
                 // Menu referme : la prochaine ouverture repart repliee.
@@ -2078,6 +2595,19 @@ impl TamagotchiApp {
                 if let Some(chemin) = console_voulue {
                     self.load_firmware(chemin);
                 }
+                if let Some(langue) = langue_voulue {
+                    self.i18n.set_language(langue);
+                    self.retenir_la_partie();
+                }
+                if deconnecter_uart {
+                    self.uart_bridge.disconnect();
+                }
+                if let Some(port) = port_uart_voulu {
+                    self.machine.periph.uart.vider_la_ligne();
+                    if let Err(e) = self.uart_bridge.connect(&port) {
+                        self.status_msg = Some(format!("UART : {e}"));
+                    }
+                }
                 if let Some(m) = mode_voulu {
                     self.mode = m;
                 }
@@ -2110,6 +2640,28 @@ impl eframe::App for TamagotchiApp {
 
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let now = std::time::Instant::now();
+        if let Some(action) = self.tray.as_ref().and_then(|tray| tray.action()) {
+            match action {
+                crate::tray::ActionTray::Afficher => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                crate::tray::ActionTray::Quitter => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+        // Fermer ferme. La fenetre se cachait ici au lieu de se fermer, en
+        // comptant sur l'icone de la zone de notification pour la faire
+        // revenir ou quitter. Mais une fenetre invisible ne recoit plus de
+        // demandes de dessin : cette methode cessait d'etre appelee, le choix
+        // du menu de l'icone n'etait jamais relu, et l'application devenait
+        // infermable. L'icone reste, elle met la fenetre au premier plan ou
+        // quitte, et la fenetre ne disparait plus sous le tapis.
+        let diagnostic_uart = self.mode == Mode::Inspection && self.onglet == Onglet::Uart;
+        self.machine.regler_diagnostic_uart(diagnostic_uart);
+        self.uart_bridge.regler_diagnostic(diagnostic_uart);
         let _dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
         self.last_frame_time = now;
 
@@ -2123,8 +2675,9 @@ impl eframe::App for TamagotchiApp {
         // La console ne doit rien entendre pendant qu'un menu ou un champ de
         // saisie est ouvert : taper un nom de partie appuyait sur A et sur C,
         // et derouler le menu du clic droit faisait tourner la molette.
-        let interface_occupee = ctx.wants_keyboard_input()
+        let mut interface_occupee = ctx.wants_keyboard_input()
             || self.saisie_sauvegarde.is_some()
+            || self.suppression_demandee.is_some()
             || ctx.memory(|m| m.any_popup_open())
             || ctx.is_pointer_over_area();
         if interface_occupee {
@@ -2133,14 +2686,36 @@ impl eframe::App for TamagotchiApp {
             self.maintenus.clear();
             self.appliquer_entrees();
         }
+        // Une touche attendue pour un remappage est prise ici, avant que le
+        // reste ne la lise : sans cela, la frappe qui choisit le bouton A
+        // appuierait aussi dessus.
+        if let Some(commande) = self.capture_touche {
+            let frappee = ctx.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Key { key, pressed: true, .. } => Some(*key),
+                    _ => None,
+                })
+            });
+            if let Some(touche) = frappee {
+                self.capture_touche = None;
+                if touche != Key::Escape {
+                    self.touches.ajouter(commande, touche);
+                    self.retenir_la_partie();
+                }
+            }
+            interface_occupee = true;
+        }
         let key_f10 = !interface_occupee && ctx.input(|i| i.key_pressed(Key::F10));
         // Fleche haut tourne vers la droite, fleche bas vers la gauche, comme
         // la molette de la console.
         let molette = if interface_occupee {
             0
         } else {
+            let droite = self.touches.cles(crate::touches::Commande::TournerDroite);
+            let gauche = self.touches.cles(crate::touches::Commande::TournerGauche);
             ctx.input(|i| {
-                (i.key_pressed(Key::ArrowUp) as i32) - (i.key_pressed(Key::ArrowDown) as i32)
+                (droite.iter().any(|k| i.key_pressed(*k)) as i32)
+                    - (gauche.iter().any(|k| i.key_pressed(*k)) as i32)
             })
         };
         // Chaque touche tient sa broche tant qu'elle est enfoncee, et plusieurs
@@ -2148,12 +2723,13 @@ impl eframe::App for TamagotchiApp {
         // molette maintenue plus B pour le menu special, A plus C pour la
         // remise a zero.
         let touches = [
-            (Machine::BOUTON_A, [Key::A, Key::Q, Key::ArrowLeft]),
-            (Machine::BOUTON_B, [Key::B, Key::Space, Key::Num2]),
-            (Machine::BOUTON_C, [Key::C, Key::D, Key::ArrowRight]),
-            (Machine::BOUTON_MOLETTE, [Key::Enter, Key::S, Key::Num0]),
+            (Machine::BOUTON_A, crate::touches::Commande::BoutonA),
+            (Machine::BOUTON_B, crate::touches::Commande::BoutonB),
+            (Machine::BOUTON_C, crate::touches::Commande::BoutonC),
+            (Machine::BOUTON_MOLETTE, crate::touches::Commande::Molette),
         ];
-        for (broche, keys) in touches {
+        for (broche, commande) in touches {
+            let keys = self.touches.cles(commande);
             if !interface_occupee && ctx.input(|i| keys.iter().any(|k| i.key_down(*k))) {
                 self.maintenir(broche);
             }
@@ -2176,6 +2752,7 @@ impl eframe::App for TamagotchiApp {
             let mut partage = self.partage.lock().unwrap();
             std::mem::take(&mut partage.commandes)
         };
+        let commande_web_recue = !recues.is_empty();
         for commande in recues {
             match commande {
                 crate::web::Commande::Presser(broche) => self.presser(broche),
@@ -2197,11 +2774,34 @@ impl eframe::App for TamagotchiApp {
                     self.load_firmware(std::path::PathBuf::from(chemin));
                 }
                 crate::web::Commande::Vitesse(ms) => self.budget_ms = ms,
+                crate::web::Commande::Temps(pourcent) => {
+                    self.vitesse = pourcent.min(400) as f32 / 100.0;
+                    self.cycles_dus = 0.0;
+                }
+                crate::web::Commande::Son(actif) => {
+                    self.audio.enabled = actif;
+                    if !actif {
+                        self.audio.silence_buzzer();
+                    }
+                    self.retenir_la_partie();
+                }
+                crate::web::Commande::Volume(volume) => {
+                    self.audio.volume = volume.min(100) as f32 / 100.0;
+                    self.retenir_la_partie();
+                }
                 crate::web::Commande::SauverEtat(chemin) => {
                     let etat = self.machine.instantane();
                     self.status_msg = Some(match etat.ecrire(std::path::Path::new(&chemin)) {
-                        Ok(()) => format!("Etat ecrit dans {}", chemin),
-                        Err(e) => format!("Ecriture impossible : {}", e),
+                        Ok(()) => format!(
+                            "{} {}",
+                            self.i18n.choisir("Etat ecrit dans", "State written to"),
+                            chemin
+                        ),
+                        Err(e) => format!(
+                            "{} : {}",
+                            self.i18n.choisir("Ecriture impossible", "Write failed"),
+                            e
+                        ),
                     });
                 }
                 crate::web::Commande::ChargerEtat(chemin) => {
@@ -2209,6 +2809,12 @@ impl eframe::App for TamagotchiApp {
                         Some(self.restaurer_fichier(std::path::Path::new(&chemin)));
                 }
             }
+        }
+        // Quand l'emulation est en pause, aucune nouvelle trame d'ecran ne
+        // vient republier les reglages. Une commande web doit pourtant voir
+        // son nouvel etat des la requete suivante.
+        if commande_web_recue {
+            self.publier();
         }
         for broche in self.tenus_distants.clone() {
             self.maintenir(broche);
@@ -2337,6 +2943,7 @@ impl eframe::App for TamagotchiApp {
         }
         self.appliquer_le_mode(ctx);
         self.dessiner_la_saisie(ctx);
+        self.dessiner_la_suppression(ctx);
         match self.mode {
             Mode::Accueil => {
                 self.dessiner_accueil(ctx);
@@ -2352,17 +2959,19 @@ impl eframe::App for TamagotchiApp {
         // 3. Top Status & Menu Bar
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Tamagotchi Paradise SNC73410 Emulator").strong());
+                ui.label(egui::RichText::new("Capybara").strong());
 
                 ui.separator();
 
-                if ui.button("Retour au jeu").clicked() {
+                if ui.button(self.i18n.choisir("Retour au jeu", "Back to game")).clicked() {
                     self.mode = Mode::Jeu;
                 }
-                if ui.button("Accueil").clicked() {
+                if ui.button(self.i18n.choisir("Accueil", "Home")).clicked() {
                     self.mode = Mode::Accueil;
                 }
                 self.menu_des_consoles(ui);
+                ui.separator();
+                self.dessiner_langue(ui);
                 // Le son, la coque et l'inspecteur de flash sont partis dans
                 // les onglets qui les concernent. Entasses ici, ils poussaient
                 // la barre hors de l'ecran des que la fenetre n'etait pas en
@@ -2386,9 +2995,11 @@ impl eframe::App for TamagotchiApp {
                     ui.horizontal_wrapped(|ui| {
                         for (onglet, nom) in [
                             (Onglet::Console, "Console"),
-                            (Onglet::Sauvegardes, "Sauvegardes"),
-                            (Onglet::Inspection, "Inspection"),
-                            (Onglet::Personnalisation, "Personnalisation"),
+                            (Onglet::Uart, "UART"),
+                            (Onglet::Sauvegardes, self.i18n.choisir("Sauvegardes", "Saves")),
+                            (Onglet::Inspection, self.i18n.choisir("Avance", "Advanced")),
+                            (Onglet::Personnalisation, self.i18n.choisir("Personnalisation", "Appearance")),
+                            (Onglet::Aide, self.i18n.choisir("Aide", "Help")),
                         ] {
                             if ui.selectable_label(self.onglet == onglet, nom).clicked() {
                                 self.onglet = onglet;
@@ -2414,8 +3025,49 @@ impl eframe::App for TamagotchiApp {
                             |ui| {
                                 self.dessiner_l_habillage(ui, ctx);
                                 ui.add_space(12.0);
+                                ui.group(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(self.i18n.choisir("Fenetre", "Window"))
+                                            .strong(),
+                                    );
+                                    // Le reglage n'existait que dans le menu du
+                                    // clic droit, qui n'est pas l'endroit ou on
+                                    // pense a le chercher.
+                                    if ui
+                                        .checkbox(
+                                            &mut self.toujours_devant,
+                                            self.i18n.choisir(
+                                                "Rester au dessus des autres fenetres",
+                                                "Stay on top of other windows",
+                                            ),
+                                        )
+                                        .changed()
+                                    {
+                                        // Le niveau est pose au changement de
+                                        // mode : on force la reprise pour qu'il
+                                        // s'applique tout de suite.
+                                        self.mode_applique = None;
+                                        self.retenir_la_partie();
+                                    }
+                                });
+                                ui.add_space(12.0);
+                                if crate::ui::touches_panel::dessiner(
+                                    ui,
+                                    &mut self.touches,
+                                    &mut self.souris,
+                                    &mut self.capture_touche,
+                                    &self.i18n,
+                                ) {
+                                    self.retenir_la_partie();
+                                }
+                                ui.add_space(12.0);
                             },
                         );
+                        return;
+                    }
+
+                    if self.onglet == Onglet::Aide {
+                        crate::ui::aide::dessiner(ui, &self.i18n, &self.maj);
                         return;
                     }
 
@@ -2425,12 +3077,12 @@ impl eframe::App for TamagotchiApp {
 
                     // Firmware File Loader Box
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Firmware / Flash Dump (.bin):").strong());
+                        ui.label(egui::RichText::new(self.i18n.choisir("Firmware / Dump de flash (.bin) :", "Firmware / Flash dump (.bin):")).strong());
                         ui.horizontal(|ui| {
-                            if ui.button(egui::RichText::new("📂 Parcourir / Browse...").strong()).clicked() {
+                            if ui.button(egui::RichText::new(self.i18n.choisir("📂 Parcourir...", "📂 Browse...")).strong()).clicked() {
                                 if let Some(path) = rfd::FileDialog::new()
                                     .add_filter("Firmware Binary (*.bin, *.rom, *.hex, *.elf)", &["bin", "rom", "hex", "elf", "raw", "dump"])
-                                    .set_title("Sélectionner un dump de firmware Tamagotchi")
+                                    .set_title(self.i18n.choisir("Selectionner un dump de firmware", "Select a firmware dump"))
                                     .pick_file()
                                 {
                                     self.load_firmware(path.clone());
@@ -2438,7 +3090,7 @@ impl eframe::App for TamagotchiApp {
                             }
 
                             ui.text_edit_singleline(&mut self.load_path_input);
-                            if ui.button("Load").clicked() && !self.load_path_input.is_empty() {
+                            if ui.button(self.i18n.choisir("Charger", "Load")).clicked() && !self.load_path_input.is_empty() {
                                 self.load_firmware(std::path::PathBuf::from(self.load_path_input.clone()));
                             }
                         });
@@ -2460,12 +3112,12 @@ impl eframe::App for TamagotchiApp {
                     // dans sa flash, sa vraie memoire, et elle survit a
                     // l'extinction de l'ordinateur.
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Sauvegarde de la console :").strong());
+                        ui.label(egui::RichText::new(self.i18n.choisir("Sauvegarde de la console :", "Console save:")).strong());
                         let suivie = self.machine.sauvegarde_active.is_some();
                         ui.horizontal(|ui| {
                             egui::ComboBox::from_id_salt("emplacement_sauvegarde")
                                 .selected_text(if self.emplacement_choisi.is_empty() {
-                                    "aucune".to_string()
+                                    self.i18n.choisir("aucune", "none").to_string()
                                 } else {
                                     self.emplacement_choisi.clone()
                                 })
@@ -2479,29 +3131,52 @@ impl eframe::App for TamagotchiApp {
                                         }
                                     }
                                 });
-                            if ui.button("Nouvelle partie").clicked() {
-                                // On cesse de suivre le fichier et on repart du
-                                // dump nu : la partie enregistree reste intacte
-                                // sur le disque tant qu'on n'en ouvre pas une.
-                                let chemin = self.load_path_input.clone();
-                                if !chemin.is_empty() {
-                                    self.load_firmware(std::path::PathBuf::from(chemin));
-                                    self.machine.fermer_sauvegarde();
-                                    self.emplacement_choisi.clear();
-                                    self.status_msg = Some(
-                                        "Partie neuve, non enregistree tant qu'aucun emplacement n'est choisi"
-                                            .to_string(),
-                                    );
-                                }
+                            if ui
+                                .button(self.i18n.choisir("Nouvelle partie", "New game"))
+                                .on_hover_text(self.i18n.choisir(
+                                    "Demande un nom, puis repart de zero. La partie en cours reste intacte.",
+                                    "Asks for a name, then starts over. The current game is left untouched.",
+                                ))
+                                .clicked()
+                            {
+                                // Une partie neuve va quelque part. Repartir du
+                                // dump sans emplacement laissait la console
+                                // tourner sans rien qui l'enregistre, et il
+                                // fallait deviner qu'il fallait en creer un.
+                                let propose = self.nom_de_partie_libre();
+                                self.but_de_la_saisie = ButDeLaSaisie::PartieNeuve;
+                                self.saisie_sauvegarde = Some(propose);
                             }
                         });
                         ui.horizontal(|ui| {
-                            ui.label("Nouvel emplacement :");
+                            let choisie = !self.emplacement_choisi.is_empty();
+                            if ui
+                                .add_enabled(
+                                    choisie,
+                                    egui::Button::new(
+                                        egui::RichText::new(self.i18n.choisir(
+                                            "Supprimer cette sauvegarde",
+                                            "Delete this save",
+                                        ))
+                                        .color(egui::Color32::from_rgb(240, 140, 130)),
+                                    ),
+                                )
+                                .on_hover_text(self.i18n.choisir(
+                                    "Efface la partie et tous ses points de reprise",
+                                    "Erases the game and all its recovery points",
+                                ))
+                                .clicked()
+                            {
+                                self.suppression_demandee = Some(self.emplacement_choisi.clone());
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(self.i18n.choisir("Nouvel emplacement :", "New slot:"));
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.nouvel_emplacement)
                                     .desired_width(120.0),
                             );
-                            if ui.button("Creer").clicked() {
+                            if ui.button(self.i18n.choisir("Creer", "Create")).clicked() {
                                 let nom: String = self
                                     .nouvel_emplacement
                                     .trim()
@@ -2511,7 +3186,7 @@ impl eframe::App for TamagotchiApp {
                                     })
                                     .collect();
                                 if !nom.is_empty() {
-                                    self.ouvrir_emplacement(nom);
+                                    self.creer_emplacement_depuis_partie_courante(nom);
                                     self.nouvel_emplacement.clear();
                                 }
                             }
@@ -2519,11 +3194,11 @@ impl eframe::App for TamagotchiApp {
                         ui.label(
                             egui::RichText::new(if suivie {
                                 match &self.machine.sauvegarde_active {
-                                    Some(c) => format!("Enregistree dans {}", c.display()),
+                                    Some(c) => format!("{} {}", self.i18n.choisir("Enregistree dans", "Saved in"), c.display()),
                                     None => String::new(),
                                 }
                             } else {
-                                "Partie non enregistree".to_string()
+                                self.i18n.choisir("Partie non enregistree", "Unsaved game").to_string()
                             })
                             .small(),
                         );
@@ -2545,11 +3220,15 @@ impl eframe::App for TamagotchiApp {
                     // facon dont la console se rend.
                     ui.group(|ui| {
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(egui::RichText::new("Son :").strong());
+                            ui.label(egui::RichText::new(self.i18n.choisir("Son :", "Sound:")).strong());
                             if ui
                                 .selectable_label(
                                     self.audio.enabled,
-                                    if self.audio.enabled { "actif" } else { "coupe" },
+                                    if self.audio.enabled {
+                                        self.i18n.choisir("actif", "on")
+                                    } else {
+                                        self.i18n.choisir("coupe", "off")
+                                    },
                                 )
                                 .clicked()
                             {
@@ -2558,11 +3237,11 @@ impl eframe::App for TamagotchiApp {
                             ui.add(
                                 egui::Slider::new(&mut self.audio.volume, 0.0..=1.0)
                                     .show_value(false)
-                                    .text("volume"),
+                                    .text(self.i18n.choisir("volume", "volume")),
                             );
                         });
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(egui::RichText::new("Hauteur :").strong());
+                            ui.label(egui::RichText::new(self.i18n.choisir("Hauteur :", "Pitch:")).strong());
                             for (nom, h) in [("/2", 0.5_f32), ("x1", 1.0), ("x2", 2.0), ("x4", 4.0)]
                             {
                                 if ui
@@ -2575,13 +3254,16 @@ impl eframe::App for TamagotchiApp {
                         });
                         ui.separator();
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(egui::RichText::new("Vitesse :").strong());
+                            ui.label(egui::RichText::new(self.i18n.choisir("Vitesse :", "Speed:")).strong());
                             // Deux positions, et pas davantage. L'emulation
                             // tient tout juste le temps reel : au dessus, la
                             // machine donne deja tout et le reglage ne change
                             // rien. Le diagnostic affiche la vitesse atteinte,
                             // c'est le chiffre a regarder.
-                            for (nom, v) in [("Pause", 0.0_f32), ("Temps reel", 1.0)] {
+                            for (nom, v) in [
+                                (self.i18n.choisir("Pause", "Pause"), 0.0_f32),
+                                (self.i18n.choisir("Temps reel", "Real time"), 1.0),
+                            ] {
                                 let choisi = if v.is_infinite() {
                                     self.vitesse.is_infinite()
                                 } else {
@@ -2598,7 +3280,7 @@ impl eframe::App for TamagotchiApp {
                             // debut », se confondaient avec les points de
                             // reprise, qui eux ramenent la console a une heure.
                             if ui
-                                .button("Annuler les 2 dernieres secondes")
+                                .button(self.i18n.choisir("Annuler les 2 dernieres secondes", "Undo the last 2 seconds"))
                                 .on_hover_text(
                                     "Filet de mise au point : revient a l'instantane                                      automatique precedent, pris toutes les deux secondes                                      d'emulation. Pour remonter plus loin, servez vous des                                      points de reprise.",
                                 )
@@ -2607,7 +3289,7 @@ impl eframe::App for TamagotchiApp {
                                 self.reculer();
                             }
                             if ui
-                                .button("Rallumer la console")
+                                .button(self.i18n.choisir("Rallumer la console", "Restart console"))
                                 .on_hover_text(
                                     "Recharge le dump et remet la console a son demarrage.                                      La partie sauvegardee n'est pas touchee : elle est                                      relue et le jeu reprend ou il en etait.",
                                 )
@@ -2625,8 +3307,9 @@ impl eframe::App for TamagotchiApp {
                         // plus ce qui est importe.
                         ui.label(
                             egui::RichText::new(format!(
-                                "{} instantanes automatiques",
-                                self.historique.len()
+                                        "{} {}",
+                                        self.historique.len(),
+                                        self.i18n.choisir("instantanes automatiques", "automatic snapshots")
                             ))
                             .small(),
                         );
@@ -2640,7 +3323,7 @@ impl eframe::App for TamagotchiApp {
                                             .color(egui::Color32::from_rgb(140, 220, 160)),
                                         &adresse,
                                     );
-                                    if ui.small_button("Arreter").clicked() {
+                                    if ui.small_button(self.i18n.choisir("Arreter", "Stop")).clicked() {
                                         if let Some(temoin) = self.serveur_actif.take() {
                                             temoin.store(
                                                 false,
@@ -2655,7 +3338,7 @@ impl eframe::App for TamagotchiApp {
                                 // Eteint par defaut : il ne sert qu'a suivre
                                 // l'emulation depuis un navigateur, et il coute
                                 // une copie d'ecran a chaque image.
-                                if ui.button("Demarrer le serveur local").clicked() {
+                                if ui.button(self.i18n.choisir("Demarrer le serveur local", "Start local server")).clicked() {
                                     match crate::web::demarrer(
                                         std::sync::Arc::clone(&self.partage),
                                         7340,
@@ -2663,16 +3346,24 @@ impl eframe::App for TamagotchiApp {
                                         Ok((port, temoin)) => {
                                             self.port_web = Some(port);
                                             self.serveur_actif = Some(temoin);
+                                            self.publier();
                                         }
                                         Err(e) => {
-                                            self.status_msg =
-                                                Some(format!("Serveur local : {}", e));
+                                            self.status_msg = Some(format!(
+                                                "{} : {}",
+                                                self.i18n
+                                                    .choisir("Serveur local", "Local server"),
+                                                e
+                                            ));
                                         }
                                     }
                                 }
                                 ui.label(
                                     egui::RichText::new(
-                                        "Suivi dans le navigateur, eteint. Une fois allume,                                          il le reste jusqu'a la fermeture.",
+                                        self.i18n.choisir(
+                                            "Suivi dans le navigateur, eteint. Une fois allume, il le reste jusqu'a la fermeture.",
+                                            "Browser remote is off. Once started, it stays active until the application closes.",
+                                        ),
                                     )
                                     .small(),
                                 );
@@ -2680,20 +3371,28 @@ impl eframe::App for TamagotchiApp {
                         }
                         ui.label(
                             egui::RichText::new(
-                                "Clavier : A ou Fleche gauche, B ou Espace, C ou Fleche droite,                                  Entree pour l'appui de molette, Fleche haut et Fleche bas pour la                                  tourner. Les touches tenues se combinent : molette plus B ouvre le                                  menu special, A plus C reinitialise.",
+                                self.i18n.choisir(
+                                    "Clavier : A ou Fleche gauche, B ou Espace, C ou Fleche droite, Entree pour l'appui de molette, Fleche haut et Fleche bas pour la tourner. Les touches tenues se combinent : molette plus B ouvre le menu special, A plus C reinitialise.",
+                                    "Keyboard: A or Left, B or Space, C or Right, Enter presses the wheel, Up and Down rotate it. Held keys combine: wheel plus B opens the special menu, A plus C resets.",
+                                ),
                             )
                             .small(),
                         );
 
                     });
-                    ui.separator();
-                    ConsolePanel::render(
-                        ui,
-                        &mut self.machine.periph.uart,
-                        &mut self.uart_bridge,
-                    );
                     return;
                     } // fin de l'onglet Console
+
+                    if self.onglet == Onglet::Uart {
+                        ConsolePanel::render(
+                            ui,
+                            &mut self.machine.periph.uart,
+                            &mut self.uart_bridge,
+                            self.machine.trace_refus.as_ref(),
+                            &self.i18n,
+                        );
+                        return;
+                    }
 
                     // Le diagnostic sert a rapporter un blocage : sa place est
                     // avec les registres et la memoire, pas avec les commandes
@@ -2701,16 +3400,22 @@ impl eframe::App for TamagotchiApp {
                     // raison.
                     if self.onglet == Onglet::Inspection {
                     ui.group(|ui| {
-                        if ui.button("💾 Inspecteur Flash").clicked() {
+                        if ui.button(self.i18n.choisir("💾 Inspecteur Flash", "💾 Flash inspector")).clicked() {
                             self.active_modal = ActiveModal::FlashInspector;
                         }
                         let rapport = self.diagnostic();
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("Diagnostic").strong());
-                            if ui.button("Copier").clicked() {
+                            if ui.button(self.i18n.choisir("Copier", "Copy")).clicked() {
                                 ui.output_mut(|o| o.copied_text = rapport.clone());
-                                self.status_msg =
-                                    Some("Diagnostic copie dans le presse-papiers.".to_string());
+                                self.status_msg = Some(
+                                    self.i18n
+                                        .choisir(
+                                            "Diagnostic copie dans le presse-papiers.",
+                                            "Diagnostic copied to the clipboard.",
+                                        )
+                                        .to_string(),
+                                );
                             }
                         });
                         egui::ScrollArea::vertical()
@@ -2770,6 +3475,7 @@ impl eframe::App for TamagotchiApp {
                         |target| {
                             new_pc_target = Some(target);
                         },
+                        &self.i18n,
                     );
 
                     if let Some(target) = new_pc_target {
@@ -2794,6 +3500,7 @@ impl eframe::App for TamagotchiApp {
                         &mut self.machine.periph,
                         &self.machine.cpu.nvic,
                         &mut self.hex_base_addr,
+                        &self.i18n,
                     );
 
                         });

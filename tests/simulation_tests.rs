@@ -5,7 +5,7 @@ use capybara::core::minigames::{BerryCatchState, ParadiseWheelState};
 use capybara::core::pet::{Pet, PetActionFeedback};
 use capybara::core::secrets::{SecretCodeManager, SecretReward};
 use capybara::hw_bridge::flash_map::FlashInspector;
-use capybara::hw_bridge::uart_pcom::UartBridge;
+use capybara::hw_bridge::uart_terminal::UartBridge;
 use capybara::i18n::{I18n, Language};
 
 #[test]
@@ -32,13 +32,8 @@ fn test_pet_lifecycle_and_feeding() {
     assert_eq!(pet.hygiene, 100.0);
 
     // Evolution check
-    let (stage, species) = EvolutionManager::next_species(
-        GrowthStage::Child,
-        Species::Tamatchi,
-        80,
-        0,
-        "garden",
-    );
+    let (stage, species) =
+        EvolutionManager::next_species(GrowthStage::Child, Species::Tamatchi, 80, 0, "garden");
     assert_eq!(stage, GrowthStage::Teen);
     assert_eq!(species, Species::YoungMametchi);
 }
@@ -102,6 +97,7 @@ fn test_uart_host_bridge_sync() {
     // Envoi hote vers console
     bridge.host_write(&[0x11, 0x22, 0x33]);
     bridge.sync(&mut uart);
+    uart.tick(6_300, 96_000_000);
 
     assert_eq!(uart.rx_fifo.len(), 3);
     assert_eq!(uart.read_reg(0x00), 0x11);
@@ -111,6 +107,7 @@ fn test_uart_host_bridge_sync() {
     // Envoi console vers hote
     uart.write_reg(0x00, 0xAA);
     uart.write_reg(0x00, 0xBB);
+    uart.tick(4_200, 96_000_000);
     bridge.sync(&mut uart);
 
     assert_eq!(bridge.host_read(), vec![0xAA, 0xBB]);
@@ -119,7 +116,7 @@ fn test_uart_host_bridge_sync() {
 #[test]
 fn test_i18n_multilingual() {
     let mut i18n = I18n::new(Language::Fr);
-    assert_eq!(i18n.t("app_title"), "Tamagotchi Paradise Desktop");
+    assert_eq!(i18n.t("app_title"), "Capybara");
     assert_eq!(i18n.t("btn_feed"), "Nourrir");
 
     i18n.set_language(Language::En);

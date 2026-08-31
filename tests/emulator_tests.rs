@@ -11,8 +11,7 @@ use capybara::emulator::Machine;
 const REAL_DUMP: &str = r"%SONIX_DUMPS%\Tamagotchi_Paradise_Earth_MX25L12835F.bin";
 /// Water est la seule edition qui imprime sa console de debug pendant le boot.
 /// C'est donc elle qui rend visible le rejet du fabricant de flash.
-const REAL_DUMP_WATER: &str =
-    r"%SONIX_DUMPS%\Tamagotchi_Paradise_Water_MX25L12835F.bin";
+const REAL_DUMP_WATER: &str = r"%SONIX_DUMPS%\Tamagotchi_Paradise_Water_MX25L12835F.bin";
 const REAL_DEVICE_KEY: u32 = 0x0000_0000;
 const REAL_ENTRY_SP: u32 = 0x1801_EE38;
 const REAL_ENTRY_PC: u32 = 0x0000_02F5;
@@ -20,7 +19,10 @@ const REAL_ENTRY_PC: u32 = 0x0000_02F5;
 #[test]
 fn machine_sans_firmware_ne_tourne_pas() {
     let machine = Machine::new();
-    assert!(!machine.is_running, "rien ne doit s'executer sans dump charge");
+    assert!(
+        !machine.is_running,
+        "rien ne doit s'executer sans dump charge"
+    );
     assert!(!machine.bus.pram.loaded);
     assert!(machine.last_report.is_none());
 }
@@ -76,7 +78,10 @@ fn str_word_immediate_ecrit_32_bits_pas_un_octet() {
         Thumb16::execute(0x6011, &mut regs, &mut bus, &mut periph, &mut nvic),
         StepResult::Ok(_)
     ));
-    assert_eq!(bus.read_u32(map::SRAM_BASE, &mut periph, &nvic), 0xA55A_0000);
+    assert_eq!(
+        bus.read_u32(map::SRAM_BASE, &mut periph, &nvic),
+        0xA55A_0000
+    );
 }
 
 #[test]
@@ -227,14 +232,23 @@ fn sram_et_mailbox_aux_adresses_du_datasheet() {
     let mut nvic = Nvic::default();
 
     bus.write_u32(map::SRAM_BASE, 0xDEAD_BEEF, &mut periph, &mut nvic);
-    assert_eq!(bus.read_u32(map::SRAM_BASE, &mut periph, &nvic), 0xDEAD_BEEF);
+    assert_eq!(
+        bus.read_u32(map::SRAM_BASE, &mut periph, &nvic),
+        0xDEAD_BEEF
+    );
     // Le sommet de pile du vrai firmware doit tomber dans la SRAM.
     assert!((map::SRAM_BASE..=map::SRAM_END).contains(&REAL_ENTRY_SP));
 
     bus.write_u32(map::MAILBOX_BASE, 0x1234_5678, &mut periph, &mut nvic);
-    assert_eq!(bus.read_u32(map::MAILBOX_BASE, &mut periph, &nvic), 0x1234_5678);
+    assert_eq!(
+        bus.read_u32(map::MAILBOX_BASE, &mut periph, &nvic),
+        0x1234_5678
+    );
     // La mailbox ne fait que 4 Ko, elle ne deborde pas sur la suite.
-    assert_eq!(map::MAILBOX_END - map::MAILBOX_BASE + 1, map::MAILBOX_SIZE as u32);
+    assert_eq!(
+        map::MAILBOX_END - map::MAILBOX_BASE + 1,
+        map::MAILBOX_SIZE as u32
+    );
 }
 
 #[test]
@@ -244,8 +258,14 @@ fn les_deux_fenetres_flash_voient_le_meme_octet() {
     let nvic = Nvic::default();
 
     bus.flash.write_u8(0x11000, 0x5A);
-    assert_eq!(bus.read_u8(map::ICACHE_BASE + 0x11000, &mut periph, &nvic), 0x5A);
-    assert_eq!(bus.read_u8(map::FLASH_BASE + 0x11000, &mut periph, &nvic), 0x5A);
+    assert_eq!(
+        bus.read_u8(map::ICACHE_BASE + 0x11000, &mut periph, &nvic),
+        0x5A
+    );
+    assert_eq!(
+        bus.read_u8(map::FLASH_BASE + 0x11000, &mut periph, &nvic),
+        0x5A
+    );
 }
 
 #[test]
@@ -256,7 +276,10 @@ fn les_fusibles_exposent_la_device_key() {
 
     periph.fuses.device_key = Some(REAL_DEVICE_KEY);
     // FEUSE3 porte le mot complet, FEUSE2 seulement les 16 bits de poids fort.
-    assert_eq!(bus.read_u32(periph::FUSES + 0x3c, &mut periph, &nvic), REAL_DEVICE_KEY);
+    assert_eq!(
+        bus.read_u32(periph::FUSES + 0x3c, &mut periph, &nvic),
+        REAL_DEVICE_KEY
+    );
     assert_eq!(
         bus.read_u32(periph::FUSES + 0x38, &mut periph, &nvic),
         REAL_DEVICE_KEY & 0xFFFF_0000
@@ -267,13 +290,22 @@ fn les_fusibles_exposent_la_device_key() {
 fn test_sonix_sys0_osc_ctrl_hide_bit() {
     let mut machine = Machine::new();
     assert!(!machine.bus.boot_rom.is_hidden);
-    machine.bus.write_u32(periph::SYSCTRL0, 0x08, &mut machine.periph, &mut machine.cpu.nvic);
+    machine.bus.write_u32(
+        periph::SYSCTRL0,
+        0x08,
+        &mut machine.periph,
+        &mut machine.cpu.nvic,
+    );
     assert!(machine.bus.boot_rom.is_hidden);
 }
 
 #[test]
 fn test_uart_console_capture() {
     let mut uart = capybara::emulator::peripherals::UartController::new();
+    uart.write_reg(0x00, b'X' as u32);
+    assert!(uart.console_history.is_empty());
+
+    uart.diagnostic_actif = true;
     for c in b"HI!" {
         uart.write_reg(0x00, *c as u32);
     }
@@ -284,15 +316,21 @@ fn test_uart_console_capture() {
 fn test_gpio_buttons_and_dial() {
     let mut machine = Machine::new();
 
-    let initial = machine.bus.read_u32(periph::GPIO0, &mut machine.periph, &machine.cpu.nvic);
+    let initial = machine
+        .bus
+        .read_u32(periph::GPIO0, &mut machine.periph, &machine.cpu.nvic);
     assert_eq!(initial, 0xFFFF_FFFF);
 
     machine.periph.gpio.set_button_a(true);
-    let pressed = machine.bus.read_u32(periph::GPIO0, &mut machine.periph, &machine.cpu.nvic);
+    let pressed = machine
+        .bus
+        .read_u32(periph::GPIO0, &mut machine.periph, &machine.cpu.nvic);
     assert_eq!(pressed & 1, 0);
 
     machine.periph.gpio.step_dial(3);
-    let dial = machine.bus.read_u32(periph::GPIO0 + 4, &mut machine.periph, &machine.cpu.nvic);
+    let dial = machine
+        .bus
+        .read_u32(periph::GPIO0 + 4, &mut machine.periph, &machine.cpu.nvic);
     assert_eq!(dial, 3);
 }
 
@@ -302,17 +340,32 @@ fn un_registre_non_mappe_est_trace_et_pas_avale() {
     machine.bus.mmio_trace.enabled = true;
 
     // SPI1 n'est pas encore modelise : l'acces doit laisser une trace.
-    machine.bus.write_u32(periph::SPI1 + 8, 0x42, &mut machine.periph, &mut machine.cpu.nvic);
-    machine.bus.read_u32(periph::SPI1 + 8, &mut machine.periph, &machine.cpu.nvic);
+    machine.bus.write_u32(
+        periph::SPI1 + 8,
+        0x42,
+        &mut machine.periph,
+        &mut machine.cpu.nvic,
+    );
+    machine
+        .bus
+        .read_u32(periph::SPI1 + 8, &mut machine.periph, &machine.cpu.nvic);
 
-    let stat = machine.bus.mmio_trace.unknown.get(&(periph::SPI1 + 8)).copied();
+    let stat = machine
+        .bus
+        .mmio_trace
+        .unknown
+        .get(&(periph::SPI1 + 8))
+        .copied();
     let stat = stat.expect("l'acces aurait du etre enregistre");
     assert_eq!(stat.writes, 1);
     assert_eq!(stat.reads, 1);
     assert_eq!(stat.last_write, 0x42);
 
     let hot = machine.bus.mmio_trace.hottest(1);
-    assert_eq!(hot[0].1, "SPI1", "le registre doit etre attribue a son peripherique");
+    assert_eq!(
+        hot[0].1, "SPI1",
+        "le registre doit etre attribue a son peripherique"
+    );
 }
 
 // -- Chargement --
@@ -391,7 +444,10 @@ fn dump_reel_chiffre_sans_cle_reste_inspectable() {
     let _ = std::fs::remove_file(&nu);
 
     assert!(report.encrypted, "le code de boot du dump reel est chiffre");
-    assert!(!report.bootable, "sans cle, on ne pretend pas pouvoir demarrer");
+    assert!(
+        !report.bootable,
+        "sans cle, on ne pretend pas pouvoir demarrer"
+    );
     assert!(!machine.is_running);
     // Le code XIP, lui, est en clair et reste lisible.
     assert_eq!(machine.bus.flash.read_u16(0x11000), 0xB082);
@@ -426,9 +482,18 @@ fn blx_registre_revient_sur_l_instruction_suivante() {
     // BLX r3 a l'adresse 0x1000 : step() a deja avance le PC de 2.
     regs.pc = 0x1002;
     regs.set_reg(3, 0x2001);
-    Thumb16::execute(0x4798, &mut regs, &mut MemoryBus::default(), &mut Peripherals::default(), &mut Nvic::default());
+    Thumb16::execute(
+        0x4798,
+        &mut regs,
+        &mut MemoryBus::default(),
+        &mut Peripherals::default(),
+        &mut Nvic::default(),
+    );
     assert_eq!(regs.pc, 0x2000, "la cible perd le bit Thumb");
-    assert_eq!(regs.lr, 0x1003, "LR doit viser l'instruction suivante, pas celle d'apres");
+    assert_eq!(
+        regs.lr, 0x1003,
+        "LR doit viser l'instruction suivante, pas celle d'apres"
+    );
 }
 
 #[test]
@@ -509,7 +574,11 @@ fn bloc_it_saute_l_instruction_quand_la_condition_est_fausse() {
     machine.step(); // IT NE
     assert_eq!(machine.cpu.regs.itstate & 0x0F, 0x08, "le bloc IT est arme");
     machine.step(); // SUBNE, ne doit pas s'executer
-    assert_eq!(machine.cpu.regs.get_reg(3), 5, "l'instruction conditionnelle est sautee");
+    assert_eq!(
+        machine.cpu.regs.get_reg(3),
+        5,
+        "l'instruction conditionnelle est sautee"
+    );
     assert_eq!(machine.cpu.regs.itstate, 0, "le bloc IT est termine");
 }
 
@@ -576,7 +645,10 @@ fn la_fenetre_xip_suit_la_base_programmee() {
     // C'est ce decalage qui fait tomber un saut vers 0x1006D1C4 sur le
     // prologue reel, a l'offset flash 0x11000 + 0x6D1C4.
     bus.flash.write_u8(0x11000 + 0x6D1C4, 0x7E);
-    assert_eq!(bus.read_u8(map::ICACHE_BASE + 0x6D1C4, &mut periph, &nvic), 0x7E);
+    assert_eq!(
+        bus.read_u8(map::ICACHE_BASE + 0x6D1C4, &mut periph, &nvic),
+        0x7E
+    );
 }
 
 #[test]
@@ -597,12 +669,18 @@ fn la_region_bit_band_adresse_un_bit_a_la_fois() {
     // Ecrire par l'alias ne touche que le bit vise de la mailbox.
     bus.write_u32(map::MAILBOX_BASE, 0, &mut periph, &mut nvic);
     bus.write_u32(0x2200_0008, 1, &mut periph, &mut nvic); // octet 0, bit 2
-    assert_eq!(bus.read_u32(map::MAILBOX_BASE, &mut periph, &nvic) & 0xFF, 0b100);
+    assert_eq!(
+        bus.read_u32(map::MAILBOX_BASE, &mut periph, &nvic) & 0xFF,
+        0b100
+    );
     assert_eq!(bus.read_u32(0x2200_0008, &mut periph, &nvic), 1);
     assert_eq!(bus.read_u32(0x2200_0004, &mut periph, &nvic), 0);
 
     bus.write_u32(0x2200_0008, 0, &mut periph, &mut nvic);
-    assert_eq!(bus.read_u32(map::MAILBOX_BASE, &mut periph, &nvic) & 0xFF, 0);
+    assert_eq!(
+        bus.read_u32(map::MAILBOX_BASE, &mut periph, &nvic) & 0xFF,
+        0
+    );
 }
 
 #[test]
@@ -612,7 +690,8 @@ fn le_dma_du_controleur_flash_recopie_vraiment() {
     let mut nvic = Nvic::default();
 
     for i in 0..64u32 {
-        bus.flash.write_u8((0xD49000 + i) as usize, (i as u8).wrapping_mul(3));
+        bus.flash
+            .write_u8((0xD49000 + i) as usize, (i as u8).wrapping_mul(3));
     }
 
     // Sequence relevee dans le firmware : adresse flash, longueur, adresse RAM,
@@ -635,17 +714,26 @@ fn le_dma_du_controleur_flash_recopie_vraiment() {
 }
 
 #[test]
-fn l_adc_signale_sa_conversion_terminee() {
+fn le_modele_herite_saradc_sur_0x4000a000_leve_son_bit_6() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();
     let mut nvic = Nvic::default();
 
-    // Avant toute demande, le bit de fin est absent.
-    assert_eq!(bus.read_u32(periph::SAR_ADC1 + 0x14, &mut periph, &nvic) & 0x40, 0);
+    // Ce test eprouve le modele SarAdc herite, pose sur 0x4000A000. Cette page
+    // est en realite UART0, etabli par la meme mesure que UART1 en 0x4000B000 ;
+    // le modele y est laisse tel quel, en attendant qu'une mesure tranche. Le
+    // bit 6 de +0x14, lu "fin de conversion" ici, est le TEMT de l'UART reel :
+    // cette coincidence explique que rien n'ait proteste jusqu'au routage de
+    // 0x4000B000 vers l'UART.
+    assert_eq!(
+        bus.read_u32(periph::SAR_ADC0 + 0x14, &mut periph, &nvic) & 0x40,
+        0
+    );
 
-    // Le firmware ecrit le canal puis attend le bit 6, teste par LSLS #25 / BMI.
-    bus.write_u32(periph::SAR_ADC1, 3, &mut periph, &mut nvic);
-    let statut = bus.read_u32(periph::SAR_ADC1 + 0x14, &mut periph, &nvic);
+    // Une ecriture sur +0x00, puis la lecture du bit 6 pose, comme le modele
+    // l'a toujours decrit pour son "canal".
+    bus.write_u32(periph::SAR_ADC0, 3, &mut periph, &mut nvic);
+    let statut = bus.read_u32(periph::SAR_ADC0 + 0x14, &mut periph, &nvic);
     assert_ne!(statut << 25 & 0x8000_0000, 0, "le bit 6 doit etre pose");
 }
 
@@ -719,8 +807,14 @@ fn ldrd_et_strd_transferent_deux_registres() {
     regs.set_reg(1, 0x3333_4444);
     // STRD r2, r1, [r4, #4] = 0xE9C4 0x2101.
     Thumb32::execute(0xE9C4, 0x2101, &mut regs, &mut bus, &mut periph, &mut nvic);
-    assert_eq!(bus.read_u32(map::SRAM_BASE + 4, &mut periph, &nvic), 0x1111_2222);
-    assert_eq!(bus.read_u32(map::SRAM_BASE + 8, &mut periph, &nvic), 0x3333_4444);
+    assert_eq!(
+        bus.read_u32(map::SRAM_BASE + 4, &mut periph, &nvic),
+        0x1111_2222
+    );
+    assert_eq!(
+        bus.read_u32(map::SRAM_BASE + 8, &mut periph, &nvic),
+        0x3333_4444
+    );
 
     // LDRD r5, r6, [r4, #4] = 0xE9D4 0x5601.
     Thumb32::execute(0xE9D4, 0x5601, &mut regs, &mut bus, &mut periph, &mut nvic);
@@ -763,7 +857,10 @@ fn le_retour_d_exception_restaure_le_contexte() {
 
     machine.step();
     assert_eq!(machine.cpu.regs.mode, Mode::Handler);
-    assert_eq!(machine.cpu.regs.lr, 0xFFFF_FFF9, "EXC_RETURN attendu dans LR");
+    assert_eq!(
+        machine.cpu.regs.lr, 0xFFFF_FFF9,
+        "EXC_RETURN attendu dans LR"
+    );
     assert_eq!(machine.cpu.regs.get_sp(), sp_avant - 32);
 
     // Le coeur doit reconnaitre EXC_RETURN et depiler, pas s'arreter.
@@ -805,7 +902,9 @@ fn l_accelerateur_calcule_le_crc_de_la_page_de_sauvegarde() {
     let tampon = map::SRAM_BASE + 0x6000;
     let fc = periph::FLASH_CTL;
     let (p, n) = (&mut machine.periph, &mut machine.cpu.nvic);
-    machine.bus.write_u32(fc + 0x10C, 0x6000_0000 + PAGE as u32, p, n);
+    machine
+        .bus
+        .write_u32(fc + 0x10C, 0x6000_0000 + PAGE as u32, p, n);
     machine.bus.write_u32(fc + 0x104, 0x1000, p, n);
     machine.bus.write_u32(fc + 0x100, tampon, p, n);
     machine.bus.write_u32(fc + 0x108, 2, p, n);
@@ -866,7 +965,10 @@ fn le_controleur_rend_le_fabricant_de_la_flash_montee() {
     // Sequence relevee en 0x000039C0 : poser le bit 15 de la commande, attendre
     // qu'il retombe ainsi que le bit 1, puis lire la paire d'identification.
     bus.write_u32(fc + 0x04, 1 << 15, &mut periph, &mut nvic);
-    assert_eq!(bus.read_u32(fc + 0x04, &mut periph, &nvic) & ((1 << 15) | 2), 0);
+    assert_eq!(
+        bus.read_u32(fc + 0x04, &mut periph, &nvic) & ((1 << 15) | 2),
+        0
+    );
     let paire = bus.read_u32(fc + 0x18, &mut periph, &nvic);
 
     // Le firmware en fait `(paire & 0xFFFF) << 8` puis compare les bits 23:16 au
@@ -899,7 +1001,10 @@ fn le_firmware_reel_accepte_la_flash_et_quitte_son_identification() {
     let mut passe = false;
     for _ in 0..60_000_000u64 {
         let pc = machine.cpu.regs.pc;
-        assert_ne!(pc, BOUCLE_REJET, "le firmware a rejete le fabricant de la flash");
+        assert_ne!(
+            pc, BOUCLE_REJET,
+            "le firmware a rejete le fabricant de la flash"
+        );
         if pc == APRES_IDENTIFICATION {
             passe = true;
             break;
@@ -908,7 +1013,10 @@ fn le_firmware_reel_accepte_la_flash_et_quitte_son_identification() {
             break;
         }
     }
-    assert!(passe, "l'identification de la flash doit rendre la main a l'initialisation");
+    assert!(
+        passe,
+        "l'identification de la flash doit rendre la main a l'initialisation"
+    );
 }
 
 #[test]
@@ -944,9 +1052,17 @@ fn le_te_de_l_ecran_bat_sur_la_broche_dix_du_port_un() {
     let etat = |p: &Peripherals| (p.port1.read_reg(0) >> 10) & 1;
     let depart = etat(&periph);
     let _ = periph.port1.tick(demi as u32 + 1);
-    assert_ne!(etat(&periph), depart, "le TE doit changer d'etat a la demi-periode");
+    assert_ne!(
+        etat(&periph),
+        depart,
+        "le TE doit changer d'etat a la demi-periode"
+    );
     let _ = periph.port1.tick(demi as u32);
-    assert_eq!(etat(&periph), depart, "puis revenir, sinon aucun front ne se produit");
+    assert_eq!(
+        etat(&periph),
+        depart,
+        "puis revenir, sinon aucun front ne se produit"
+    );
 }
 
 #[test]
@@ -957,7 +1073,10 @@ fn le_front_du_te_leve_une_interruption_quand_elle_est_autorisee() {
 
     // Sans autorisation, le front ne doit rien lever.
     let _ = periph.port1.tick(demi + 1);
-    assert!(!periph.port1.tick(demi), "aucune interruption tant qu'elle n'est pas autorisee");
+    assert!(
+        !periph.port1.tick(demi),
+        "aucune interruption tant qu'elle n'est pas autorisee"
+    );
 
     periph.port1.irq_enable = 1 << TE_PIN;
     let _ = periph.port1.tick(demi);
@@ -966,8 +1085,15 @@ fn le_front_du_te_leve_une_interruption_quand_elle_est_autorisee() {
     for _ in 0..4 {
         leve |= periph.port1.tick(demi);
     }
-    assert!(leve, "le front montant du TE doit lever l'interruption du port 1");
-    assert_ne!(periph.port1.irq_status & (1 << TE_PIN), 0, "le drapeau doit rester lisible");
+    assert!(
+        leve,
+        "le front montant du TE doit lever l'interruption du port 1"
+    );
+    assert_ne!(
+        periph.port1.irq_status & (1 << TE_PIN),
+        0,
+        "le drapeau doit rester lisible"
+    );
 
     // Le gestionnaire l'efface en ecrivant un a la meme position en 0x20.
     periph.port1.write_reg(0x20, 1 << TE_PIN);
@@ -993,7 +1119,12 @@ fn le_canal_de_transfert_recopie_puis_signale_sa_fin() {
 
     // Sequence du pilote en 0x000044B8 : compte, destination, source, depart.
     bus.write_u32(canal + dma::COMPTE, 8, &mut periph, &mut nvic);
-    bus.write_u32(canal + dma::DESTINATION, destination, &mut periph, &mut nvic);
+    bus.write_u32(
+        canal + dma::DESTINATION,
+        destination,
+        &mut periph,
+        &mut nvic,
+    );
     bus.write_u32(canal + dma::SOURCE, source, &mut periph, &mut nvic);
     bus.write_u32(canal + dma::CTRL, dma::DEPART, &mut periph, &mut nvic);
 
@@ -1006,12 +1137,24 @@ fn le_canal_de_transfert_recopie_puis_signale_sa_fin() {
         );
     }
     // Le bit de depart retombe, le drapeau reste lisible jusqu'a l'acquittement.
-    assert_eq!(bus.read_u32(canal + dma::CTRL, &mut periph, &nvic) & dma::DEPART, 0);
-    assert_ne!(bus.read_u32(periph::DMA + dma::STATUS, &mut periph, &nvic) & 1, 0);
-    assert!(periph.dma.irq_a_lever, "la fin de transfert doit etre signalee");
+    assert_eq!(
+        bus.read_u32(canal + dma::CTRL, &mut periph, &nvic) & dma::DEPART,
+        0
+    );
+    assert_ne!(
+        bus.read_u32(periph::DMA + dma::STATUS, &mut periph, &nvic) & 1,
+        0
+    );
+    assert!(
+        periph.dma.irq_a_lever,
+        "la fin de transfert doit etre signalee"
+    );
 
     bus.write_u32(periph::DMA + dma::ACQUIT, 1, &mut periph, &mut nvic);
-    assert_eq!(bus.read_u32(periph::DMA + dma::STATUS, &mut periph, &nvic) & 1, 0);
+    assert_eq!(
+        bus.read_u32(periph::DMA + dma::STATUS, &mut periph, &nvic) & 1,
+        0
+    );
 }
 
 #[test]
@@ -1093,11 +1236,17 @@ fn le_convertisseur_de_pile_rend_son_echantillon_et_enchaine() {
         adc_pile::PILE_PLEINE,
         "les dix bits utiles doivent commencer au rang 6"
     );
-    assert!(periph.adc_pile.irq_a_lever, "le depart doit produire un premier echantillon");
+    assert!(
+        periph.adc_pile.irq_a_lever,
+        "le depart doit produire un premier echantillon"
+    );
     periph.adc_pile.irq_a_lever = false;
 
     // Le firmware ne relance jamais la conversion : elle doit s'enchainer.
-    assert!(!periph.adc_pile.tick(1), "aucun echantillon avant la fin de la conversion");
+    assert!(
+        !periph.adc_pile.tick(1),
+        "aucun echantillon avant la fin de la conversion"
+    );
     assert!(
         periph.adc_pile.tick(adc_pile::DUREE_CONVERSION as u32),
         "le convertisseur doit produire un echantillon a chaque duree ecoulee"
@@ -1131,7 +1280,10 @@ fn remplacer_la_pile_efface_le_drapeau_et_refait_la_somme() {
 
     machine.remplacer_la_pile();
     for page in Machine::PAGES_SAUVEGARDE {
-        assert_eq!(machine.bus.flash.read_u8(page + 4) & Machine::DRAPEAU_PILE_FAIBLE, 0);
+        assert_eq!(
+            machine.bus.flash.read_u8(page + 4) & Machine::DRAPEAU_PILE_FAIBLE,
+            0
+        );
         // L'en-tete doit rester d'accord avec le contenu, sinon le firmware
         // rejette la page et la reformate.
         let entete = u16::from_le_bytes([
@@ -1142,7 +1294,10 @@ fn remplacer_la_pile_efface_le_drapeau_et_refait_la_somme() {
             machine.bus.flash.read_u8(page + 2),
             machine.bus.flash.read_u8(page + 3),
         ]);
-        assert_eq!(entete, !complement, "en-tete de page coherent apres correction");
+        assert_eq!(
+            entete, !complement,
+            "en-tete de page coherent apres correction"
+        );
     }
 }
 
@@ -1168,8 +1323,15 @@ fn une_exception_prise_dans_un_bloc_it_ne_saute_pas_la_premiere_instruction() {
     machine.step();
 
     assert_eq!(machine.cpu.regs.pc, 0x2000, "le gestionnaire doit demarrer");
-    assert_eq!(machine.cpu.regs.itstate, 0, "le gestionnaire demarre hors bloc IT");
-    assert_eq!(machine.cpu.regs.get_sp(), sp_avant - 32, "le contexte doit etre empile");
+    assert_eq!(
+        machine.cpu.regs.itstate, 0,
+        "le gestionnaire demarre hors bloc IT"
+    );
+    assert_eq!(
+        machine.cpu.regs.get_sp(),
+        sp_avant - 32,
+        "le contexte doit etre empile"
+    );
 
     // L'etat du bloc IT voyage dans le xPSR empile et revient au retour.
     let xpsr = machine.bus.read_u32(
@@ -1182,7 +1344,10 @@ fn une_exception_prise_dans_un_bloc_it_ne_saute_pas_la_premiere_instruction() {
 
     machine.cpu.regs.pc = 0xFFFF_FFF9;
     machine.step();
-    assert_eq!(machine.cpu.regs.itstate, 0x08, "le bloc IT interrompu doit reprendre");
+    assert_eq!(
+        machine.cpu.regs.itstate, 0x08,
+        "le bloc IT interrompu doit reprendre"
+    );
 }
 
 #[test]
@@ -1209,11 +1374,26 @@ fn un_appui_tire_la_broche_du_bouton_vers_le_bas() {
         Machine::ENCODEUR_1,
         Machine::ENCODEUR_2,
     ] {
-        assert_eq!(lire(&machine, bouton), 1, "broche {:#x} haute au repos", bouton);
+        assert_eq!(
+            lire(&machine, bouton),
+            1,
+            "broche {:#x} haute au repos",
+            bouton
+        );
         machine.appuyer(bouton);
-        assert_eq!(lire(&machine, bouton), 0, "broche {:#x} basse sous l'appui", bouton);
+        assert_eq!(
+            lire(&machine, bouton),
+            0,
+            "broche {:#x} basse sous l'appui",
+            bouton
+        );
         machine.relacher(bouton);
-        assert_eq!(lire(&machine, bouton), 1, "broche {:#x} remonte au relachement", bouton);
+        assert_eq!(
+            lire(&machine, bouton),
+            1,
+            "broche {:#x} remonte au relachement",
+            bouton
+        );
     }
 
     // Un appui ne doit pas deborder sur les broches voisines.
@@ -1267,7 +1447,11 @@ fn le_firmware_reel_pousse_des_trames_vers_le_panneau() {
     // Une image reellement dessinee porte plus de deux couleurs.
     let couleurs: std::collections::HashSet<u16> =
         machine.periph.display.vram.iter().copied().collect();
-    assert!(couleurs.len() > 16, "image trop uniforme : {} couleurs", couleurs.len());
+    assert!(
+        couleurs.len() > 16,
+        "image trop uniforme : {} couleurs",
+        couleurs.len()
+    );
 }
 
 #[test]
@@ -1299,7 +1483,10 @@ fn un_instantane_remet_la_machine_dans_son_etat() {
     machine.restaurer(&etat);
     assert_eq!(machine.cpu.regs.pc, pc);
     assert_eq!(machine.cpu.cycles, cycles);
-    assert_eq!(machine.bus.sram.data, sram, "la memoire vive doit etre revenue");
+    assert_eq!(
+        machine.bus.sram.data, sram,
+        "la memoire vive doit etre revenue"
+    );
 
     // Une ecriture en flash faite apres l'instantane ne doit pas survivre.
     let page = Machine::PAGES_SAUVEGARDE[0];
@@ -1369,7 +1556,11 @@ fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
 
     // Bit de direction pose : flash vers memoire.
     bus.write_u32(fc + 0x108, 2, &mut periph, &mut nvic);
-    assert_eq!(bus.read_u32(fc + 0x108, &mut periph, &nvic), 2, "le bit de direction se relit");
+    assert_eq!(
+        bus.read_u32(fc + 0x108, &mut periph, &nvic),
+        2,
+        "le bit de direction se relit"
+    );
     bus.write_u32(fc + 0x108, 3, &mut periph, &mut nvic);
     for i in 0..32u32 {
         assert_eq!(bus.read_u8(tampon + i, &mut periph, &nvic), 0xA0 + i as u8);
@@ -1380,7 +1571,11 @@ fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
         bus.write_u8(tampon + i, 0x50 + i as u8, &mut periph, &mut nvic);
     }
     bus.write_u32(fc + 0x108, 0, &mut periph, &mut nvic);
-    assert_eq!(bus.read_u32(fc + 0x108, &mut periph, &nvic), 0, "le bit de direction se relit");
+    assert_eq!(
+        bus.read_u32(fc + 0x108, &mut periph, &nvic),
+        0,
+        "le bit de direction se relit"
+    );
     bus.write_u32(fc + 0x108, 1, &mut periph, &mut nvic);
     for i in 0..32u32 {
         assert_eq!(
@@ -1492,6 +1687,52 @@ mod sauvegarde_persistante {
         m.bus.flash.write_u8(0x1000, 0x33);
         assert_eq!(m.bus.flash.revision, apres_ecriture);
     }
+}
+
+#[test]
+fn creer_un_emplacement_conserve_l_etat_courant() {
+    let mut machine = Machine::new();
+    machine.cpu.regs.pc = 0x1234_5678;
+    machine.bus.flash.data[0x2000] = 0x5a;
+    machine.bus.flash.pages_salies.insert(2);
+    let identifiant = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let chemin = std::env::temp_dir().join(format!(
+        "capybara-save-as-{}-{}.tamasave",
+        std::process::id(),
+        identifiant
+    ));
+
+    machine
+        .creer_sauvegarde_depuis_etat(chemin.clone())
+        .expect("la sauvegarde doit etre creee");
+
+    assert_eq!(machine.cpu.regs.pc, 0x1234_5678);
+    assert_eq!(machine.bus.flash.data[0x2000], 0x5a);
+    assert_eq!(machine.sauvegarde_active.as_deref(), Some(chemin.as_path()));
+    assert!(chemin.is_file());
+    let _ = std::fs::remove_file(chemin);
+}
+
+#[test]
+fn une_broche_reveille_toute_veille_signalee_par_le_pmu() {
+    let mut machine = Machine::new();
+    machine.cpu.regs.pc = 0x0055_5554;
+    machine.periph.pmu.deep_sleep_active = true;
+    machine.is_running = false;
+
+    assert!(machine.reveiller_par_broche());
+
+    assert!(machine.is_running);
+    assert!(!machine.periph.pmu.deep_sleep_active);
+    assert_ne!(machine.cpu.regs.pc, 0x0055_5554);
+    assert_ne!(
+        machine.periph.pmu.status
+            & capybara::emulator::peripherals::PmuController::FLAG_WAKEUP_PIN,
+        0
+    );
 }
 
 #[test]
