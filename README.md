@@ -28,6 +28,12 @@ The firmware boots, the egg hatches, the clock keeps running while the window is
 closed, the gauges fall, the console sleeps and wakes, and your save survives a
 reboot of your computer.
 
+<div align="center">
+<img src="assets/screenshots/console.png" alt="Capybara running a Land edition dump" width="880">
+</div>
+
+<p align="center"><i>The console on the left, everything that drives it on the right. The shell here wears a paper of the owner's choosing.</i></p>
+
 ### What you need first
 
 Capybara ships no game data, and never will. You supply two things, taken from a
@@ -65,6 +71,14 @@ The built-in **Help** tab explains the rest in English and French.
 dial. Held keys combine, which is how you revive a character. Every key and each
 mouse button can be remapped, and the mapping is remembered.
 
+Game mode drops the window frame and leaves the console alone on the desktop,
+cut to its own shape. It can be dragged anywhere, kept above other windows, and
+right-clicking it opens everything without going back to the panel.
+
+<div align="center">
+<img src="assets/screenshots/game-mode.png" alt="Game mode: the console alone on the desktop" width="360">
+</div>
+
 **Saves.** A slot is a game: the character, its age, its gauges, its diary. Each
 dump keeps its own slots. Starting a new game asks for a name and leaves the
 current one untouched on disk. A slot can be deleted, with its recovery points,
@@ -75,10 +89,40 @@ whole machine, core and peripherals included, and rewinds it to the second. One
 is taken every minute and kept for twelve hours. They export and import as
 files.
 
+<div align="center">
+<img src="assets/screenshots/recovery-points.png" alt="Right-click menu listing recovery points by time" width="560">
+</div>
+
+<p align="center"><i>Right-click the console and pick an hour. Twelve hours of your game, minute by minute.</i></p>
+
 **Appearance.** The shell takes your own images: background, window paper, cap,
 and a cut-out mask that replaces the console silhouette. Colours, opacity,
 printed word, depth, shadows, layer rotation, screen size, button size and
-spacing are all adjustable, per console.
+spacing are all adjustable, per console. Nothing is global: each console keeps
+its own look.
+
+<div align="center">
+<img src="assets/screenshots/appearance-paper.png" alt="Appearance tab, with a photo used as the window paper" width="880">
+</div>
+
+<p align="center"><i>Every slider lands on the shell as you drag it. The screenshot shows a photo slid under the transparent window.</i></p>
+
+The same tab holds the controls: which keys drive which button, and what the
+three mouse buttons do when you click the screen instead of aiming at the small
+buttons.
+
+<div align="center">
+<img src="assets/screenshots/appearance-controls.png" alt="Appearance tab, controls and button geometry" width="880">
+</div>
+
+**The mask** is worth a word. It is a black and white image that decides the
+shape of the paper: black shows it, white hides it, and anything outside the
+image is hidden too. Load this star as a mask and the paper appears as a star,
+whatever the console's own silhouette is.
+
+<div align="center">
+<img src="assets/screenshots/mask-example.png" alt="A black star on white, used as a cut-out mask" width="150">
+</div>
 
 **Serial link.** The console speaks over a UART at 460800 baud, the port through
 which a real device receives items or plays with another one. The controller is
@@ -93,6 +137,14 @@ It creates two COM ports wired back to back: Capybara
 opens one end, the transfer tool opens the other. Both sides use 460800 baud, 8
 data bits, no parity, 1 stop bit, and the same port cannot be opened twice.
 Paired that way, a transfer tool talks to your console as if it were plugged in.
+
+<div align="center">
+<img src="assets/screenshots/uart-connecting.png" alt="The console connecting over the serial link" width="300">
+&nbsp;&nbsp;
+<img src="assets/screenshots/uart-item-received.png" alt="The console unlocking an item received over the link" width="380">
+</div>
+
+<p align="center"><i>The console asks for the link, then unlocks what arrived. This baobab was sent from the computer.</i></p>
 
 **Browser view.** A local server publishes the screen and accepts the controls,
 so the console can be watched or played from a phone on the same network.
@@ -193,6 +245,12 @@ Le firmware demarre, l'oeuf eclot, l'horloge continue de tourner fenetre
 fermee, les jauges descendent, la console s'endort et se reveille, et votre
 sauvegarde survit a l'extinction de l'ordinateur.
 
+<div align="center">
+<img src="assets/screenshots/console.png" alt="Capybara faisant tourner un dump de l'edition Land" width="880">
+</div>
+
+<p align="center"><i>La console a gauche, tout ce qui la commande a droite. Ici la coque porte un papier choisi par son proprietaire.</i></p>
+
 ### Ce qu'il vous faut d'abord
 
 Capybara ne distribue aucune donnee de jeu, et ne le fera jamais. Vous
@@ -233,6 +291,15 @@ Fleche bas tournent la molette. Les touches tenues se combinent, c'est ainsi
 qu'on ranime un personnage. Chaque touche et chaque bouton de la souris se
 remappent, et le reglage est retenu.
 
+Le mode jeu retire le cadre de la fenetre et laisse la console seule sur le
+bureau, decoupee a sa forme. Elle se deplace ou l'on veut, se maintient au
+dessus des autres fenetres, et un clic droit dessus ouvre tout sans repasser par
+le panneau.
+
+<div align="center">
+<img src="assets/screenshots/game-mode.png" alt="Mode jeu : la console seule sur le bureau" width="360">
+</div>
+
 **Sauvegardes.** Un emplacement est une partie : le personnage, son age, ses
 jauges, son journal. Chaque dump garde les siens. Une nouvelle partie demande
 un nom et laisse la precedente intacte sur le disque. Un emplacement s'efface,
@@ -243,11 +310,40 @@ toute la machine, coeur et peripheriques compris, et permet de revenir en
 arriere a la seconde pres. Un point est pris chaque minute et garde douze
 heures. Ils s'exportent et s'importent en fichiers.
 
+<div align="center">
+<img src="assets/screenshots/recovery-points.png" alt="Menu du clic droit listant les points de reprise par heure" width="560">
+</div>
+
+<p align="center"><i>Clic droit sur la console, puis une heure. Douze heures de partie, minute par minute.</i></p>
+
 **Habillage.** La coque accepte vos images : fond, papier de la fenetre,
 calotte, et un masque de decoupe qui remplace la silhouette de la console. Les
 couleurs, l'opacite, le mot imprime, le relief, les ombres, la rotation du
 calque, la taille de l'ecran, celle des boutons et leur ecartement se reglent,
-console par console.
+console par console. Rien n'est global : chaque console garde son allure.
+
+<div align="center">
+<img src="assets/screenshots/appearance-paper.png" alt="Onglet Personnalisation, avec une photo posee en papier de fenetre" width="880">
+</div>
+
+<p align="center"><i>Chaque curseur se voit sur la coque pendant qu'on le tire. Ici une photo glissee sous la fenetre transparente.</i></p>
+
+Le meme onglet porte les commandes : quelles touches tiennent quel bouton, et ce
+que font les trois boutons de la souris quand on clique sur l'ecran au lieu de
+viser les petites pastilles.
+
+<div align="center">
+<img src="assets/screenshots/appearance-controls.png" alt="Onglet Personnalisation, commandes et geometrie des boutons" width="880">
+</div>
+
+**Le masque** merite un mot. C'est une image en noir et blanc qui decide de la
+forme du papier : le noir le laisse voir, le blanc le cache, et ce qui tombe
+hors de l'image est cache aussi. Chargez cette etoile comme masque et le papier
+apparait en etoile, quelle que soit la silhouette de la console.
+
+<div align="center">
+<img src="assets/screenshots/mask-example.png" alt="Une etoile noire sur fond blanc, utilisee comme masque de decoupe" width="150">
+</div>
 
 **Liaison serie.** La console parle par un UART a 460800 bauds, le port par
 lequel un vrai boitier recoit des objets ou joue a deux. Le controleur est
@@ -264,6 +360,14 @@ Capybara ouvre un bout, l'outil de transfert ouvre l'autre. Les deux cotes
 utilisent 460800 bauds, 8 bits de donnees, aucune parite, 1 bit d'arret, et un
 meme port ne s'ouvre pas deux fois. Appairee ainsi, un outil de transfert parle
 a votre console comme si elle etait branchee.
+
+<div align="center">
+<img src="assets/screenshots/uart-connecting.png" alt="La console en train d'etablir la liaison serie" width="300">
+&nbsp;&nbsp;
+<img src="assets/screenshots/uart-item-received.png" alt="La console debloquant un objet recu par la liaison" width="380">
+</div>
+
+<p align="center"><i>La console demande la liaison, puis debloque ce qui est arrive. Ce baobab a ete envoye depuis l'ordinateur.</i></p>
 
 **Vue navigateur.** Un serveur local publie l'ecran et accepte les commandes :
 la console se regarde et se joue depuis un telephone sur le meme reseau.
