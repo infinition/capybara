@@ -681,6 +681,10 @@ impl TamagotchiApp {
                 self.hex_base_addr = if report.bootable { 0 } else { 0x6001_1000 };
                 self.disasm_view_addr = self.machine.cpu.regs.pc;
                 self.status_msg = Some(self.describe_load(&report));
+                // Un dump qui reste chiffre ne demarrera pas. Plutot que de
+                // laisser l'utilisateur deviner qu'il lui manque une cle et
+                // qu'un bouton la cherche, on la cherche.
+                let a_chercher = report.encrypted && !report.bootable;
                 // La console reprend sa partie toute seule, comme un vrai
                 // Tamagotchi qu'on rallume. Sans cela il faudrait penser a
                 // choisir un emplacement avant de jouer.
@@ -710,6 +714,9 @@ impl TamagotchiApp {
                 self.ouvrir_emplacement(emplacement);
                 // Le papier suit la console : il est relu a chaque changement.
                 self.papier_a_relire = true;
+                if a_chercher {
+                    self.demarrer_la_recherche_de_cle();
+                }
             }
             Err(e) => {
                 self.status_msg = Some(self.i18n.t_args("emu_load_error", &[("error", &e)]));
@@ -2344,6 +2351,35 @@ impl TamagotchiApp {
         });
     }
 
+    /// Lance la recherche de la cle sur le dump charge.
+    ///
+    /// Rien ne se passe si une recherche tourne deja ou si aucun dump n'est
+    /// charge : la fonction est appelee aussi bien par le bouton que par
+    /// l'import, et deux recherches en parallele ne serviraient a rien.
+    fn demarrer_la_recherche_de_cle(&mut self) {
+        use std::sync::atomic::{AtomicBool, AtomicU64};
+        use std::sync::Arc;
+        let dump = self.load_path_input.clone();
+        if self.recherche_cle.is_some() || dump.is_empty() {
+            return;
+        }
+        let avancement = Arc::new(AtomicU64::new(0));
+        let arret = Arc::new(AtomicBool::new(false));
+        let (envoi, reception) = std::sync::mpsc::channel();
+        let a = Arc::clone(&avancement);
+        let s = Arc::clone(&arret);
+        std::thread::spawn(move || {
+            let trouvee = std::fs::read(&dump).ok().and_then(|buf| {
+                let fils =
+                    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+                crate::emulator::sonix::recherche_cle::chercher(&buf, fils, a, s)
+            });
+            let _ = envoi.send(trouvee);
+        });
+        self.depart_recherche = std::time::Instant::now();
+        self.recherche_cle = Some((avancement, arret, reception));
+    }
+
     /// Champ de la cle de la puce.
     ///
     /// Sans elle un dump chiffre ne demarre pas. Elle n'etait fournissable que
@@ -2416,24 +2452,7 @@ impl TamagotchiApp {
                 ))
                 .clicked()
             {
-                use std::sync::atomic::{AtomicBool, AtomicU64};
-                use std::sync::Arc;
-                let avancement = Arc::new(AtomicU64::new(0));
-                let arret = Arc::new(AtomicBool::new(false));
-                let (envoi, reception) = std::sync::mpsc::channel();
-                let a = Arc::clone(&avancement);
-                let s = Arc::clone(&arret);
-                std::thread::spawn(move || {
-                    let trouvee = std::fs::read(&dump).ok().and_then(|buf| {
-                        let fils = std::thread::available_parallelism()
-                            .map(|n| n.get())
-                            .unwrap_or(4);
-                        crate::emulator::sonix::recherche_cle::chercher(&buf, fils, a, s)
-                    });
-                    let _ = envoi.send(trouvee);
-                });
-                self.depart_recherche = std::time::Instant::now();
-                self.recherche_cle = Some((avancement, arret, reception));
+                self.demarrer_la_recherche_de_cle();
             }
         } else if let Some((avancement, arret, _)) = &self.recherche_cle {
             use std::sync::atomic::Ordering;
@@ -2471,62 +2490,6 @@ impl TamagotchiApp {
             ui.ctx().request_repaint();
         }
 
-        // La cle se retrouve depuis le dump lui meme. La cle AES est en clair
-        // dans la table de chargement ; le seul secret est la deviceKey, trente
-        // deux bits, qui ne sert qu'a masquer un IV. Quatre milliards de
-        // candidats, deux blocs chacun, et la table des vecteurs du coeur pour
-        // dire lequel est le bon. Rien de la cle n'est ecrit dans le logiciel :
-        // c'est votre dump qui rend la sienne.
-        ui.horizontal_wrapped(|ui| {
-            let en_cours = self.recherche_cle.is_some();
-            let dump = self.load_path_input.clone();
-            if ui
-                .add_enabled(
-                    !en_cours && !dump.is_empty(),
-                    egui::Button::new(
-                        self.i18n.choisir("Chercher la cle dans le dump", "Find the key in the dump"),
-                    ),
-                )
-                .on_hover_text(self.i18n.choisir(
-                    "La cle se deduit de votre propre dump, en une minute environ. Rien n'est telecharge et rien n'est fourni.",
-                    "The key is worked out from your own dump, in about a minute. Nothing is downloaded and nothing is supplied.",
-                ))
-                .clicked()
-            {
-                use std::sync::atomic::{AtomicBool, AtomicU64};
-                use std::sync::Arc;
-                let avancement = Arc::new(AtomicU64::new(0));
-                let arret = Arc::new(AtomicBool::new(false));
-                let (envoi, reception) = std::sync::mpsc::channel();
-                let a = Arc::clone(&avancement);
-                let s = Arc::clone(&arret);
-                std::thread::spawn(move || {
-                    let trouvee = std::fs::read(&dump).ok().and_then(|buf| {
-                        let fils = std::thread::available_parallelism()
-                            .map(|n| n.get())
-                            .unwrap_or(4);
-                        crate::emulator::sonix::recherche_cle::chercher(&buf, fils, a, s)
-                    });
-                    let _ = envoi.send(trouvee);
-                });
-                self.recherche_cle = Some((avancement, arret, reception));
-            }
-            if let Some((avancement, arret, _)) = &self.recherche_cle {
-                use std::sync::atomic::Ordering;
-                let fait = avancement.load(Ordering::Relaxed) as f64 * 100.0 / 4_294_967_296.0;
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} {:.0} %",
-                        self.i18n.choisir("recherche", "searching"),
-                        fait
-                    ))
-                    .small(),
-                );
-                if ui.small_button(self.i18n.choisir("Arreter", "Stop")).clicked() {
-                    arret.store(true, Ordering::Relaxed);
-                }
-            }
-        });
         ui.label(
             egui::RichText::new(self.i18n.choisir(
                 "Elle est gravee dans les fusibles de votre console et se lit en SWD. Elle n'est ni fournie ni distribuee.",
@@ -2881,7 +2844,12 @@ impl eframe::App for TamagotchiApp {
                     Some(cle) => {
                         let texte = format!("{cle:08X}");
                         self.saisie_cle = texte.clone();
-                        let _ = crate::emulator::sauvegarde::ecrire_cle_commune(&texte);
+                        // A cote de son dump, pas seulement dans le fichier
+                        // commun : un dump importe plus tard peut avoir une
+                        // autre cle, et ecraser la commune rendrait le premier
+                        // illisible.
+                        let dump = std::path::PathBuf::from(&self.load_path_input);
+                        let _ = crate::emulator::sauvegarde::ecrire_cle_du_dump(&dump, &texte);
                         self.status_msg = Some(format!(
                             "{} {}",
                             self.i18n.choisir("Cle trouvee :", "Key found:"),

@@ -410,6 +410,26 @@ pub fn ecrire_cle_commune(valeur: &str) -> Result<(), String> {
     std::fs::write(chemin_cle_commune(), propre).map_err(|e| e.to_string())
 }
 
+/// Enregistre la cle d'un dump precis, a cote de lui.
+///
+/// Le chargeur consulte ce fichier avant le fichier commun : chaque dump garde
+/// donc la sienne. Sans cela, importer un dump dont la cle differe ecraserait
+/// celle du precedent et le rendrait illisible.
+pub fn ecrire_cle_du_dump(dump: &Path, valeur: &str) -> Result<(), String> {
+    let propre = valeur.trim().trim_start_matches("0x").trim_start_matches("0X");
+    if u32::from_str_radix(propre, 16).is_err() {
+        return Err("huit chiffres hexadecimaux attendus".to_string());
+    }
+    std::fs::write(cle_voisine(dump), propre).map_err(|e| e.to_string())?;
+    // Le fichier commun ne sert que de recours pour un dump arrive sans cle.
+    // On ne l'ecrase pas : le premier trouve fait foi.
+    let commune = chemin_cle_commune();
+    if !commune.is_file() {
+        let _ = std::fs::write(commune, propre);
+    }
+    Ok(())
+}
+
 /// Recopie la cle posee a cote d'un dump importe.
 ///
 /// Sans elle, un dump chiffre recopie dans le dossier de donnees devient
