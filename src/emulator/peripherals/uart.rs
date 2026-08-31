@@ -28,11 +28,22 @@ pub struct UartController {
     pub rx_in: VecDeque<u8>,
     pub console_history: String,
 
+    /// Active uniquement quand l'onglet UART est visible. Le transport reste
+    /// fonctionnel sans lui, mais aucun journal texte ni contexte de refus
+    /// n'est alors construit dans le chemin chaud de l'emulation.
+    #[serde(skip)]
+    pub diagnostic_actif: bool,
+
     pub irq_pending: bool,
     /// Octets perdus faute de place dans la file d'emission. Non nul, cela
     /// signale que le firmware ecrit sans consulter l'etat de ligne, ou que la
     /// file se vide trop lentement.
     pub tx_perdus: u64,
+    /// Pose des que la console vient d'ecrire les trois lettres d'un refus.
+    /// Le coeur le releve au pas suivant pour figer le contexte, sans quoi il
+    /// est perdu : la boucle d'emulation avance de milliers d'instructions
+    /// avant que l'interface ne reprenne la main.
+    pub refus_emis: bool,
     /// Octets ecartes par une remise a zero de la file de reception. Ceux qui
     /// etaient deja dans la file sont perdus sur le materiel aussi ; ce
     /// compteur sert a mesurer l'ampleur du phenomene pendant un transfert.
@@ -62,8 +73,10 @@ impl Default for UartController {
             rx_fifo: VecDeque::with_capacity(UART_FIFO_DEPTH),
             rx_in: VecDeque::new(),
             console_history: String::new(),
+            diagnostic_actif: false,
             irq_pending: false,
             tx_perdus: 0,
+            refus_emis: false,
             rx_jetes: 0,
             tx_phase: 0,
             rx_phase: 0,
@@ -88,8 +101,16 @@ impl UartController {
     pub fn lsr(&self) -> u32 {
         let rx_empty = self.rx_fifo.is_empty();
         let rx_full = self.rx_fifo.len() >= UART_FIFO_DEPTH;
-        let tx_empty = self.tx_fifo.is_empty();
-        let tx_full = self.tx_fifo.len() >= UART_FIFO_DEPTH;
+        // Un emetteur a l'arret ne retient pas la ligne : ses temoins de file
+        // vide restent poses, sinon le firmware attend sans fin qu'une ligne
+        // eteinte se libere. C'est ce qui figeait la console au sortir de la
+        // veille : la scene d'extinction coupe l'emetteur, des octets restaient
+        // en file, et le message de demarrage suivant n'obtenait jamais la main.
+        // Les octets deja ecrits ne sont pas perdus pour autant : ils partiront
+        // quand l'emetteur sera arme.
+        let tx_arrete = (self.ctrl & 0x81) != 0x81;
+        let tx_empty = tx_arrete || self.tx_fifo.is_empty();
+        let tx_full = !tx_arrete && self.tx_fifo.len() >= UART_FIFO_DEPTH;
 
         let mut val = 0u32;
         if !rx_empty {
@@ -205,13 +226,21 @@ impl UartController {
     }
 
     fn ecrire_octet(&mut self, octet: u8) {
-        if octet == b'\n' || octet == b'\r' {
-            self.console_history.push('\n');
-        } else if octet.is_ascii_graphic() || octet == b' ' {
-            self.console_history.push(octet as char);
-        }
-        if self.console_history.len() > 10_000 {
-            self.console_history = self.console_history.split_off(2_000);
+        if self.diagnostic_actif {
+            // Les trois dernieres lettres emises suffisent a reconnaitre un refus.
+            let n = self.console_history.len();
+            if octet == b'K' && n >= 2 && self.console_history.as_bytes()[n - 2..] == *b"NA" {
+                self.refus_emis = true;
+            }
+
+            if octet == b'\n' || octet == b'\r' {
+                self.console_history.push('\n');
+            } else if octet.is_ascii_graphic() || octet == b' ' {
+                self.console_history.push(octet as char);
+            }
+            if self.console_history.len() > 10_000 {
+                self.console_history = self.console_history.split_off(2_000);
+            }
         }
 
         if self.tx_fifo.len() < UART_FIFO_DEPTH {
@@ -285,6 +314,19 @@ impl UartController {
     /// demarrage bien avant, et ces octets attendent dans la file de sortie :
     /// sans ce vidage, le premier chose que recoit l'outil de transfert est un
     /// message de demarrage, et sa conversation commence desynchronisee.
+    /// Remet les files materielles a zero, comme le fait un reset du coeur.
+    ///
+    /// Les files de la ligne, elles, ne sont pas touchees : elles representent
+    /// ce qui circule vers l'hote et depuis lui, et cela n'appartient pas a la
+    /// console. Sans cette remise a zero, les octets ecrits avant une extinction
+    /// survivent au redemarrage et le firmware les trouve encore en travers.
+    pub fn reinitialiser(&mut self) {
+        self.tx_fifo.clear();
+        self.rx_fifo.clear();
+        self.tx_phase = 0;
+        self.rx_phase = 0;
+    }
+
     pub fn vider_la_ligne(&mut self) {
         self.tx_out.clear();
         self.rx_in.clear();

@@ -78,7 +78,7 @@ impl FlashInspector {
                 offset_start: 0xD49000,
                 offset_end: 0xFFFFFF,
                 size_bytes: 0x2B7000,
-                description: "Tamagotchi Paradise pet state & diary memory".to_string(),
+                description: "Paradise pet state & diary memory".to_string(),
                 status: "Persistent".to_string(),
             },
         ];
@@ -86,7 +86,7 @@ impl FlashInspector {
         Self {
             file_loaded: false,
             file_size: 16 * 1024 * 1024,
-            detected_edition: "Tamagotchi Paradise".to_string(),
+            detected_edition: "Paradise".to_string(),
             header_magic: "SONIXDEV".to_string(),
             xip_present: true,
             arc2_assets_count: 3,
@@ -117,17 +117,17 @@ impl FlashInspector {
 
             let path_str = path.as_ref().to_string_lossy().to_lowercase();
             if path_str.contains("jade") || crc == 0x2AD40D77 {
-                self.detected_edition = "Tamagotchi Paradise - Jade Forest Edition".to_string();
+                self.detected_edition = "Paradise - Jade Forest Edition".to_string();
             } else if path_str.contains("water") {
-                self.detected_edition = "Tamagotchi Paradise - Water Edition".to_string();
+                self.detected_edition = "Paradise - Water Edition".to_string();
             } else if path_str.contains("earth") {
-                self.detected_edition = "Tamagotchi Paradise - Earth Edition".to_string();
+                self.detected_edition = "Paradise - Earth Edition".to_string();
             } else if path_str.contains("land") {
-                self.detected_edition = "Tamagotchi Paradise - Land Edition".to_string();
+                self.detected_edition = "Paradise - Land Edition".to_string();
             } else if path_str.contains("sky") {
-                self.detected_edition = "Tamagotchi Paradise - Sky Edition".to_string();
+                self.detected_edition = "Paradise - Sky Edition".to_string();
             } else {
-                self.detected_edition = format!("Tamagotchi Paradise (CRC: 0x{:08X})", crc);
+                self.detected_edition = format!("Paradise (CRC: 0x{:08X})", crc);
             }
 
             // Inspect ARC2 header at 0x111000

@@ -31,6 +31,21 @@ pub enum StopReason {
     Undefined { pc: u32, opcode: u32 },
 }
 
+/// Ce que la console faisait au moment ou elle a refuse un paquet.
+#[derive(Debug, Clone, Default)]
+pub struct TraceRefus {
+    pub pc: u32,
+    pub lr: u32,
+    pub sp: u32,
+    pub registres: [u32; 8],
+    /// Adresses de retour relevees sur la pile, qui donnent la chaine d'appels.
+    pub retours: Vec<u32>,
+    /// Appels traverses juste avant le refus, dans l'ordre. Contrairement a la
+    /// pile, qui garde des valeurs perimees des cadres precedents, ceci est le
+    /// chemin reellement parcouru.
+    pub chemin: Vec<u32>,
+}
+
 pub struct Machine {
     pub cpu: Cpu,
     pub bus: MemoryBus,
@@ -49,6 +64,20 @@ pub struct Machine {
     pub device_key: Option<u32>,
     pub last_report: Option<LoadReport>,
     pub last_stop: Option<StopReason>,
+    /// Contexte fige au premier refus emis sur la liaison serie. C'est la seule
+    /// facon de savoir d'ou le firmware decide ce refus : l'echange n'a lieu
+    /// qu'avec un outil exterieur, et toute sonde qui le ralentit l'empeche.
+    pub trace_refus: Option<TraceRefus>,
+    /// Vrai uniquement pendant l'affichage de l'onglet UART. Le lien serie ne
+    /// depend pas de ce drapeau, seulement son instrumentation couteuse.
+    diagnostic_uart_actif: bool,
+    /// Anneau des derniers appels traverses. Il n'est rempli que lorsque la
+    /// liaison serie est ouverte : hors de ce cas il ne servirait a rien et
+    /// couterait une ecriture par instruction.
+    anneau_appels: Vec<u32>,
+    curseur_anneau: usize,
+    /// Registre de lien du pas precedent, pour reconnaitre un appel.
+    dernier_lr: u32,
     /// Empreinte du dump charge, qui range ses sauvegardes a part.
     pub empreinte: Option<String>,
     /// Edition reconnue, qui donne la couleur de la coque.
@@ -104,6 +133,11 @@ impl Machine {
             sauvegarde_active: None,
             revision_ecrite: 0,
             voix: Vec::new(),
+            trace_refus: None,
+            diagnostic_uart_actif: false,
+            anneau_appels: vec![0; 256],
+            curseur_anneau: 0,
+            dernier_lr: 0,
         }
     }
 
@@ -149,8 +183,26 @@ impl Machine {
         Ok(())
     }
 
+    /// Attache l'etat courant a un nouvel emplacement sans recharger la flash
+    /// ni redemarrer le firmware.
+    pub fn creer_sauvegarde_depuis_etat(
+        &mut self,
+        chemin: std::path::PathBuf,
+    ) -> Result<(), String> {
+        let precedente = self.sauvegarde_active.replace(chemin);
+        if let Err(e) = self.ecrire_sauvegarde() {
+            self.sauvegarde_active = precedente;
+            return Err(e);
+        }
+        Ok(())
+    }
+
     pub fn reset(&mut self) {
         self.cpu.reset(&mut self.bus, &mut self.periph);
+        // Le coeur repart, ses peripheriques aussi. L'UART surtout : ses files
+        // materielles sont videes par un reset sur la console, et les y laisser
+        // bloquait le message de demarrage derriere des octets d'avant.
+        self.periph.uart.reinitialiser();
         self.last_stop = None;
     }
 
@@ -161,6 +213,21 @@ impl Machine {
             return StepResult::Ok(1);
         }
         self.cpu.step(&mut self.bus, &mut self.periph)
+    }
+
+    /// Active ou coupe les sondes UART sans toucher au transport.
+    pub fn regler_diagnostic_uart(&mut self, actif: bool) {
+        if actif && !self.diagnostic_uart_actif {
+            self.trace_refus = None;
+            self.anneau_appels.fill(0);
+            self.curseur_anneau = 0;
+            self.dernier_lr = self.cpu.regs.lr;
+        }
+        self.diagnostic_uart_actif = actif;
+        self.periph.uart.diagnostic_actif = actif;
+        if !actif {
+            self.periph.uart.refus_emis = false;
+        }
     }
 
     /// Applique le reveil materiel quand il y en a un a appliquer.
@@ -180,6 +247,50 @@ impl Machine {
         self.reset();
         self.is_running = true;
         true
+    }
+
+    /// Releve ce que la console faisait au moment ou elle a refuse un paquet.
+    fn relever_le_refus(&mut self) -> TraceRefus {
+        let mut registres = [0u32; 8];
+        for (i, r) in registres.iter_mut().enumerate() {
+            *r = self.cpu.regs.get_reg(i as u8);
+        }
+        let sp = self.cpu.regs.get_sp();
+        let mut retours = Vec::new();
+        for k in 0..48u32 {
+            let v = self.bus.read_u32(sp + k * 4, &mut self.periph, &self.cpu.nvic);
+            // Une adresse de retour est impaire, le bit de pouce etant pose, et
+            // tombe dans la memoire de programme ou dans la fenetre XIP.
+            let cible = v & !1;
+            if v & 1 == 1
+                && ((0x100..0x10000).contains(&cible)
+                    || (0x1000_0000..0x1010_0000).contains(&cible))
+            {
+                retours.push(cible);
+            }
+        }
+        retours.truncate(10);
+        // L'anneau est relu dans l'ordre chronologique, du plus ancien au plus
+        // recent, en sautant les cases jamais ecrites.
+        let n = self.anneau_appels.len();
+        let mut chemin: Vec<u32> = Vec::with_capacity(n);
+        for k in 0..n {
+            let v = self.anneau_appels[(self.curseur_anneau + k) % n];
+            if v != 0 && chemin.last() != Some(&v) {
+                chemin.push(v);
+            }
+        }
+        if chemin.len() > 40 {
+            chemin = chemin.split_off(chemin.len() - 40);
+        }
+        TraceRefus {
+            chemin,
+            pc: self.cpu.regs.pc,
+            lr: self.cpu.regs.lr,
+            sp,
+            registres,
+            retours,
+        }
     }
 
     pub fn run_frame(&mut self) -> StepResult {
@@ -222,8 +333,41 @@ impl Machine {
                 executed += 1;
                 continue;
             }
+            let lien_ouvert =
+                self.diagnostic_uart_actif && self.periph.uart.ctrl & 0x41 == 0x41;
             match self.cpu.step(&mut self.bus, &mut self.periph) {
-                StepResult::Ok(_) => executed += 1,
+                StepResult::Ok(_) => {
+                    executed += 1;
+                    // Seuls les appels sont retenus, reconnus au registre de
+                    // lien qui vient de changer. Garder toutes les ruptures de
+                    // flot remplissait l'anneau avec la seule boucle d'emission,
+                    // qui saute des milliers de fois sur place.
+                    if lien_ouvert && self.trace_refus.is_none() {
+                        let lr = self.cpu.regs.lr;
+                        if lr != self.dernier_lr {
+                            self.dernier_lr = lr;
+                            let entree = self.cpu.regs.pc;
+                            // Les fonctions d'aide du formatage vivent tout en
+                            // bas de la memoire de programme et sont appelees
+                            // une fois par caractere. Les retenir saturait
+                            // l'anneau et masquait ce qui precede.
+                            if entree >= 0x2000 {
+                                let n = self.anneau_appels.len();
+                                self.anneau_appels[self.curseur_anneau] = entree;
+                                self.curseur_anneau = (self.curseur_anneau + 1) % n;
+                            }
+                        }
+                    }
+                    // Le contexte d'un refus se fige ici, au pas suivant celui
+                    // qui l'a emis. Attendre la fin de la trame le perdrait :
+                    // vingt mille instructions plus loin, la pile a change.
+                    if self.periph.uart.refus_emis {
+                        self.periph.uart.refus_emis = false;
+                        if self.trace_refus.is_none() {
+                            self.trace_refus = Some(self.relever_le_refus());
+                        }
+                    }
+                }
                 StepResult::Breakpoint => {
                     self.is_running = false;
                     self.last_stop = Some(StopReason::Breakpoint(pc));
@@ -555,7 +699,41 @@ impl Machine {
 
     /// Vrai quand le coeur est gare dans cette boucle.
     pub fn en_veille_profonde(&self) -> bool {
-        Self::VEILLE_PROFONDE.contains(&self.cpu.regs.pc)
+        self.periph.pmu.deep_sleep_active || Self::VEILLE_PROFONDE.contains(&self.cpu.regs.pc)
+    }
+
+    /// Reveille le coeur par une entree utilisateur et indique si un reveil a
+    /// effectivement ete applique.
+    pub fn reveiller_par_broche(&mut self) -> bool {
+        if !self.en_veille_profonde() {
+            return false;
+        }
+        self.periph.snsys.declencher_reveil();
+        self.periph.pmu.declencher_reveil_broche();
+        // Le controleur d'alimentation vient de quitter l'etat profond. Il ne
+        // faut donc pas repasser par reveil_materiel, dont le test de sommeil
+        // serait maintenant faux sur les editions garees hors de la boucle
+        // historique.
+        self.periph.snsys.reveil_demande = false;
+        self.reset();
+        self.is_running = true;
+        true
+    }
+
+    /// Vrai quand la broche est tiree bas, donc le bouton enfonce.
+    ///
+    /// C'est ce que l'habillage regarde pour animer un bouton : peu importe
+    /// que l'appui vienne du clavier, de la souris, de l'ecran ou du
+    /// navigateur, la broche dit la verite.
+    pub fn broche_basse(&self, id: u32) -> bool {
+        let masque = 1u32 << (id & 0xF);
+        let port = match id >> 4 {
+            0 => &self.periph.port0,
+            1 => &self.periph.port1,
+            2 => &self.periph.port2,
+            _ => return false,
+        };
+        port.entrees & masque == 0
     }
 
     /// Tire une broche vers le bas, ce que fait un appui.
@@ -569,10 +747,7 @@ impl Machine {
     /// mais la sauvegarde est en flash et l'horloge continue de tourner, donc
     /// la partie reprend la ou elle en etait.
     pub fn appuyer(&mut self, id: u32) {
-        if self.en_veille_profonde() {
-            self.periph.snsys.declencher_reveil();
-            self.periph.pmu.declencher_reveil_broche();
-            self.reveil_materiel();
+        if self.reveiller_par_broche() {
             return;
         }
         let broche = id & 0xF;
@@ -612,6 +787,9 @@ impl Machine {
         // Le tableau des voix est propre a une edition : celui de la
         // precedente ne veut plus rien dire ici.
         self.voix.clear();
+        // Ne pas laisser l'image de l'edition precedente visible pendant le
+        // demarrage de la nouvelle.
+        self.periph.display = crate::emulator::peripherals::DisplayController::default();
         self.reset();
         self.is_running = report.bootable;
         // L'afficheur n'est plus recopie depuis la SRAM : il recoit les trames

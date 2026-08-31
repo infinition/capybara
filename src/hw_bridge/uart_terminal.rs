@@ -39,7 +39,45 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[cfg(windows)]
+use std::ffi::c_void;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+
 use crate::emulator::peripherals::UartController;
+
+/// Reserve assez de place dans la file d'entree Windows avant de lancer les
+/// fils de service. Un bloc de transfert fait 4112 octets : la file par defaut
+/// de certains ports s'arrete a 4096 et les quinze derniers octets se perdent
+/// pendant que le premier est deja en cours de lecture.
+#[cfg(windows)]
+fn ouvrir_port(
+    builder: serialport::SerialPortBuilder,
+) -> Result<Box<dyn serialport::SerialPort>, String> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        #[link_name = "Setup\x43omm"]
+        fn configurer_files(h_file: *mut c_void, dw_in_queue: u32, dw_out_queue: u32) -> i32;
+    }
+
+    let port = builder.open_native().map_err(|e| e.to_string())?;
+    const TAILLE_FILE: u32 = 64 * 1024;
+    let ok = unsafe { configurer_files(port.as_raw_handle(), TAILLE_FILE, TAILLE_FILE) };
+    if ok == 0 {
+        return Err(format!(
+            "configuration des files serie impossible : {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(Box::new(port))
+}
+
+#[cfg(all(not(windows), not(target_arch = "wasm32")))]
+fn ouvrir_port(
+    builder: serialport::SerialPortBuilder,
+) -> Result<Box<dyn serialport::SerialPort>, String> {
+    builder.open().map_err(|e| e.to_string())
+}
 
 /// Pont entre l'UART1 emule et un flux serie de l'ordinateur hote.
 pub struct UartHostBridge {
@@ -78,6 +116,10 @@ pub struct UartHostBridge {
     /// Total ecrit par le fil d'ecriture.
     #[cfg(not(target_arch = "wasm32"))]
     compteur_emis: Arc<AtomicUsize>,
+    /// Autorise les captures et traces de diagnostic. Le transport serie reste
+    /// actif quand ce drapeau est coupe.
+    #[cfg(not(target_arch = "wasm32"))]
+    diagnostic_actif: Arc<AtomicBool>,
 }
 
 impl Default for UartHostBridge {
@@ -105,6 +147,8 @@ impl Default for UartHostBridge {
             a_envoyer: Arc::new(Mutex::new(VecDeque::new())),
             #[cfg(not(target_arch = "wasm32"))]
             compteur_emis: Arc::new(AtomicUsize::new(0)),
+            #[cfg(not(target_arch = "wasm32"))]
+            diagnostic_actif: Arc::new(AtomicBool::new(false)),
         };
         bridge.refresh_ports();
         bridge
@@ -138,6 +182,8 @@ impl UartHostBridge {
             a_envoyer: Arc::new(Mutex::new(VecDeque::new())),
             #[cfg(not(target_arch = "wasm32"))]
             compteur_emis: Arc::new(AtomicUsize::new(0)),
+            #[cfg(not(target_arch = "wasm32"))]
+            diagnostic_actif: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -165,6 +211,12 @@ impl UartHostBridge {
         self.disconnect();
         self.port_name = port_name.trim().to_string();
         self.last_error = None;
+        self.bytes_sent = 0;
+        self.bytes_received = 0;
+        self.debut_vers_tama.clear();
+        self.debut_vers_hote.clear();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.compteur_emis.store(0, Ordering::Relaxed);
         if self.port_name.is_empty() {
             let message = "Choisissez un port serie".to_string();
             self.last_error = Some(message.clone());
@@ -173,7 +225,7 @@ impl UartHostBridge {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let port = serialport::new(&self.port_name, self.baud_rate)
+            let builder = serialport::new(&self.port_name, self.baud_rate)
                 .data_bits(serialport::DataBits::Eight)
                 .parity(serialport::Parity::None)
                 .stop_bits(serialport::StopBits::One)
@@ -182,13 +234,12 @@ impl UartHostBridge {
                 // comptait trente deux octets emis quand l'autre bout n'en
                 // recevait que vingt deux. La lecture se faisant desormais dans
                 // un fil dedie, un delai confortable ne fige plus l'interface.
-                .timeout(Duration::from_millis(50))
-                .open()
-                .map_err(|e| {
-                    let message = format!("{} : {e}", self.port_name);
-                    self.last_error = Some(message.clone());
-                    message
-                })?;
+                .timeout(Duration::from_millis(50));
+            let port = ouvrir_port(builder).map_err(|e| {
+                let message = format!("{} : {e}", self.port_name);
+                self.last_error = Some(message.clone());
+                message
+            })?;
             // Un fil dedie vide le port sans discontinuer. Sans lui, plus rien
             // ne lit pendant la tranche d'emulation, le tampon du systeme
             // deborde et il jette des octets en silence : un bloc de quatre
@@ -198,16 +249,24 @@ impl UartHostBridge {
                     let arret = Arc::new(AtomicBool::new(false));
                     let fanion = Arc::clone(&arret);
                     let file = Arc::clone(&self.recus);
+                    let diagnostic = Arc::clone(&self.diagnostic_actif);
                     std::thread::spawn(move || {
                         let mut lecture = lecture;
-                        let mut capture = fichier_de_capture("recu");
-                        let mut buf = [0u8; 4096];
+                        let mut capture: Option<std::fs::File> = None;
+                        let mut buf = [0u8; 64 * 1024];
                         while !fanion.load(Ordering::Relaxed) {
                             match lecture.read(&mut buf) {
                                 Ok(n) if n > 0 => {
-                                    if let Some(c) = capture.as_mut() {
-                                        let _ = c.write_all(&buf[..n]);
-                                        let _ = c.flush();
+                                    if diagnostic.load(Ordering::Relaxed) {
+                                        if capture.is_none() {
+                                            capture = fichier_de_capture("recu");
+                                        }
+                                        if let Some(c) = capture.as_mut() {
+                                            let _ = c.write_all(&buf[..n]);
+                                            let _ = c.flush();
+                                        }
+                                    } else {
+                                        capture = None;
                                     }
                                     if let Ok(mut f) = file.lock() {
                                         f.extend(buf[..n].iter().copied());
@@ -228,9 +287,10 @@ impl UartHostBridge {
                             let fanion = Arc::clone(&arret);
                             let file = Arc::clone(&self.a_envoyer);
                             let compte = Arc::clone(&self.compteur_emis);
+                            let diagnostic = Arc::clone(&self.diagnostic_actif);
                             std::thread::spawn(move || {
                                 let mut ecriture = ecriture;
-                                let mut capture = fichier_de_capture("emis");
+                                let mut capture: Option<std::fs::File> = None;
                                 while !fanion.load(Ordering::Relaxed) {
                                     let bloc: Vec<u8> = match file.lock() {
                                         Ok(mut f) => f.drain(..).collect(),
@@ -240,9 +300,16 @@ impl UartHostBridge {
                                         std::thread::sleep(Duration::from_millis(1));
                                         continue;
                                     }
-                                    if let Some(c) = capture.as_mut() {
-                                        let _ = c.write_all(&bloc);
-                                        let _ = c.flush();
+                                    if diagnostic.load(Ordering::Relaxed) {
+                                        if capture.is_none() {
+                                            capture = fichier_de_capture("emis");
+                                        }
+                                        if let Some(c) = capture.as_mut() {
+                                            let _ = c.write_all(&bloc);
+                                            let _ = c.flush();
+                                        }
+                                    } else {
+                                        capture = None;
                                     }
                                     let mut reste = &bloc[..];
                                     while !reste.is_empty() {
@@ -317,6 +384,27 @@ impl UartHostBridge {
         self.host_tx_stream.drain(..).collect()
     }
 
+    /// Active les captures uniquement pendant l'affichage de l'onglet UART.
+    pub fn regler_diagnostic(&mut self, actif: bool) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let precedent = self.diagnostic_actif.swap(actif, Ordering::Relaxed);
+            if actif && !precedent {
+                self.debut_vers_tama.clear();
+                self.debut_vers_hote.clear();
+            }
+        }
+    }
+
+    fn diagnostic_est_actif(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            return self.diagnostic_actif.load(Ordering::Relaxed);
+        }
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
     /// Synchronise le transport en memoire avec le controleur.
     pub fn sync(&mut self, uart: &mut UartController) {
         if !self.is_connected {
@@ -349,7 +437,9 @@ impl UartHostBridge {
             // jamais sur le port.
             if !self.pending_to_host.is_empty() {
                 let bloc: Vec<u8> = self.pending_to_host.drain(..).collect();
-                Self::garder_debut(&mut self.debut_vers_hote, &bloc);
+                if self.diagnostic_est_actif() {
+                    Self::garder_debut(&mut self.debut_vers_hote, &bloc);
+                }
                 if let Ok(mut f) = self.a_envoyer.lock() {
                     f.extend(bloc.iter().copied());
                 }
@@ -364,7 +454,9 @@ impl UartHostBridge {
             };
             if !arrives.is_empty() {
                 self.bytes_received += arrives.len();
-                Self::garder_debut(&mut self.debut_vers_tama, &arrives);
+                if self.diagnostic_est_actif() {
+                    Self::garder_debut(&mut self.debut_vers_tama, &arrives);
+                }
                 uart.inject_rx_bytes(&arrives);
             }
         }

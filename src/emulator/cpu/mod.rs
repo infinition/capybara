@@ -160,7 +160,8 @@ impl Cpu {
                 // et l'ecran attendant cette interruption au plus tot.
                 if periph.dma.irq_a_lever {
                     periph.dma.irq_a_lever = false;
-                    self.nvic.request_irq(crate::emulator::peripherals::dma::IRQ);
+                    self.nvic
+                        .request_irq(crate::emulator::peripherals::dma::IRQ);
                 }
                 self.cycles_en_attente += c as u32;
                 if self.cycles_en_attente >= Self::GRAIN_PERIPHERIQUES {
@@ -199,18 +200,27 @@ impl Cpu {
         // Le TE de l'ecran est entretenu ici : c'est un signal exterieur, sans
         // quoi le firmware l'attend sans fin.
         if periph.port1.tick(ecoules) {
-            self.nvic.request_irq(crate::emulator::peripherals::gpio_port::PORT1_IRQ);
+            self.nvic
+                .request_irq(crate::emulator::peripherals::gpio_port::PORT1_IRQ);
         }
         if let Some(irq) = periph.tic.tick(ecoules) {
             self.nvic.request_irq(irq);
         }
         if periph.adc_pile.irq_a_lever | periph.adc_pile.tick(ecoules) {
             periph.adc_pile.irq_a_lever = false;
-            self.nvic.request_irq(crate::emulator::peripherals::adc_pile::IRQ);
+            self.nvic
+                .request_irq(crate::emulator::peripherals::adc_pile::IRQ);
         }
         if periph.timers.tick(ecoules) {
             self.nvic.request_irq(16);
         }
+        // Les lignes serie avancent a leur debit programme. Le tampon d'entree
+        // peut ainsi contenir un gros bloc venu de l'hote sans saturer la FIFO
+        // materielle de seize octets.
+        periph.uart.tick(
+            ecoules,
+            crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as u32,
+        );
         if periph.uart.irq_pending {
             self.nvic.request_irq(37);
         }
@@ -232,7 +242,12 @@ impl Cpu {
         }
     }
 
-    fn enter_exception(&mut self, exception_num: u32, bus: &mut MemoryBus, periph: &mut Peripherals) {
+    fn enter_exception(
+        &mut self,
+        exception_num: u32,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+    ) {
         let mut sp = self.regs.get_sp();
 
         // L'etat du bloc IT voyage dans le xPSR empile, aux places que lui donne
@@ -242,9 +257,8 @@ impl Cpu {
         // premiere instruction est sautee. C'est ainsi que le gestionnaire du TE
         // perdait le PUSH de son adresse de retour et ne revenait jamais.
         let it = self.regs.itstate as u32;
-        let xpsr_empile = (self.regs.xpsr & !0x0600_FC00)
-            | ((it & 0x3) << 25)
-            | (((it >> 2) & 0x3F) << 10);
+        let xpsr_empile =
+            (self.regs.xpsr & !0x0600_FC00) | ((it & 0x3) << 25) | (((it >> 2) & 0x3F) << 10);
 
         // Stack frame: R0, R1, R2, R3, R12, LR, ReturnAddress (PC), xPSR
         let frame = [
@@ -305,8 +319,7 @@ impl Cpu {
         self.regs.lr = lr;
         self.regs.xpsr = xpsr;
         // Le bloc IT interrompu reprend la ou il en etait.
-        self.regs.itstate =
-            ((((xpsr >> 25) & 0x3) | (((xpsr >> 10) & 0x3F) << 2)) & 0xFF) as u8;
+        self.regs.itstate = ((((xpsr >> 25) & 0x3) | (((xpsr >> 10) & 0x3F) << 2)) & 0xFF) as u8;
         self.regs.mode = Mode::Thread;
         self.regs.set_sp(sp);
         self.regs.pc = ret & !1;
