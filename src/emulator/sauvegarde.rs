@@ -257,23 +257,54 @@ impl Sauvegarde {
 /// Dossier de donnees du logiciel, celui que le systeme reserve a ce genre de
 /// contenu.
 ///
-/// `%APPDATA%\\TamagotchiParadise\\data` sur Windows,
-/// `~/Library/Application Support/TamagotchiParadise` sur Mac,
-/// `~/.local/share/tamagotchiparadise` sur Linux. Le logiciel se distribue en
+/// `%APPDATA%\\Capybara\\data` sur Windows,
+/// `~/Library/Application Support/Capybara` sur Mac,
+/// `~/.local/share/capybara` sur Linux. Le logiciel se distribue en
 /// un seul executable : ses parties, ses reglages, ses points de reprise et les
 /// dumps importes n'ont rien a faire a cote de lui, ou un deplacement du
 /// fichier les perdrait et ou un dossier en lecture seule les empecherait.
 ///
 /// Faute de dossier systeme lisible, on se rabat sur celui de l'executable,
 /// puis sur le dossier courant : mieux vaut ecrire quelque part que pas du tout.
+/// Le dossier s'appelait `TamagotchiParadise`. Il est deplace au premier
+/// lancement, une seule fois : personne ne doit perdre ses parties parce que le
+/// logiciel a change de nom. Si le deplacement echoue, parce qu'un fichier est
+/// ouvert ou que les deux dossiers ne sont pas sur le meme volume, on continue
+/// sur l'ancien plutot que de repartir sur un dossier vide.
 pub fn dossier_donnees() -> PathBuf {
-    if let Some(dirs) = directories::ProjectDirs::from("", "", "TamagotchiParadise") {
-        return dirs.data_dir().to_path_buf();
+    static DOSSIER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DOSSIER.get_or_init(calculer_le_dossier_de_donnees).clone()
+}
+
+/// Nom du logiciel avant qu'il ne s'appelle Capybara.
+const ANCIEN_NOM: &str = "TamagotchiParadise";
+const NOM: &str = "Capybara";
+
+fn calculer_le_dossier_de_donnees() -> PathBuf {
+    let Some(dirs) = directories::ProjectDirs::from("", "", NOM) else {
+        return std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+    };
+    let neuf = dirs.data_dir().to_path_buf();
+    if neuf.exists() {
+        return neuf;
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."))
+    let Some(anciens) = directories::ProjectDirs::from("", "", ANCIEN_NOM) else {
+        return neuf;
+    };
+    let ancien = anciens.data_dir().to_path_buf();
+    if !ancien.exists() {
+        return neuf;
+    }
+    if let Some(parent) = neuf.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::rename(&ancien, &neuf) {
+        Ok(()) => neuf,
+        Err(_) => ancien,
+    }
 }
 
 /// Dossier des sauvegardes.
@@ -446,6 +477,15 @@ pub struct DernierePartie {
     /// Fenetre du mode jeu maintenue au dessus des autres.
     #[serde(default)]
     pub toujours_devant: bool,
+    /// Langue de l'interface, le francais restant la valeur par defaut.
+    #[serde(default = "langue_par_defaut")]
+    pub langue: String,
+    /// Correspondance clavier, reglee par l'utilisateur.
+    #[serde(default)]
+    pub touches: crate::touches::Touches,
+    /// Ce que font les boutons de la souris sur l'ecran.
+    #[serde(default)]
+    pub souris: crate::touches::Souris,
 }
 
 fn vrai() -> bool {
@@ -460,6 +500,10 @@ fn un() -> f32 {
     1.0
 }
 
+fn langue_par_defaut() -> String {
+    "fr".to_string()
+}
+
 impl Default for DernierePartie {
     fn default() -> Self {
         Self {
@@ -472,6 +516,9 @@ impl Default for DernierePartie {
             coque: String::new(),
             zoom_jeu: 1.0,
             toujours_devant: false,
+            touches: crate::touches::Touches::default(),
+            souris: crate::touches::Souris::default(),
+            langue: langue_par_defaut(),
         }
     }
 }
@@ -530,6 +577,23 @@ pub fn dossier_du_dump(empreinte: &str) -> PathBuf {
 /// Ils suivent la partie et non la console : deux parties menees sur le meme
 /// dump ont chacune leur passe, et revenir en arriere sur l'une ne propose
 /// jamais les points de l'autre.
+/// Efface un emplacement et tout ce qui lui appartient.
+///
+/// La sauvegarde et ses points de reprise vont ensemble : garder les seconds
+/// apres avoir efface la premiere laisserait des instantanes qui ne se
+/// rattachent plus a rien, et que rien ne viendrait jamais nettoyer.
+pub fn supprimer_emplacement(empreinte: &str, nom: &str) -> Result<(), String> {
+    let fichier = chemin(empreinte, nom);
+    if fichier.exists() {
+        std::fs::remove_file(&fichier).map_err(|e| e.to_string())?;
+    }
+    let points = dossier_reprises(empreinte, nom);
+    if points.exists() {
+        std::fs::remove_dir_all(&points).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn dossier_reprises(empreinte: &str, emplacement: &str) -> PathBuf {
     dossier_du_dump(empreinte).join("reprises").join(emplacement)
 }
@@ -537,6 +601,28 @@ pub fn dossier_reprises(empreinte: &str, emplacement: &str) -> PathBuf {
 /// Chemin d'un emplacement de sauvegarde.
 pub fn chemin(empreinte: &str, nom: &str) -> PathBuf {
     dossier_du_dump(empreinte).join(format!("{}.{}", nom, EXTENSION))
+}
+
+/// Retient le dernier emplacement utilise pour un dump donne.
+pub fn retenir_emplacement(empreinte: &str, nom: &str) {
+    if nom.is_empty() {
+        return;
+    }
+    let dossier = dossier_du_dump(empreinte);
+    if std::fs::create_dir_all(&dossier).is_ok() {
+        let _ = std::fs::write(dossier.join("dernier-emplacement.txt"), nom);
+    }
+}
+
+/// Dernier emplacement encore present pour ce dump.
+pub fn dernier_emplacement(empreinte: &str) -> Option<String> {
+    let nom = std::fs::read_to_string(dossier_du_dump(empreinte).join("dernier-emplacement.txt"))
+        .ok()?;
+    let nom = nom.trim();
+    if nom.is_empty() || !chemin(empreinte, nom).is_file() {
+        return None;
+    }
+    Some(nom.to_string())
 }
 
 /// Emplacements existants pour ce dump, par ordre alphabetique.
