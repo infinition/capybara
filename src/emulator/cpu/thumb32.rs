@@ -510,15 +510,37 @@ impl Thumb32 {
             let rn = (w1 & 0xF) as u8;
             let rd = ((w2 >> 12) & 0xF) as u8;
 
+            // Encodages non alloues du groupe (ARMv7-M A5.3.7 a A5.3.10) :
+            // largeur 11, rangement signe, LDRSW (signe + mot), rangement
+            // relatif au PC. Ils etaient executes comme un acces ordinaire.
+            if size == 3
+                || (is_signed && (!is_ldr || size == 2))
+                || (!is_ldr && rn == 0xF)
+            {
+                return StepResult::Undefined(w1);
+            }
+
             // Mise a jour differee de la base, pour les formes indexees.
             let mut writeback: Option<(u8, u32)> = None;
 
-            let addr = if (w1 & 0x0080) != 0 {
+            let addr = if rn == 0xF {
+                // Forme litterale (LDR, LDRB, LDRH, LDRSB, LDRSH, PLD, PLI) :
+                // Rn = 1111 l'impose, quel que soit le reste. w1[7] y est le
+                // bit U (ajout ou retrait) de l'immediat 12 bits, pas le
+                // selecteur de forme : `ldr.w rX, [pc, #-imm]` etait lu comme
+                // une forme T4 ou a registre. Base = Align(PC, 4).
+                let imm12 = (w2 & 0x0FFF) as u32;
+                let base = regs.pc & !3;
+                if (w1 & 0x0080) != 0 {
+                    base.wrapping_add(imm12)
+                } else {
+                    base.wrapping_sub(imm12)
+                }
+            } else if (w1 & 0x0080) != 0 {
                 // Forme T3 : offset immediat 12 bits, toujours positif, sans
                 // mise a jour de la base.
                 let imm12 = (w2 & 0x0FFF) as u32;
-                let base = if rn == 0xF { regs.pc & !3 } else { regs.get_reg(rn) };
-                base.wrapping_add(imm12)
+                regs.get_reg(rn).wrapping_add(imm12)
             } else if (w2 & 0x0800) != 0 {
                 // Forme T4 : immediat 8 bits avec indexation P / U / W.
                 // P = 0 designe le post-indexe : l'acces se fait a la base, et la
@@ -527,14 +549,19 @@ impl Thumb32 {
                 let pre_index = (w2 & 0x0400) != 0;
                 let add = (w2 & 0x0200) != 0;
                 let write_base = (w2 & 0x0100) != 0;
+                // P = 0 et W = 0 : non alloue (A7.7.x, `if P == '0' && W == '0'
+                // then UNDEFINED`).
+                if !pre_index && !write_base {
+                    return StepResult::Undefined(w1);
+                }
                 let imm8 = (w2 & 0xFF) as u32;
-                let base = if rn == 0xF { regs.pc & !3 } else { regs.get_reg(rn) };
+                let base = regs.get_reg(rn);
                 let offset_addr = if add {
                     base.wrapping_add(imm8)
                 } else {
                     base.wrapping_sub(imm8)
                 };
-                if write_base && rn != 0xF {
+                if write_base {
                     writeback = Some((rn, offset_addr));
                 }
                 if pre_index {
@@ -543,12 +570,25 @@ impl Thumb32 {
                     base
                 }
             } else {
-                // Offset registre, decale de 0 a 3 bits.
+                // Offset registre, decale de 0 a 3 bits : w2[11:6] = 000000.
+                // Les autres valeurs de w2[10:6] ne sont pas allouees.
+                if (w2 & 0x07C0) != 0 {
+                    return StepResult::Undefined(w1);
+                }
                 let rm = (w2 & 0xF) as u8;
                 let shift = ((w2 >> 4) & 3) as u32;
-                let base = if rn == 0xF { regs.pc & !3 } else { regs.get_reg(rn) };
-                base.wrapping_add(regs.get_reg(rm) << shift)
+                regs.get_reg(rn).wrapping_add(regs.get_reg(rm) << shift)
             };
+
+            // PLD, PLI et indications memoire (A5.3.9, A5.3.10) : LDRB, LDRSB,
+            // LDRH et LDRSH avec Rt = 1111 ne chargent rien. Le modele lisait
+            // un octet ou un demi mot et l'ecrivait dans le PC, ce qui sautait
+            // silencieusement vers une petite adresse. Aucun acces au bus (une
+            // lecture de registre peripherique a des effets de bord) et pas de
+            // mise a jour de base. LDR (mot) vers le PC reste un branchement.
+            if is_ldr && rd == 0xF && size < 2 {
+                return StepResult::Ok(1);
+            }
 
             if is_ldr {
                 let val = match (size, is_signed) {
@@ -626,7 +666,9 @@ impl Thumb32 {
                 let rt2 = ((w2 >> 8) & 0xF) as u8;
                 let imm = ((w2 & 0xFF) as u32) << 2;
 
-                let base = regs.get_reg(rn);
+                // LDRD (litteral), Rn = 1111 : la base est Align(PC, 4)
+                // (A7.7.50). get_reg(15) rendait le PC non aligne.
+                let base = if rn == 0xF { regs.pc & !3 } else { regs.get_reg(rn) };
                 let offset = if u != 0 { base.wrapping_add(imm) } else { base.wrapping_sub(imm) };
                 // Pre-indexe : l'adresse est celle apres application de l'offset.
                 // Post-indexe : l'acces se fait a la base, l'offset suit.
