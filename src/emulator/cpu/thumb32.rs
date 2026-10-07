@@ -315,6 +315,28 @@ impl Thumb32 {
             return StepResult::Ok(1);
         }
 
+        // 4d. Divers a registre (ARMv7-M A5.3.12, op1 = 10, op2 = 00..11) :
+        //     1111 1010 1001 Rm | 1111 Rd 10op Rm
+        //     op 00 REV.W, 01 REV16.W, 10 RBIT, 11 REVSH.W.
+        //     Absentes, elles tombaient sur Undefined et arretaient le
+        //     modele ; le firmware a un `rev16.w sb, r0` en 0x1006a6ce
+        //     (FUN_1006a640, branche UTF-8 0xE3). Le groupe voisin
+        //     1111 1010 1010 (SEL) n'existe qu'avec l'extension DSP (v7E-M) et
+        //     reste Undefined, comme les autres valeurs de op2 sous CLZ.
+        if (w1 & 0xFFF0) == 0xFA90 && (w2 & 0xF0C0) == 0xF080 {
+            let rm = (w1 & 0xF) as u8;
+            let rd = ((w2 >> 8) & 0xF) as u8;
+            let v = regs.get_reg(rm);
+            let res = match (w2 >> 4) & 3 {
+                0 => v.swap_bytes(),                                       // REV
+                1 => ((v & 0x00FF_00FF) << 8) | ((v & 0xFF00_FF00) >> 8), // REV16
+                2 => v.reverse_bits(),                                     // RBIT
+                _ => (v as u16).swap_bytes() as i16 as i32 as u32,         // REVSH
+            };
+            regs.set_reg(rd, res);
+            return StepResult::Ok(1);
+        }
+
         // 5. CLZ (Count Leading Zeros): 1111 1010 1011 rm 1111 rd 1000 rm
         if (w1 & 0xFFF0) == 0xFAB0 && (w2 & 0xF0F0) == 0xF080 {
             let rm = (w1 & 0xF) as u8;
