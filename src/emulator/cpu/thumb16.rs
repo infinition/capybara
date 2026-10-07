@@ -620,7 +620,9 @@ impl Thumb16 {
                 0 => rm_val.swap_bytes(), // REV
                 1 => ((rm_val & 0x00FF00FF) << 8) | ((rm_val & 0xFF00FF00) >> 8), // REV16
                 3 => (rm_val as i16).swap_bytes() as i32 as u32, // REVSH
-                _ => rm_val,
+                // 1011 1010 10xx xxxx n'est pas alloue (A5.2.5). Le modele
+                // copiait Rm dans Rd.
+                _ => return StepResult::Undefined(w),
             };
             regs.set_reg(rd, res);
             return StepResult::Ok(1);
@@ -675,7 +677,13 @@ impl Thumb16 {
             return StepResult::Ok(2);
         }
 
-        StepResult::Ok(1)
+        // Reste du groupe divers (A5.2.5) : 1011 0110 hors CPS (dont SETEND,
+        // absent de v7-M), 1011 0111, 1011 1000. Non alloue : on le signale
+        // comme partout ailleurs au lieu de l'avaler comme un NOP. Les vraies
+        // indications (NOP, YIELD, WFE, WFI, SEV et les indications non
+        // allouees de 1011 1111 xxxx 0000, executees comme NOP) sont traitees
+        // avant l'appel, avec IT et BKPT.
+        StepResult::Undefined(w)
     }
 
     fn exec_ldm_stm(
