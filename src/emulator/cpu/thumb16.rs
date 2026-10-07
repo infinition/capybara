@@ -701,7 +701,15 @@ impl Thumb16 {
                 addr += 4;
             }
         }
-        regs.set_reg(rn, addr);
+        // ARMv7-M A7.7.40 (LDM T1) : `wback = (registers<n> == '0')`. Quand Rn
+        // fait partie de la liste, il garde la valeur lue et la base n'est pas
+        // mise a jour (forme `ldm r0, {r0, r1, r2}`, sans `!`). La reecrire
+        // ici remplacait la valeur chargee par l'adresse de fin. STM (T1)
+        // ecrit toujours la base ; si Rn est dans la liste il est range avec
+        // sa valeur d'origine (seul cas defini : Rn est le plus bas).
+        if !is_ldm || (list & (1 << rn)) == 0 {
+            regs.set_reg(rn, addr);
+        }
         StepResult::Ok(2)
     }
 
