@@ -717,6 +717,16 @@ impl MemoryBus {
             return;
         }
         let nvic = Nvic::default();
+        if let Some(g) = c.generalise {
+            // Largeur, Init, XOR et mode additionneur selon CRC_SET.
+            let mut octets = Vec::with_capacity(c.length as usize);
+            for i in 0..c.length {
+                octets.push(self.read_u8(c.source.wrapping_add(i), p, &nvic));
+            }
+            p.crc.resultat =
+                crate::emulator::peripherals::ChecksumUnit::calculer_generalise(octets.into_iter(), &g);
+            return;
+        }
         let mut crc: u16 = 0;
         for i in 0..c.length {
             let octet = self.read_u8(c.source.wrapping_add(i), p, &nvic);
