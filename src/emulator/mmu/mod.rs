@@ -442,6 +442,12 @@ impl MemoryBus {
         }
     }
 
+    /// Registre de donnees de l'UART1 (RBR en lecture, THR en ecriture). Sa
+    /// lecture a un effet de bord : elle defile la FIFO de reception.
+    fn registre_de_donnees_uart(addr: u32) -> bool {
+        addr == periph::UART1
+    }
+
     pub fn write_u8(&mut self, addr: u32, val: u8, periph: &mut Peripherals, nvic: &mut Nvic) {
         // Alias bit-band : seul le bit de poids faible de la valeur compte, et
         // il ne modifie que le bit vise de l'octet source.
@@ -470,6 +476,14 @@ impl MemoryBus {
             map::MAILBOX_BASE..=map::MAILBOX_END => self
                 .sram
                 .write_mailbox_u8((addr - map::MAILBOX_BASE) as usize, val),
+            0x4000_0000..=0x4FFF_FFFF if Self::registre_de_donnees_uart(addr & !3) => {
+                // RBR/THR partagent l'adresse : lire pour fusionner les voies
+                // defilerait un octet recu. Une ecriture d'octet n'a pas de
+                // lecture sur le bus, et seule la voie 0 atteint THR.
+                if addr & 3 == 0 {
+                    self.write_mmio_u32(addr, val as u32, periph);
+                }
+            }
             0x4000_0000..=0x4FFF_FFFF => {
                 let aligned = addr & !3;
                 let mut current = self.read_mmio_u32(aligned, periph);
