@@ -10,7 +10,7 @@ pub enum StackPointerType {
     Process, // PSP
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Registers {
     pub r: [u32; 13], // R0 - R12
     pub msp: u32,     // Main Stack Pointer

@@ -4,6 +4,7 @@ mod app;
 mod audio;
 mod demarrage;
 mod emulator;
+mod fil;
 mod gui;
 mod hw_bridge;
 mod i18n;

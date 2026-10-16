@@ -317,6 +317,37 @@ pub struct MemoryBus {
     /// Adresse de l'instruction en cours, renseignee par le coeur avant chaque
     /// execution. Sert uniquement a attribuer les acces dans la trace.
     pub current_pc: u32,
+    /// True once a store has happened since the last clear.
+    ///
+    /// The core uses this to recognise a wait loop: an iteration that writes
+    /// nowhere and leaves every register identical can only be broken by a
+    /// peripheral. The flag is set by the three write entry points and cleared
+    /// by the core on each pass through the loop head.
+    pub a_ecrit: bool,
+    /// Stack floor of the tracked loop, or zero.
+    ///
+    /// Anything stored in RAM **below** this floor is dead memory as far as the
+    /// ABI is concerned: it is the area functions called from the loop use for
+    /// their own register saves, and that the next iteration will rewrite
+    /// before reading. A store down there therefore does not count as a write.
+    /// Without this exemption every wait written `while (!ready()) ;` — the
+    /// vast majority — escaped recognition, `ready`'s PUSH being enough to
+    /// disqualify each iteration.
+    pub plancher_pile: u32,
+    /// Bytes of RAM to present to the core with some bits forced, given as
+    /// address, bits to set and bits to clear.
+    ///
+    /// Writing such a byte from outside once a second is a race the firmware
+    /// wins: it sets its flag and reads it back a few instructions later, long
+    /// before the next refresh. Forcing the value as it is read settles the
+    /// question instead of competing with it.
+    ///
+    /// Only single-byte reads are masked. Every flag this exists for is read
+    /// with `LDRB`, and the half-word and word paths are the two hottest
+    /// functions in the emulator: a test on each of them is paid on every
+    /// access the firmware makes, for a list that is empty unless someone has
+    /// asked for a flag to be held.
+    pub masques_lecture: Vec<(u32, u8, u8)>,
     pub flash: SpiFlash,
     pub pram: Pram,
     pub sram: InternalSram,
@@ -328,6 +359,9 @@ impl Default for MemoryBus {
     fn default() -> Self {
         Self {
             current_pc: 0,
+            a_ecrit: false,
+            plancher_pile: 0,
+            masques_lecture: Vec::new(),
             flash: SpiFlash::default(),
             pram: Pram::default(),
             sram: InternalSram::default(),
@@ -342,7 +376,11 @@ impl MemoryBus {
         // Memoire vive et PRAM d'abord : ce sont les deux zones que le code lit
         // sans arret, et aucune des deux ne peut tomber dans un alias bit-band.
         if (map::SRAM_BASE..=map::SRAM_END).contains(&addr) {
-            return self.sram.read_u8((addr - map::SRAM_BASE) as usize);
+            let v = self.sram.read_u8((addr - map::SRAM_BASE) as usize);
+            if self.masques_lecture.is_empty() {
+                return v;
+            }
+            return self.masquer(addr, v);
         }
         if addr <= map::PRAM_END {
             return self.pram.read_u8(addr as usize);
@@ -387,6 +425,7 @@ impl MemoryBus {
     }
 
     pub fn write_u8(&mut self, addr: u32, val: u8, periph: &mut Peripherals, nvic: &mut Nvic) {
+        self.noter_ecriture(addr);
         // Alias bit-band : seul le bit de poids faible de la valeur compte, et
         // il ne modifie que le bit vise de l'octet source.
         if let Some((target, bit)) = map::bitband_target(addr & !3) {
@@ -466,6 +505,88 @@ impl MemoryBus {
         ))
     }
 
+    /// Applies the read masks to a byte just fetched from RAM.
+    ///
+    /// The list is almost always empty, and never longer than a handful, so a
+    /// linear walk costs less than any structure that would index it.
+    #[inline(always)]
+    fn masquer(&self, addr: u32, octet: u8) -> u8 {
+        let mut v = octet;
+        for (a, poser, effacer) in &self.masques_lecture {
+            if *a == addr {
+                v = (v | poser) & !effacer;
+            }
+        }
+        v
+    }
+
+    /// Sets the write flag, except for dead memory below the stack floor.
+    /// Program memory and peripherals always count: they sit below RAM in the
+    /// address map, so the first condition keeps them out of the exemption.
+    #[inline(always)]
+    fn noter_ecriture(&mut self, addr: u32) {
+        if addr >= map::SRAM_BASE && addr < self.plancher_pile {
+            return;
+        }
+        self.a_ecrit = true;
+    }
+
+    /// Index of the first byte of a block of words, if it fits entirely in RAM
+    /// and is aligned.
+    ///
+    /// Multi-register accesses — PUSH, POP, LDM, STM — went through full bus
+    /// decoding once per register: a prologue storing five words redid the same
+    /// addressing work five times, while the stack always lives in SRAM, which
+    /// has neither bit-band aliases nor side effects. One test therefore covers
+    /// the whole burst.
+    #[inline(always)]
+    fn plage_sram(&self, addr: u32, mots: usize) -> Option<usize> {
+        if addr < map::SRAM_BASE || (addr & 3) != 0 {
+            return None;
+        }
+        let debut = (addr - map::SRAM_BASE) as usize;
+        let long = mots.checked_mul(4)?;
+        if debut.checked_add(long)? <= self.sram.data.len() {
+            Some(debut)
+        } else {
+            None
+        }
+    }
+
+    /// Reads `out.len()` consecutive words in one go.
+    ///
+    /// Returns false when the range is not entirely in RAM: the caller then
+    /// falls back to one word at a time through the general path.
+    #[inline]
+    pub fn lire_mots(&self, addr: u32, out: &mut [u32]) -> bool {
+        let Some(debut) = self.plage_sram(addr, out.len()) else {
+            return false;
+        };
+        // One slice, checked once: the compiler then knows each chunk is
+        // exactly four bytes and rechecks nothing. Indexing byte by byte left
+        // it four bounds tests per word, which cancelled the gain over the
+        // general path.
+        let source = &self.sram.data[debut..debut + out.len() * 4];
+        for (m, octets) in out.iter_mut().zip(source.chunks_exact(4)) {
+            *m = u32::from_le_bytes([octets[0], octets[1], octets[2], octets[3]]);
+        }
+        true
+    }
+
+    /// Mirror of `lire_mots`.
+    #[inline]
+    pub fn ecrire_mots(&mut self, addr: u32, vals: &[u32]) -> bool {
+        self.noter_ecriture(addr);
+        let Some(debut) = self.plage_sram(addr, vals.len()) else {
+            return false;
+        };
+        let cible = &mut self.sram.data[debut..debut + vals.len() * 4];
+        for (octets, v) in cible.chunks_exact_mut(4).zip(vals) {
+            octets.copy_from_slice(&v.to_le_bytes());
+        }
+        true
+    }
+
     pub fn read_u16(&mut self, addr: u32, periph: &mut Peripherals, nvic: &Nvic) -> u16 {
         // Chemin rapide de la recuperation d'instruction. Le code ne vit qu'en
         // PRAM et dans la fenetre XIP, et le coeur y lit un demi-mot avant
@@ -506,6 +627,7 @@ impl MemoryBus {
     }
 
     pub fn write_u16(&mut self, addr: u32, val: u16, periph: &mut Peripherals, nvic: &mut Nvic) {
+        self.noter_ecriture(addr);
         // Meme raison qu'en lecture : la memoire vive est le cas courant, et
         // elle n'a ni alias bit-band ni effet de bord.
         if (map::SRAM_BASE..map::SRAM_END).contains(&addr) {
@@ -565,6 +687,7 @@ impl MemoryBus {
     }
 
     pub fn write_u32(&mut self, addr: u32, val: u32, periph: &mut Peripherals, nvic: &mut Nvic) {
+        self.noter_ecriture(addr);
         // Meme raison qu'en lecture : la memoire vive n'a ni alias bit-band ni
         // effet de bord, et c'est la qu'atterrit la quasi totalite des mots
         // ranges par le jeu.

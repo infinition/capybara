@@ -8,6 +8,9 @@
 //! Un Tamagotchi mort se rattrape donc a l'heure pres, meme apres avoir eteint
 //! l'ordinateur.
 //!
+//! A point can be locked: it then escapes both pruning and the maximum age,
+//! and stays in the list until it is deleted by hand.
+//!
 //! Le dossier est celui de l'emplacement de sauvegarde : les points suivent la
 //! partie et non la console. Deux parties menees sur le meme dump ont chacune
 //! leur passe, et revenir en arriere sur l'une ne propose jamais les points de
@@ -29,6 +32,17 @@ pub struct PointDeReprise {
     pub cycles: u64,
     /// Nom du fichier dans le dossier du journal.
     pub fichier: String,
+    /// Locked point: neither pruning nor age carries it off.
+    ///
+    /// Ordinary points spread out over time and disappear after twelve hours. A
+    /// locked one stays indefinitely, until deleted by hand. That is what you
+    /// want of a marker dropped before a risky operation, or of a reference
+    /// state worth keeping.
+    ///
+    /// The field is missing from indexes written by an earlier version: it then
+    /// takes its default, and nothing ends up locked by surprise.
+    #[serde(default)]
+    pub verrouille: bool,
 }
 
 impl PointDeReprise {
@@ -81,6 +95,14 @@ pub struct Journal {
     dossier: Option<PathBuf>,
     points: Vec<PointDeReprise>,
     derniere_prise: Option<std::time::Instant>,
+    /// Writer thread, when there is one.
+    ///
+    /// Taking a point serialises a two-hundred-kilobyte snapshot to JSON, which
+    /// makes several megabytes of text. Done on the interpreting thread, that
+    /// stops the console for a good fraction of a second, once a minute.
+    /// Without a writer the write stays direct: that is the case for the
+    /// command-line tools, where nobody is watching.
+    scribe: Option<super::scribe::Scribe>,
 }
 
 /// Ecart entre deux prises.
@@ -107,7 +129,7 @@ fn pas_minimal(age: Duration) -> Duration {
 
 impl Default for Journal {
     fn default() -> Self {
-        Self { dossier: None, points: Vec::new(), derniere_prise: None }
+        Self { dossier: None, points: Vec::new(), derniere_prise: None, scribe: None }
     }
 }
 
@@ -154,6 +176,21 @@ impl Journal {
     /// La prise recopie la memoire vive et l'ecrit en JSON, ce qui prend
     /// quelques dizaines de millisecondes. Une fois par minute, c'est
     /// imperceptible ; plus souvent, cela se verrait.
+    /// Hands the journal's writes over to a separate thread.
+    pub fn confier_a(&mut self, scribe: super::scribe::Scribe) {
+        self.scribe = Some(scribe);
+    }
+
+    /// Waits until the handed-over writes are done.
+    ///
+    /// Call before any direct write to the same files, and before closing:
+    /// otherwise an older version lands after the good one.
+    pub fn attendre_les_ecritures(&self) {
+        if let Some(scribe) = &self.scribe {
+            scribe.attendre();
+        }
+    }
+
     pub fn suivre(&mut self, machine: &Machine) {
         let Some(dossier) = self.dossier.clone() else {
             return;
@@ -171,11 +208,27 @@ impl Journal {
 
         let quand = Local::now();
         let fichier = format!("{}.tamastate", quand.format("%Y%m%d-%H%M%S"));
+        // The state is copied here, the machine belonging to this thread
+        // alone; serialising and writing go to the writer thread.
         let etat = machine.instantane();
-        if etat.ecrire(&dossier.join(&fichier)).is_err() {
+        let chemin = dossier.join(&fichier);
+        let cycles = etat.cycles;
+        let ecrit = match &self.scribe {
+            Some(scribe) => scribe.confier(super::scribe::Tache::Etat {
+                chemin,
+                etat: Box::new(etat),
+            }),
+            None => etat.ecrire(&chemin).is_ok(),
+        };
+        if !ecrit {
             return;
         }
-        self.points.push(PointDeReprise { quand, cycles: etat.cycles, fichier });
+        self.points.push(PointDeReprise {
+            quand,
+            cycles,
+            fichier,
+            verrouille: false,
+        });
         self.elaguer(&dossier);
         self.ecrire_index(&dossier);
     }
@@ -194,7 +247,12 @@ impl Journal {
         if etat.ecrire(&dossier.join(&fichier)).is_err() {
             return false;
         }
-        self.points.push(PointDeReprise { quand, cycles: etat.cycles, fichier });
+        self.points.push(PointDeReprise {
+            quand,
+            cycles: etat.cycles,
+            fichier,
+            verrouille: false,
+        });
         self.derniere_prise = Some(std::time::Instant::now());
         self.ecrire_index(&dossier);
         true
@@ -216,7 +274,12 @@ impl Journal {
             .unwrap_or_else(|_| Local::now());
         let fichier = format!("importe-{}.tamastate", quand.format("%Y%m%d-%H%M%S"));
         std::fs::copy(source, dossier.join(&fichier)).map_err(|e| e.to_string())?;
-        self.points.push(PointDeReprise { quand, cycles: etat.cycles, fichier });
+        self.points.push(PointDeReprise {
+            quand,
+            cycles: etat.cycles,
+            fichier,
+            verrouille: false,
+        });
         self.points.sort_by_key(|p| p.quand);
         self.ecrire_index(&dossier);
         Ok(())
@@ -235,7 +298,33 @@ impl Journal {
         Instantane::lire(&dossier.join(&point.fichier)).ok()
     }
 
+    /// Sets or clears a point's lock, and returns its new state.
+    ///
+    /// Locking copies nothing: the file is already on disk, only the index
+    /// changes. It is therefore immediate, even for a large state.
+    pub fn basculer_le_verrou(&mut self, indice: usize) -> bool {
+        let Some(dossier) = self.dossier.clone() else {
+            return false;
+        };
+        let Some(point) = self.points.get_mut(indice) else {
+            return false;
+        };
+        point.verrouille = !point.verrouille;
+        let etat = point.verrouille;
+        self.ecrire_index(&dossier);
+        etat
+    }
+
+    /// Number of locked points, for display.
+    pub fn verrouilles(&self) -> usize {
+        self.points.iter().filter(|p| p.verrouille).count()
+    }
+
     /// Efface un point, fichier compris.
+    ///
+    /// The lock does not protect against this: it is an explicit request, and
+    /// the interface asks for confirmation before calling it on a locked
+    /// point.
     pub fn oublier(&mut self, indice: usize) {
         let Some(dossier) = self.dossier.clone() else {
             return;
@@ -257,6 +346,13 @@ impl Journal {
         // loin du precedent pour l'age auquel il se trouve.
         let mut precedent: Option<DateTime<Local>> = None;
         for point in self.points.iter().rev() {
+            // A locked point crosses the pruning without being counted: it
+            // never disappears, and it does not push its neighbours out
+            // either, or locking one would delete the minute next to it.
+            if point.verrouille {
+                gardes.push(point.clone());
+                continue;
+            }
             let age = maintenant.signed_duration_since(point.quand);
             if age > age_maximal() {
                 jetes.push(point.clone());
@@ -276,13 +372,24 @@ impl Journal {
         for point in jetes {
             let _ = std::fs::remove_file(dossier.join(&point.fichier));
         }
+        // The walk goes from newest to oldest, locked ones included, so
+        // reversing is enough to get chronological order back.
         gardes.reverse();
         self.points = gardes;
     }
 
     fn ecrire_index(&self, dossier: &Path) {
-        if let Ok(texte) = serde_json::to_string_pretty(&self.points) {
-            let _ = std::fs::write(dossier.join("index.json"), texte);
+        let Ok(texte) = serde_json::to_string_pretty(&self.points) else {
+            return;
+        };
+        let chemin = dossier.join("index.json");
+        match &self.scribe {
+            Some(scribe) => {
+                scribe.confier(super::scribe::Tache::Texte { chemin, contenu: texte });
+            }
+            None => {
+                let _ = std::fs::write(chemin, texte);
+            }
         }
     }
 }

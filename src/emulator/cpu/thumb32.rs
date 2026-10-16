@@ -465,7 +465,7 @@ impl Thumb32 {
             regs.set_flag_v(v_out);
         }
         return StepResult::Ok(1);
-    
+
     }
 
     /// Transferts simples 32 bits : LDR et STR, octet, demi mot et mot.
@@ -648,24 +648,47 @@ impl Thumb32 {
                 base
             };
 
-            let mut addr = start;
-            for i in 0..16 {
-                if (reg_list & (1 << i)) == 0 {
-                    continue;
+            // Same as the short PUSH and POP: one region test for the whole
+            // burst when it fits in SRAM, which every stack-bound burst does.
+            let n = count as usize;
+            let mut mots = [0u32; 16];
+            if is_ldm {
+                if !bus.lire_mots(start, &mut mots[..n]) {
+                    let mut a = start;
+                    for m in mots[..n].iter_mut() {
+                        *m = bus.read_u32(a, periph, nvic);
+                        a = a.wrapping_add(4);
+                    }
                 }
-                if is_ldm {
-                    let v = bus.read_u32(addr, periph, nvic);
+                let mut k = 0usize;
+                for i in 0..16 {
+                    if (reg_list & (1 << i)) == 0 {
+                        continue;
+                    }
                     if i == 15 {
                         // POP {..., pc} : le bit Thumb ne fait pas partie de l'adresse.
-                        regs.pc = v & !1;
+                        regs.pc = mots[k] & !1;
                     } else {
-                        regs.set_reg(i as u8, v);
+                        regs.set_reg(i as u8, mots[k]);
                     }
-                } else {
-                    let v = regs.get_reg(i as u8);
-                    bus.write_u32(addr, v, periph, nvic);
+                    k += 1;
                 }
-                addr = addr.wrapping_add(4);
+            } else {
+                let mut k = 0usize;
+                for i in 0..16 {
+                    if (reg_list & (1 << i)) == 0 {
+                        continue;
+                    }
+                    mots[k] = regs.get_reg(i as u8);
+                    k += 1;
+                }
+                if !bus.ecrire_mots(start, &mots[..n]) {
+                    let mut a = start;
+                    for v in &mots[..n] {
+                        bus.write_u32(a, *v, periph, nvic);
+                        a = a.wrapping_add(4);
+                    }
+                }
             }
 
             if writeback {
