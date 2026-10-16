@@ -623,8 +623,31 @@ impl MemoryBus {
                 // chemin, le firmware relit l'ancienne page et son controle de
                 // coherence echoue sur une somme qui ne correspond pas.
                 let octet = self.read_u8(t.mem_addr.wrapping_add(i), p, &nvic);
-                self.flash.write_u8((t.flash_offset + i) as usize, octet);
+                let dest = (t.flash_offset + i) as usize;
+                // NOR : la programmation ne fait que passer des bits de 1 a 0.
+                let ancien = self.flash.read_u8(dest);
+                let s = &mut p.flashctl.stats;
+                s.octets_programmes += 1;
+                if ancien & octet != octet {
+                    s.octets_non_effaces += 1;
+                }
+                self.flash.write_u8(dest, ancien & octet);
             }
+        }
+    }
+
+    /// Effacement NOR : la zone repasse a 0xFF. Les pages sont
+    /// marquees salies par `write_u8`, comme pour une programmation.
+    fn executer_effacement(
+        &mut self,
+        e: crate::emulator::peripherals::Effacement,
+        _p: &mut Peripherals,
+    ) {
+        let taille = self.flash.data.len() as u64;
+        let debut = (e.offset as u64).min(taille);
+        let fin = (e.offset as u64 + e.len as u64).min(taille);
+        for o in debut..fin {
+            self.flash.write_u8(o as usize, 0xFF);
         }
     }
 
@@ -823,6 +846,9 @@ impl MemoryBus {
             periph::FLASH_CTL => {
                 if let Some(t) = p.flashctl.write_reg(off, val) {
                     self.executer_transfert(t, p);
+                }
+                if let Some(e) = p.flashctl.effacement.take() {
+                    self.executer_effacement(e, p);
                 }
             }
             periph::WDT if crate::emulator::peripherals::AdcPile::handles(off) => {

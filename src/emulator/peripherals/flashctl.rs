@@ -63,7 +63,45 @@ pub struct FlashController {
     /// Journal des transferts, avec leur sens. Sert a verifier qui ecrit en
     /// flash plutot qu'a le deduire de l'ordre des ecritures de registres.
     pub transferts: Vec<(u32, u32, u32, bool)>,
+    /// Adresse d'effacement (ADDRH 0x08, ADDRL 0x0C) et compteurs.
+    /// Non sauvegardes.
+    #[serde(skip)]
+    pub addrh: u32,
+    #[serde(skip)]
+    pub addrl: u32,
+    #[serde(skip)]
+    pub effacement: Option<Effacement>,
+    #[serde(skip)]
+    pub stats: StatsEffacement,
 }
+
+/// Effacement demande au bus : decalage flash et longueur.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Effacement {
+    pub offset: u32,
+    pub len: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StatsEffacement {
+    pub secteurs: u64,
+    pub blocs: u64,
+    pub puce: u64,
+    /// Octets programmes par DMA memoire -> flash.
+    pub octets_programmes: u64,
+    /// Octets dont la valeur programmee avait un bit a 1 la ou la flash avait
+    /// deja 0 : l'ET logique differe d'un ecrasement (programmation sur une
+    /// zone non effacee).
+    pub octets_non_effaces: u64,
+}
+
+/// Bits d'effacement de FLASH_CMD (SDK snc_drv_spifc.c) : puce 8, bloc 9,
+/// secteur 10.
+pub const CMD_EFFACER_PUCE: u32 = 1 << 8;
+pub const CMD_EFFACER_BLOC: u32 = 1 << 9;
+pub const CMD_EFFACER_SECTEUR: u32 = 1 << 10;
+pub const ADDRH: u32 = 0x008;
+pub const ADDRL: u32 = 0x00C;
 
 pub const CTRL: u32 = 0x000;
 pub const COMMAND: u32 = 0x004;
@@ -127,6 +165,10 @@ impl Default for FlashController {
             dma_ctrl: 0,
             last_transfer: None,
             transferts: Vec::new(),
+            addrh: 0,
+            addrl: 0,
+            effacement: None,
+            stats: StatsEffacement::default(),
         }
     }
 }
@@ -166,7 +208,30 @@ impl FlashController {
                 if val & CMD_ECRIRE_REGISTRE != 0 {
                     self.registre = self.valeur_a_ecrire;
                 }
+                {
+                    // SDK SPIFC_Erase : l'adresse est decalee d'un bit a droite
+                    // avant d'etre ecrite (ADDRH = bits 22:16, ADDRL = 15:0).
+                    let adresse =
+                        ((((self.addrh & 0x7F) << 16) | (self.addrl & 0xFFFF)) << 1) & 0x00FF_FFFF;
+                    let e = if val & CMD_EFFACER_SECTEUR != 0 {
+                        self.stats.secteurs += 1;
+                        Some(Effacement { offset: adresse & !0xFFF, len: 0x1000 })
+                    } else if val & CMD_EFFACER_BLOC != 0 {
+                        self.stats.blocs += 1;
+                        Some(Effacement { offset: adresse & !0xFFFF, len: 0x1_0000 })
+                    } else if val & CMD_EFFACER_PUCE != 0 {
+                        self.stats.puce += 1;
+                        Some(Effacement { offset: 0, len: u32::MAX })
+                    } else {
+                        None
+                    };
+                    if e.is_some() {
+                        self.effacement = e;
+                    }
+                }
             }
+            ADDRH => self.addrh = val,
+            ADDRL => self.addrl = val,
             // Ce registre porte la donnee a ecrire ; elle n'est prise en compte
             // qu'a l'ordre d'ecriture, sur COMMAND.
             INDEX => {

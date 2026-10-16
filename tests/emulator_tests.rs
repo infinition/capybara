@@ -1567,6 +1567,11 @@ fn le_dma_flash_lit_et_ecrit_selon_son_bit_de_direction() {
     }
 
     // Bit de direction a zero : memoire vers flash, ce qui permet de sauvegarder.
+    // Une flash NOR ne programme que des bits a 1 : le secteur est d'abord
+    // efface, comme le fait le firmware (adresse >> 1 dans ADDRH/ADDRL).
+    bus.write_u32(fc + 0x008, 0x77, &mut periph, &mut nvic);
+    bus.write_u32(fc + 0x00C, 0xF000, &mut periph, &mut nvic);
+    bus.write_u32(fc + 0x004, 1 << 10, &mut periph, &mut nvic);
     for i in 0..32u32 {
         bus.write_u8(tampon + i, 0x50 + i as u8, &mut periph, &mut nvic);
     }
