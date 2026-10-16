@@ -1,7 +1,9 @@
-/// Convertisseur de la mesure de pile, page 0x4003A000.
+/// Convertisseur de la mesure de pile, page 0x4003A000 (SVD SAR_ADC : ADP +0x00,
+/// ADM +0x04, ADR +0x08 ; IRQ 9 = SAR_ADC_IRQn).
 ///
-/// La figure 4-1 annonce le chien de garde a cette adresse, mais le firmware y
-/// lance des conversions. Le gestionnaire de l'IRQ 9, en 0x10078774, en extrait
+/// L'ancienne figure 4-1 annoncait le chien de garde a cette adresse, mais le
+/// firmware y lance des conversions ; les chiens de garde sont WDT0/WDT1 en
+/// 0x40008000/0x40009000. Le gestionnaire de l'IRQ 9, en 0x10078774, en extrait
 /// l'echantillon par `UBFX r0, r0, #6, #10` sur le registre 0x08 : dix bits
 /// utiles, cales a partir du rang 6.
 ///

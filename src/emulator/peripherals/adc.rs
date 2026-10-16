@@ -1,8 +1,19 @@
-/// Convertisseur analogique-numerique a approximations successives.
+/// Ancien modele "SAR ADC" des pages 0x4000A000 / 0x4000B000.
 ///
-/// Deux instances existent, 0x4000A000 et 0x4000B000. Le firmware les distingue
-/// par un parametre, ecrit le canal voulu dans le registre 0x00, puis attend le
-/// bit 6 du registre 0x14 :
+/// CORRECTION : ces deux pages sont les UART0 et
+/// UART1 du SVD, pas des convertisseurs. La sequence ci-dessous est l'envoi
+/// d'un octet (`FUN_0008889c` : ecriture de THR en +0x00) suivi de l'attente de
+/// TEMT (bit 6 de LS en +0x14) ; le "canal" est l'octet emis. 0x4000B000 est
+/// servi par `UartController` ; seule l'instance 0 de ce modele est encore
+/// branchee, sur UART0 (console "UART Monitor Service", 115200 bauds,
+/// `FUN_00077bf8`). `valeur` est rendue dans les bits bas de LS : avec la
+/// valeur par defaut 0xC00, les bits 0..7 (dont DR, donnee recue) restent a 0,
+/// donc le firmware ne lit aucun caractere ; une autre valeur de SONIX_ADC
+/// pourrait simuler des octets recus. Le vrai convertisseur (mesure de pile)
+/// est `AdcPile`, en 0x4003A000. Le comportement est garde tel quel.
+///
+/// Texte d'origine : le firmware les distingue par un parametre, ecrit le canal
+/// voulu dans le registre 0x00, puis attend le bit 6 du registre 0x14 :
 ///
 /// ```text
 ///   STR  r0, [base, #0]        ; canal

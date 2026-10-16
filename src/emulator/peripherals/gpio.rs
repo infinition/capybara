@@ -1,3 +1,9 @@
+/// Controleur GPIO herite, branche sur 0x40031000 (ancienne etiquette GPIO0).
+///
+/// ATTENTION : cette page n'a aucun peripherique dans
+/// le SVD (elle tombe entre I2S0 0x40030000 et I2S2 0x40032000) et le
+/// firmware n'y accede pas. Les vrais ports sont GPIO0..2 en
+/// 0x40018000..0x4001A000 (`GpioPort`). Branchement garde tel quel.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct GpioController {
     pub pin_data: u32,

@@ -1,5 +1,14 @@
 /// Gestionnaire d'alimentation (Power Management Unit) pour Sonix SNC73410.
 ///
+/// ATTENTION : ce modele est branche sur la page
+/// 0x40001000, qui est en realite le timer CT32B1 (SVD) ; le firmware n'y
+/// accede jamais (recensement L1, 7 executions). Le vrai PMU_CTRL est
+/// 0x45000300 (bit 0 DPD_EN, bit 4 RTC_FLAG, bit 6 WKP_FLAG, bit 7
+/// CLR_WKP_INT, bit 15 WKP), servi par `snsys`. Les drapeaux ci-dessous en
+/// sont une copie a la mauvaise adresse ; `deep_sleep_active` reste donc faux
+/// et la veille profonde n'est reconnue que par la plage de PC 0x23D0..0x2434.
+/// Le branchement est garde tel quel pour ne rien changer au comportement.
+///
 /// Registres materiels :
 /// - `0x00` : PMU_CTRL (mode veille, deep power down, deep sleep)
 /// - `0x04` : PMU_STATUS (drapeaux de reveil : bit 4 RTC, bit 6 broche IO, bit 7 interruption)

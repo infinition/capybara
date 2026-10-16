@@ -2,6 +2,10 @@ use std::collections::VecDeque;
 
 /// Controleur USB officiel Sonix SNC73410 (`0x40007000`).
 ///
+/// ATTENTION : 0x40007000 est le timer CT32B7 (PWM du
+/// buzzer) dans le SVD ; l'USB est USB_DEV 0x40100000 / USB_PHY 0x41000000, et
+/// le firmware n'y accede pas. Ce modele n'est branche sur aucune page du bus.
+///
 /// Permet l'emulation du peripherique USB CDC/HID integre, facilitant la
 /// communication directe avec les logiciels tiers de transfert.
 ///

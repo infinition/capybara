@@ -62,84 +62,140 @@ pub mod map {
     }
 }
 
-/// Bases des peripheriques, datasheet V1.7 figure 4-1.
+/// Bases des peripheriques.
+///
+/// Noms alignes sur le SVD SN_M3B (SNC7330, reference ; la console est un
+/// SNC73410) et sur l'usage reel du firmware 20260816_0xF51A9A57,
+/// observe sur le desassemblage de la PRAM et le recensement des acces MMIO.
+/// L'ancienne table reprenait les etiquettes d'une figure 4-1 de datasheet qui
+/// ne correspond pas a ce firmware : 0x40001000..0x40007000 sont les timers
+/// CT32B1..7 (et non PMU/ISO/RTC/SYSCTRL/USB), 0x4003A000 est le SAR ADC (et
+/// non le chien de garde), 0x4000A000 est l'UART0 (et non un ADC), etc.
+///
+/// Seuls les noms changent ici : chaque adresse garde exactement l'aiguillage
+/// qu'elle avait (voir `lire_mmio` / `write_mmio_u32`). Les modeles herites
+/// branches sur des pages que le firmware ne touche jamais (PmuController en
+/// 0x40001000, SysRegisters en 0x40004000, GpioController en 0x40031000,
+/// Timers en 0x40040000..0x40046000) restent branches, sous un nom qui dit
+/// ce qu'est vraiment la page.
 pub mod periph {
-    pub const PMU: u32 = 0x4000_1000;
-    pub const ISO: u32 = 0x4000_2000;
-    pub const RTC: u32 = 0x4000_3000;
-    pub const SYSCTRL0: u32 = 0x4000_4000;
-    pub const SYSCTRL1: u32 = 0x4000_5000;
-    pub const USB: u32 = 0x4000_7000;
+    /// Timers 32 bits CT32B0..CT32B7, une page de 4 Ko chacun (SVD CT32B0..7).
+    /// Le firmware les adresse par `0x40000000 + n * 0x1000` (PRAM 0x8cb8).
+    /// Utilises en pratique : CT32B2 (PWM, demarrage), CT32B3 (compteur libre
+    /// lu par l'interruption TE), CT32B7 (PWM du buzzer). Aucun n'est modelise :
+    /// ils tombent sur la voie non modelisee (lecture 0, ecriture ignoree).
+    pub const CT32B0: u32 = 0x4000_0000;
+    /// Porte encore le PmuController herite (ancienne etiquette "PMU").
+    /// Le recensement L1 n'y voit aucun acces ; le vrai PMU_CTRL est en
+    /// 0x45000300 (SN_SYS0, `snsys`).
+    pub const CT32B1: u32 = 0x4000_1000;
+    /// Ancienne etiquette "ISO" ; le vrai bloc ISO est en 0x45000200.
+    pub const CT32B2: u32 = 0x4000_2000;
+    /// Ancienne etiquette "RTC" ; le compteur RTC est en 0x45000304.
+    pub const CT32B3: u32 = 0x4000_3000;
+    /// Porte encore le SysRegisters herite (ancienne etiquette "SYSCTRL0",
+    /// bit 3 de +0 = masquer la ROM de demarrage). Aucun acces firmware releve.
+    pub const CT32B4: u32 = 0x4000_4000;
+    /// Ancienne etiquette "SYSCTRL1".
+    pub const CT32B5: u32 = 0x4000_5000;
+    pub const CT32B6: u32 = 0x4000_6000;
+    /// Ancienne etiquette "USB" ; `usb.rs` n'est branche nulle part et le
+    /// firmware n'utilise pas l'USB (USB_DEV 0x40100000 / USB_PHY 0x41000000).
+    pub const CT32B7: u32 = 0x4000_7000;
+    /// Chiens de garde WDT0/WDT1 (SVD). Non modelises ; WDT0 est arme et nourri
+    /// en marche normale (FEED +0x0C).
     pub const WDT0: u32 = 0x4000_8000;
     pub const WDT1: u32 = 0x4000_9000;
-    /// Ports serie UART0 et UART1 du microcontroleur Sonix.
+    /// UART0 : console de debogage "UART Monitor Service", 115200 bauds
+    /// (`FUN_00077bf8`). Ses offsets +0x00 (THR) et +0x14 (LS) sont encore
+    /// servis par le modele `SarAdc` (adc.rs), qui imite en fait l'emission
+    /// d'un octet suivie de l'attente de TEMT (bit 6 de LS) ; ce n'est pas un ADC.
     pub const UART0: u32 = 0x4000_A000;
+    /// UART1 : la liaison de transfert (TamaParadiseTool), modele `UartController`.
     pub const UART1: u32 = 0x4000_B000;
-    /// Ancienne etiquette du datasheet pour UART1.
-    pub const SAR_ADC1: u32 = UART1;
-    pub const SAR_ADC0: u32 = UART0;
     /// Controleur SPI0 et registre de transmission d'ecran.
     pub const SPI0: u32 = 0x4000_E000;
-    pub const I2S4: u32 = SPI0;
-    /// Controleur de transferts DMA.
+    /// Controleur de transferts DMA (SVD FDMA_CTRL, FTDMAC du SPI0).
     pub const DMA: u32 = 0x4000_F000;
-    pub const I2S2: u32 = 0x4001_2000;
-    /// Ports d'entrees-sorties 0 a 2, resolus par la table de broches du
-    /// firmware : un identifiant de broche encode `port = id >> 4` et
-    /// `pin = id & 15`, et la table en SRAM rend le decalage a ajouter a
-    /// 0x40018000.
+    /// I2C0/I2C1 (SVD). Non modelises, aucun acces releve.
+    pub const I2C0: u32 = 0x4001_0000;
+    pub const I2C1: u32 = 0x4001_1000;
+    /// Ports d'entrees-sorties 0 a 2 (SVD GPIO0..GPIO2), resolus par la table
+    /// de broches du firmware : un identifiant de broche encode
+    /// `port = id >> 4` et `pin = id & 15`, et la table en SRAM rend le
+    /// decalage a ajouter a 0x40018000.
     pub const GPIO_PORT0: u32 = 0x4001_8000;
     pub const GPIO_PORT1: u32 = 0x4001_9000;
     /// Ses broches 0 et 1 sont lues au demarrage.
     pub const GPIO_PORT2: u32 = 0x4001_A000;
-    pub const SPI1: u32 = 0x4002_0000;
-    /// Controleur de la flash SPI NOR externe et son DMA.
+    /// IDMA0 (SVD ; IDMA1 en +0x10). L'ancienne table l'appelait "SPI1".
+    pub const IDMA0: u32 = 0x4002_0000;
+    /// Controleur de la flash SPI NOR externe (SVD SPIFC) et son DMA
+    /// (SVD IDMA_SPIFC en +0x100).
     pub const FLASH_CTL: u32 = 0x4002_2000;
-    pub const IDMA1: u32 = 0x4002_5000;
-    pub const IDMA0: u32 = 0x4002_B000;
-    /// Controleur de la fenetre XIP cachee.
+    /// SPI_DMA0 (SPI1) et son IDMA_SPI0 en +0x100 (SVD). Ancienne etiquette
+    /// "IDMA0". Non modelise.
+    pub const SPI_DMA0: u32 = 0x4002_B000;
+    /// Controleur de la fenetre XIP cachee (SVD ICACHE).
     pub const XIP_CTRL: u32 = 0x4002_F000;
-    pub const GPIO1: u32 = 0x4003_0000;
-    pub const GPIO0: u32 = 0x4003_1000;
-    pub const I2C1: u32 = 0x4003_3000;
-    /// Accelerateur de somme de controle.
+    /// I2S0 / I2S2 / I2S4 (SVD). Non modelises. L'ancienne table appelait
+    /// 0x40030000 "GPIO1" et donnait a I2S4 l'adresse du SPI0.
+    pub const I2S0: u32 = 0x4003_0000;
+    pub const I2S2: u32 = 0x4003_2000;
+    pub const I2S4: u32 = 0x4003_4000;
+    /// Page sans peripherique dans le SVD, ou reste branche le GpioController
+    /// herite (ancienne etiquette "GPIO0"). Les vrais ports sont
+    /// GPIO_PORT0..2 ; le recensement L1 n'y voit aucun acces firmware.
+    pub const LEGACY_GPIO_CTRL: u32 = 0x4003_1000;
+    /// Accelerateur de somme de controle (SVD CRC).
     pub const CHECKSUM: u32 = 0x4003_8000;
-    pub const WDT: u32 = 0x4003_A000;
-    /// Timers CT32B0 a CT32B7, une page de 4 Ko chacun (0x40000000 a 0x40007000).
-    pub const TIMERS: u32 = 0x4004_0000;
-    pub const TIMERS_LAST: u32 = 0x4004_6000;
-    /// Zone systeme SN_SYS0, porteuse des fusibles FEUSE.
+    /// Convertisseur SAR ADC (SVD SAR_ADC : ADP +0, ADM +4, ADR +8), mesure de
+    /// la pile, modele `AdcPile`. L'ancienne etiquette disait "WDT".
+    pub const SAR_ADC: u32 = 0x4003_A000;
+    /// Plage sans peripherique dans le SVD, ou reste branche le modele `Timers`
+    /// herite (IRQ 16). Le firmware n'y accede jamais : les vrais timers sont
+    /// CT32B0..7 plus haut. L'ancienne table l'appelait "TIMERS / CT32B".
+    pub const LEGACY_TIMERS: u32 = 0x4004_0000;
+    pub const LEGACY_TIMERS_LAST: u32 = 0x4004_6000;
+    /// Zone systeme : SYS0 (+0x000, fusibles FEUSE en +0x30..0x3F), SYS1
+    /// (+0x100), ISO (+0x200, RTC et registres de sauvegarde BK_REG), PMU
+    /// (+0x300, PMU_CTRL, RTC_C) ; modeles `snsys` et `fuses`.
     pub const FUSES: u32 = 0x4500_0000;
 
     /// Nom lisible d'une page de peripherique, pour le journal de trace.
     pub fn name_of(page: u32) -> &'static str {
         match page {
-            PMU => "PMU",
-            ISO => "ISO",
-            RTC => "RTC",
-            SYSCTRL0 => "SYSCTRL0",
-            SYSCTRL1 => "SYSCTRL1",
-            USB => "USB",
+            CT32B0 => "CT32B0",
+            CT32B1 => "CT32B1",
+            CT32B2 => "CT32B2",
+            CT32B3 => "CT32B3",
+            CT32B4 => "CT32B4",
+            CT32B5 => "CT32B5",
+            CT32B6 => "CT32B6",
+            CT32B7 => "CT32B7",
+            WDT0 => "WDT0",
+            WDT1 => "WDT1",
             UART0 => "UART0",
             UART1 => "UART1",
             SPI0 => "SPI0",
-            DMA => "DMA",
-            I2S2 => "I2S2",
-            GPIO_PORT0 => "GPIO_P0",
-            GPIO_PORT1 => "GPIO_P1",
-            GPIO_PORT2 => "GPIO_P2",
-            SPI1 => "SPI1",
-            FLASH_CTL => "FLASH_CTL",
-            IDMA1 => "IDMA1",
-            IDMA0 => "IDMA0",
-            XIP_CTRL => "XIP_CTRL",
-            GPIO1 => "GPIO1",
-            GPIO0 => "GPIO0",
+            DMA => "FDMA",
+            I2C0 => "I2C0",
             I2C1 => "I2C1",
-            CHECKSUM => "CHECKSUM",
-            WDT => "WDT",
-            FUSES => "SN_SYS0",
-            p if (TIMERS..=TIMERS_LAST).contains(&p) => "CT32B",
+            GPIO_PORT0 => "GPIO0",
+            GPIO_PORT1 => "GPIO1",
+            GPIO_PORT2 => "GPIO2",
+            IDMA0 => "IDMA0",
+            FLASH_CTL => "SPIFC",
+            SPI_DMA0 => "SPI_DMA0",
+            XIP_CTRL => "ICACHE",
+            I2S0 => "I2S0",
+            I2S2 => "I2S2",
+            I2S4 => "I2S4",
+            LEGACY_GPIO_CTRL => "LEGACY_GPIO",
+            CHECKSUM => "CRC",
+            SAR_ADC => "SAR_ADC",
+            FUSES => "SYS0",
+            p if (LEGACY_TIMERS..=LEGACY_TIMERS_LAST).contains(&p) => "LEGACY_TIMERS",
             _ => "?",
         }
     }
@@ -386,6 +442,12 @@ impl MemoryBus {
         }
     }
 
+    /// Registre de donnees de l'UART1 (RBR en lecture, THR en ecriture). Sa
+    /// lecture a un effet de bord : elle defile la FIFO de reception.
+    fn registre_de_donnees_uart(addr: u32) -> bool {
+        addr == periph::UART1
+    }
+
     pub fn write_u8(&mut self, addr: u32, val: u8, periph: &mut Peripherals, nvic: &mut Nvic) {
         // Alias bit-band : seul le bit de poids faible de la valeur compte, et
         // il ne modifie que le bit vise de l'octet source.
@@ -414,6 +476,14 @@ impl MemoryBus {
             map::MAILBOX_BASE..=map::MAILBOX_END => self
                 .sram
                 .write_mailbox_u8((addr - map::MAILBOX_BASE) as usize, val),
+            0x4000_0000..=0x4FFF_FFFF if Self::registre_de_donnees_uart(addr & !3) => {
+                // RBR/THR partagent l'adresse : lire pour fusionner les voies
+                // defilerait un octet recu. Une ecriture d'octet n'a pas de
+                // lecture sur le bus, et seule la voie 0 atteint THR.
+                if addr & 3 == 0 {
+                    self.write_mmio_u32(addr, val as u32, periph);
+                }
+            }
             0x4000_0000..=0x4FFF_FFFF => {
                 let aligned = addr & !3;
                 let mut current = self.read_mmio_u32(aligned, periph);
@@ -746,27 +816,30 @@ impl MemoryBus {
         let off = addr & 0xFFF;
         match page {
             periph::CHECKSUM => p.crc.read_reg(off),
-            // 0x4000E000 et 0x40007000 restent hors modele, et 0x4000A000
-            // (UART0) aussi. La premiere porte l'interface serie de la dalle :
-            // la modeliser en SPI ordinaire intercepte les registres que le
-            // pilote d'ecran scrute, et l'ecran reste noir quoi qu'on charge.
-            // Les rendre a la voie non modelisee, qui rend zero et journalise,
-            // est ce qui marche. 0x4000B000, lui, est route vers l'UART : c'est
-            // UART1, mesure, pas l'ADC qu'annonce l'etiquette SAR_ADC1.
-            periph::SAR_ADC0 if crate::emulator::peripherals::SarAdc::handles(off) => {
+            // 0x4000E000 (SPI0) et 0x40007000 (CT32B7) restent hors modele,
+            // ainsi que les offsets de 0x4000A000 (UART0) autres que +0x00 et
+            // +0x14. SPI0 porte l'interface serie de la dalle : la modeliser en
+            // SPI ordinaire intercepte les registres que le pilote d'ecran
+            // scrute, et l'ecran reste noir quoi qu'on charge. Les rendre a la
+            // voie non modelisee, qui rend zero et journalise, est ce qui
+            // marche. 0x4000B000 est route vers l'UART : c'est UART1, mesure.
+            // UART0 +0x00 (THR) / +0x14 (LS) sont servis par `SarAdc`, qui
+            // imite l'envoi d'un octet de la console de debogage puis TEMT ;
+            // ce n'est pas un ADC.
+            periph::UART0 if crate::emulator::peripherals::SarAdc::handles(off) => {
                 p.adc[0].read_reg(off)
             }
             periph::UART1 if crate::emulator::peripherals::UartController::handles(off) => {
                 p.uart.read_reg(off)
             }
-            periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
+            periph::CT32B1 if crate::emulator::peripherals::PmuController::handles(off) => {
                 p.pmu.read_reg(off)
             }
-            periph::GPIO0 => p.gpio.read_reg(off),
-            periph::SYSCTRL0 => p.sys.read_reg(off),
+            periph::LEGACY_GPIO_CTRL => p.gpio.read_reg(off),
+            periph::CT32B4 => p.sys.read_reg(off),
             // FEUSE (0x30..0x3f) puis les registres d'horloge/PLL de SN_SYS0.
             periph::FUSES if (0x30..=0x3f).contains(&off) => p.fuses.read_reg(off),
-            periph::WDT if crate::emulator::peripherals::AdcPile::handles(off) => {
+            periph::SAR_ADC if crate::emulator::peripherals::AdcPile::handles(off) => {
                 p.adc_pile.read_reg(off)
             }
             periph::DMA if crate::emulator::peripherals::DmaController::handles(off) => {
@@ -784,7 +857,7 @@ impl MemoryBus {
             periph::FLASH_CTL => p.flashctl.read_reg(off),
             periph::XIP_CTRL => p.xip.read_reg(off),
             periph::FUSES => p.snsys.read_reg(off),
-            p_ if (periph::TIMERS..=periph::TIMERS_LAST).contains(&p_) => p.timers.read_reg(off),
+            p_ if (periph::LEGACY_TIMERS..=periph::LEGACY_TIMERS_LAST).contains(&p_) => p.timers.read_reg(off),
             _ => {
                 let pc = self.current_pc;
                 self.mmio_trace.record_read(addr, pc);
@@ -804,17 +877,17 @@ impl MemoryBus {
                     self.executer_calcul(c, p);
                 }
             }
-            periph::SAR_ADC0 if crate::emulator::peripherals::SarAdc::handles(off) => {
+            periph::UART0 if crate::emulator::peripherals::SarAdc::handles(off) => {
                 p.adc[0].write_reg(off, val)
             }
             periph::UART1 if crate::emulator::peripherals::UartController::handles(off) => {
                 p.uart.write_reg(off, val)
             }
-            periph::PMU if crate::emulator::peripherals::PmuController::handles(off) => {
+            periph::CT32B1 if crate::emulator::peripherals::PmuController::handles(off) => {
                 p.pmu.write_reg(off, val);
             }
-            periph::GPIO0 => p.gpio.write_reg(off, val),
-            periph::SYSCTRL0 => {
+            periph::LEGACY_GPIO_CTRL => p.gpio.write_reg(off, val),
+            periph::CT32B4 => {
                 if p.sys.write_reg(off, val) {
                     self.boot_rom.is_hidden = true;
                 }
@@ -825,7 +898,7 @@ impl MemoryBus {
                     self.executer_transfert(t, p);
                 }
             }
-            periph::WDT if crate::emulator::peripherals::AdcPile::handles(off) => {
+            periph::SAR_ADC if crate::emulator::peripherals::AdcPile::handles(off) => {
                 p.adc_pile.write_reg(off, val)
             }
             periph::DMA if crate::emulator::peripherals::DmaController::handles(off) => {
@@ -844,7 +917,7 @@ impl MemoryBus {
             }
             periph::XIP_CTRL => p.xip.write_reg(off, val),
             periph::FUSES => p.snsys.write_reg(off, val),
-            p_ if (periph::TIMERS..=periph::TIMERS_LAST).contains(&p_) => {
+            p_ if (periph::LEGACY_TIMERS..=periph::LEGACY_TIMERS_LAST).contains(&p_) => {
                 p.timers.write_reg(off, val)
             }
             _ => {
