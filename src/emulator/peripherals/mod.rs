@@ -20,7 +20,7 @@ pub mod xip;
 pub use adc::SarAdc;
 pub use crc::{Calcul, ChecksumUnit};
 pub use display::{DisplayController, LCD_HEIGHT, LCD_WIDTH};
-pub use flashctl::{FlashController, Transfer};
+pub use flashctl::{Effacement, FlashController, Transfer};
 pub use fuses::FuseRegisters;
 pub use gpio::GpioController;
 pub use adc_pile::AdcPile;
