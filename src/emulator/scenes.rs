@@ -1,18 +1,24 @@
 //! La table des scenes du firmware, telle qu'elle se lit dans l'image.
 //!
-//! Le firmware garde ses cent vingt neuf ecrans dans un tableau de descripteurs
-//! de vingt huit octets, portant quatre gestionnaires, un pointeur de nom et un
-//! compteur. Le numero de scene, celui qu'on lit en `0x18001BF4`, est le rang
-//! dans ce tableau. Le champ `+0x10` vaut le rang plus un et n'est pas le
-//! numero : les confondre decale toute la table d'une unite.
+//! Le firmware garde ses ecrans dans un tableau de descripteurs de vingt huit
+//! octets, portant quatre gestionnaires, un pointeur de nom, un drapeau et le
+//! numero de scene — celui qu'on lit en `0x18001BF4`.
 //!
-//! On ne code pas les numeros en dur parce qu'ils changent d'une edition a
-//! l'autre : Jade Forest compte trois ecrans de plus que Earth, et tout ce qui
+//! Ce numero est ecrit dans le descripteur et on le lit la. Le deduire du rang
+//! dans le tableau paraissait equivalent, les deux coincidant sur l'edition
+//! eau, mais le premier descripteur y porte un pointeur de nom invalide : la
+//! recherche, qui part des noms, commencait donc au deuxieme et rendait toute
+//! la table decalee d'une unite. La scene 29 s'affichait `HOME_SPACE` alors que
+//! le firmware l'appelle `HOME`, et ainsi de suite jusqu'au bout.
+//!
+//! On ne code rien en dur parce que la disposition change d'une edition a
+//! l'autre : Jade Forest compte des ecrans de plus que Earth, et tout ce qui
 //! suit l'insertion se decale.
 //!
-//! La recherche ne suppose rien de la disposition. Elle part des chaines
-//! `PSID_`, en clair dans l'image, releve les mots de trente deux bits qui
-//! pointent dessus, et retient le pas dominant entre deux pointeurs voisins.
+//! La recherche ne suppose donc rien. Elle part des chaines `PSID_`, en clair
+//! dans l'image, releve les mots de trente deux bits qui pointent dessus,
+//! retient le pas dominant entre deux pointeurs voisins, puis cherche dans le
+//! descripteur le champ qui progresse de un a chaque rang : c'est le numero.
 
 /// Taille d'un descripteur, retenue comme pas dominant entre deux pointeurs.
 const PAS_MAX: usize = 256;
@@ -22,7 +28,8 @@ const NOM_MAX: usize = 64;
 pub struct TableScenes {
     /// Adresse du tableau vue par le firmware.
     pub base: u32,
-    /// Les noms, indexes par numero de scene.
+    /// Les noms, indexes par numero de scene. Les trous — un descripteur dont
+    /// le pointeur de nom ne mene nulle part — restent vides.
     pub noms: Vec<String>,
 }
 
@@ -112,9 +119,68 @@ impl TableScenes {
             return None;
         }
         let champ_nom = suite[0].0 % taille;
-        let base_off = suite[0].0 - champ_nom;
+        let mut base_off = suite[0].0 - champ_nom;
 
-        let noms: Vec<String> = (0..suite.len())
+        // Le champ qui porte le numero de scene. Sans lui il faudrait prendre le
+        // rang dans la suite trouvee, ce qui revient au meme tant que la suite
+        // commence au premier descripteur — mais sur l'edition eau le
+        // descripteur zero porte un pointeur de nom invalide, la recherche
+        // demarre donc au suivant, et toute la table se decale d'une unite.
+        //
+        // Le critere est celui de `table_scenes_probe`, pour que la sonde et
+        // l'interface ne puissent pas dire deux choses differentes : le champ
+        // qui tient sur seize bits et qui croit le plus souvent d'une entree a
+        // la suivante. On ne demande pas une suite parfaitement croissante,
+        // parce que le tableau se termine par un descripteur sentinelle dont le
+        // numero ne suit pas, et parce qu'une edition peut avoir insere un ecran
+        // et rompu l'ordre.
+        let mut champ_numero = None;
+        let mut meilleur = 0usize;
+        for candidat in (0..taille).step_by(4) {
+            if candidat == champ_nom {
+                continue;
+            }
+            let hors_bornes = (0..suite.len())
+                .any(|rang| mot(base_off + rang * taille + candidat) >= 0x1_0000);
+            if hors_bornes {
+                continue;
+            }
+            let montees = (1..suite.len())
+                .filter(|&rang| {
+                    mot(base_off + (rang - 1) * taille + candidat)
+                        < mot(base_off + rang * taille + candidat)
+                })
+                .count();
+            if montees > meilleur {
+                meilleur = montees;
+                champ_numero = Some(candidat);
+            }
+        }
+
+        // Le tableau commence au descripteur numero zero, qui peut preceder le
+        // premier nom trouve. On recule d'autant de descripteurs que vaut le
+        // numero du premier, quand la place existe et que ce recul tombe encore
+        // sur des descripteurs plausibles — sans quoi une edition ou le champ
+        // aurait ete mal identifie se verrait decalee dans l'autre sens.
+        let mut decale = 0usize;
+        if let Some(c) = champ_numero {
+            let premier = mot(base_off + c) as usize;
+            let recul = premier.saturating_mul(taille);
+            let plausible = premier > 0
+                && premier < suite.len()
+                && base_off >= recul
+                && (1..=premier).all(|k| {
+                    let d = base_off - k * taille;
+                    mot(d + c) as usize == premier - k
+                });
+            if plausible {
+                base_off -= recul;
+                decale = premier;
+            }
+        }
+
+        let total = suite.len() + decale;
+        let noms: Vec<String> = (0..total)
             .map(|rang| {
                 let p = mot(base_off + rang * taille + champ_nom);
                 noms.get(&p).cloned().unwrap_or_default()

@@ -184,7 +184,7 @@ pub struct TamagotchiApp {
     /// Dernier mode applique a la fenetre, pour ne poser les commandes de
     /// viewport qu'au changement.
     mode_applique: Option<Mode>,
-    pub machine: Machine,
+    pub machine: Box<Machine>,
     pub uart_bridge: UartBridge,
     pub audio: AudioEngine,
     pub i18n: I18n,
@@ -210,7 +210,7 @@ pub struct TamagotchiApp {
     /// une fraction de la vitesse de la console, et un appui mesure en images
     /// durerait bien trop peu de temps a ses yeux.
     pub appuis: std::collections::HashMap<u32, u64>,
-    /// Phases de l'encodeur restant a jouer, une par image.
+    /// Encoder phases still to play, spread out over time.
     pub phases_encodeur: std::collections::VecDeque<(bool, bool)>,
     /// Texture de l'ecran, refaite seulement quand une trame arrive.
     pub ecran: Option<egui::TextureHandle>,
@@ -319,6 +319,9 @@ pub struct TamagotchiApp {
     /// Angle de la molette, en degres cumules. Il ne sert qu'a animer les deux
     /// fleches de la fenetre transparente, et retombe doucement au repos.
     pub angle_molette: f32,
+    /// Direction, start time and detents already emitted for the wheel key
+    /// currently held.
+    molette_tenue: Option<(i32, std::time::Instant, u32)>,
     /// Vitesse d'ecoulement du temps de la console, 1 pour le temps reel.
     ///
     /// Sans gouverneur, l'emulateur va aussi vite que la machine le permet, et
@@ -326,24 +329,17 @@ pub struct TamagotchiApp {
     /// plus d'images que la fenetre n'en affiche, ce qui saccade en plus d'etre
     /// faux. Zero met en pause.
     pub vitesse: f32,
-    /// Note en cours et cycle ou elle a commence, pour suivre la melodie sans
-    /// rien manquer entre deux images.
-    pub note_courante: f32,
-    pub note_depuis: u64,
-    /// Vrai tant que le firmware jouait a l'image precedente.
-    pub son_jouait: bool,
+    /// Melody tracking: current note, the cycle it started on, and the note
+    /// inherited from the previous sound that must be distrusted.
+    ///
+    /// Grouped into a struct because it travels with the machine when that goes
+    /// off to the worker thread: the buzzer changes note several times in a
+    /// hundred and fifty milliseconds, and one sample per frame would catch
+    /// only fragments.
+    pub suivi: crate::fil::SuiviNote,
     /// Derniere recherche du tableau des voix, pour ne pas la refaire a chaque
     /// image quand elle echoue.
     derniere_recherche_voix: std::time::Instant,
-    /// Note heritee de la melodie precedente, et cycle jusqu'auquel s'en mefier.
-    ///
-    /// Le tableau de voix garde sa derniere valeur au silence. Quand le
-    /// firmware releve son drapeau de son, il met encore quelques
-    /// millisecondes a ecrire la premiere note : jusque la, la voix annonce
-    /// celle de la melodie precedente, et l'ancienne s'entendait en tete de
-    /// chaque son.
-    pub note_perimee: f32,
-    pub perimee_jusqu: u64,
     /// Notes relevees pendant la tranche d'emulation, avec leur duree en cycles.
     pub notes: Vec<(f32, u64)>,
     /// Cycles dus a la console, en retard a rattraper.
@@ -354,6 +350,39 @@ pub struct TamagotchiApp {
     /// Icone de zone de notification. Son absence n'empeche pas l'application
     /// de fonctionner sur un bureau qui ne fournit pas ce service.
     tray: Option<crate::tray::Tray>,
+    /// Worker thread, when emulation runs alongside the interface.
+    ///
+    /// `None` puts everything back on one thread: that is the case in
+    /// inspection mode, with a menu open, a serial link plugged in or the local
+    /// server running. The original path therefore stays intact and serves as
+    /// the fallback.
+    fil: Option<crate::fil::Fil>,
+    /// Mirror of the machine, the only source for drawing.
+    ///
+    /// Filled by the worker thread when there is one, otherwise from the
+    /// machine on every frame. The drawing does not know which of the two paths
+    /// is active.
+    vitrine: crate::fil::Vitrine,
+    /// Permission to split the threads.
+    fil_permis: bool,
+    /// The last changes of state of the worker thread, with their time.
+    ///
+    /// The diagnostic panel lives in inspection mode, which fetches the machine
+    /// back: by the time one reads the state of the thread, it is always
+    /// stopped for that reason and never for the one being looked for. The
+    /// history keeps the earlier changes, which saves having to catch the
+    /// interface in the act.
+    bascules_du_fil: std::collections::VecDeque<(std::time::Instant, &'static str)>,
+    /// True when the right-click menu was drawn on the previous frame.
+    ///
+    /// Its commands touch the machine, so it is fetched back as soon as the
+    /// menu opens, before the user has had time to choose anything.
+    menu_ouvert: bool,
+    /// Empty machine kept aside, put in place of the real one while the worker
+    /// thread holds it. Its flash has zero length: it costs nothing, and the
+    /// `machine` field stays valid at all times, which leaves the whole rest of
+    /// the interface unchanged.
+    rechange: Option<Box<Machine>>,
 }
 
 impl TamagotchiApp {
@@ -366,7 +395,31 @@ impl TamagotchiApp {
                 "Capybara is ready, Paradise hardware emulation.",
             )
             .to_string();
-        let machine = Machine::new();
+        let mut machine = Box::new(Machine::new());
+        // What the emulator refreshes to keep the firmware from concluding that
+        // nothing has happened, when the console is asked to stay awake.
+        //
+        // The firmware counts idle time in the half-word at 0x18001BFE and
+        // compares it against the threshold at 0x18001C02. When the count wins,
+        // 0x00003260 sets bit 6 of 0x18001BFA, and on its next pass the scene
+        // machine reads that bit at 0x00001F1C, switches to the shutdown scene
+        // and winds the console down. Clearing the count once a second keeps it
+        // an order of magnitude below the threshold, and nothing else is
+        // touched: it is what a button press does, without the press.
+        //
+        // The address is the one this edition uses; another edition may count
+        // elsewhere. The count is the half-word that rises about twenty times a
+        // second while idle and returns to zero on a press.
+        machine.compteur_inactivite = vec![(0x1800_1BFE, 2)];
+        machine.horodatage_activite = Vec::new();
+        machine.drapeau_activite = Vec::new();
+        // One millisecond of console time per `run_frame` call. That is the
+        // granularity the loop had before the fast-forward: the real-time debt
+        // adjusts at that rate, and the melody is sampled at it. The probes and
+        // the tests keep the original behaviour — the ceiling defaults to
+        // zero.
+        machine.plafond_cycles =
+            crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as u64 / 1000;
 
         // Le serveur local reste eteint au demarrage. Il coute une copie de la
         // memoire d'ecran et un rapport de diagnostic a chaque image, pour un
@@ -453,16 +506,19 @@ impl TamagotchiApp {
             nouvel_emplacement: String::new(),
             derniere_ecriture: std::time::Instant::now(),
             angle_molette: 0.0,
-            note_courante: 0.0,
-            note_depuis: 0,
-            son_jouait: false,
+            molette_tenue: None,
+            suivi: crate::fil::SuiviNote::default(),
             derniere_recherche_voix: std::time::Instant::now(),
-            note_perimee: 0.0,
-            perimee_jusqu: 0,
             notes: Vec::new(),
             vitesse: 1.0,
             cycles_dus: 0.0,
             tray: None,
+            fil: None,
+            vitrine: crate::fil::Vitrine::default(),
+            fil_permis: true,
+            menu_ouvert: false,
+            bascules_du_fil: std::collections::VecDeque::new(),
+            rechange: Some(Self::machine_vide()),
         };
         // La console reprend ou elle en etait, comme un vrai boitier qu'on
         // rallume : le dump et l'emplacement du dernier lancement sont rouverts
@@ -612,6 +668,8 @@ impl TamagotchiApp {
                 fond_transparent: self.fond_transparent,
                 couleur_cle_active: self.couleur_cle_active,
                 couleur_cle: self.couleur_cle,
+                temps_hors_ligne: self.machine.temps_hors_ligne,
+                veille_interdite: self.machine.veille_interdite,
             },
         );
     }
@@ -636,6 +694,11 @@ impl TamagotchiApp {
         self.fond_transparent = partie.fond_transparent;
         self.couleur_cle_active = partie.couleur_cle_active;
         self.couleur_cle = partie.couleur_cle;
+        // Must be set before loading the dump: it is opening the save that
+        // consults this setting to decide whether to advance the clock by the
+        // time elapsed offline.
+        self.machine.temps_hors_ligne = partie.temps_hors_ligne;
+        self.machine.veille_interdite = partie.veille_interdite;
         self.i18n.set_language(if partie.langue == "en" {
             Language::En
         } else {
@@ -788,6 +851,157 @@ impl TamagotchiApp {
     /// prenne pas pour un appui long.
     const IMPULSION: u64 = 10_000_000;
 
+    /// State of the worker thread, or the reason it cannot run.
+    ///
+    /// Without this phrase a halving of the speed is indistinguishable from a
+    /// firmware doing more work: the throughput alone does not say which of the
+    /// two paths is active.
+    fn raison_du_fil(&self) -> &'static str {
+        if !self.fil_permis {
+            "single thread"
+        } else if self.fil.is_some() {
+            "worker running"
+        } else if self.mode != Mode::Jeu {
+            "single thread (inspection mode)"
+        } else if self.menu_ouvert {
+            "single thread (menu open)"
+        } else if self.saisie_sauvegarde.is_some() || self.suppression_demandee.is_some() {
+            "single thread (text field open)"
+        } else if self.uart_bridge.is_connected {
+            "single thread (serial link)"
+        } else if self.port_web.is_some() {
+            "single thread (local server)"
+        } else if self.vitesse <= 0.0 {
+            "single thread (paused)"
+        } else if self.rechange.is_none() {
+            "single thread (spare machine lost)"
+        } else {
+            "single thread (reason unknown)"
+        }
+    }
+
+    /// Records a change of state of the thread, if there is one.
+    fn suivre_le_fil(&mut self) {
+        let raison = self.raison_du_fil();
+        if self.bascules_du_fil.back().is_some_and(|(_, r)| *r == raison) {
+            return;
+        }
+        self.bascules_du_fil
+            .push_back((std::time::Instant::now(), raison));
+        // Six is enough: beyond that one goes back further than what is sought.
+        while self.bascules_du_fil.len() > 6 {
+            self.bascules_du_fil.pop_front();
+        }
+    }
+
+    /// Hands the machine to the worker thread, and reads its mirror.
+    ///
+    /// An empty shell takes the machine's place: the field stays valid, and the
+    /// whole rest of the interface keeps compiling and running without knowing
+    /// the real one is elsewhere. Nothing drawn in game mode reads it: the
+    /// drawing goes through the mirror.
+    fn confier_au_fil(&mut self, ctx: &Context) {
+        if self.fil.is_none() {
+            let Some(vide) = self.rechange.take() else {
+                return;
+            };
+            let machine = std::mem::replace(&mut self.machine, vide);
+            let historique = std::mem::take(&mut self.historique);
+            let reprises = std::mem::take(&mut self.reprises);
+            self.fil = Some(crate::fil::Fil::demarrer(
+                machine,
+                historique,
+                reprises,
+                self.suivi,
+                self.vitesse,
+                Self::COMMANDES,
+                ctx.clone(),
+            ));
+        }
+        // The mirror is fetched before anything else: the borrow of the thread
+        // closes here, and what follows is free to touch the other fields.
+        let vitesse = self.vitesse;
+        let paquet = self.fil.as_ref().map(|fil| {
+            fil.ordonner(crate::fil::Consigne::Vitesse(vitesse));
+            fil.lire()
+        });
+        // Until the thread has published anything the mirror is empty:
+        // adopting it would wipe the cycle counter and the button positions for
+        // one frame, and any press computed during that frame would be lost.
+        if let Some(mut v) = paquet.filter(|v| v.publie) {
+            // The notes are appended to those already waiting: they are handed
+            // to the buzzer in one block further down.
+            self.notes.append(&mut v.notes);
+            if v.reveil {
+                self.appuis.clear();
+                self.maintenus.clear();
+                self.tenus_distants.clear();
+                self.phases_encodeur.clear();
+            }
+            if let Some(m) = v.message.take() {
+                self.status_msg = Some(format!(
+                    "{} : {}",
+                    self.i18n
+                        .choisir("Sauvegarde non ecrite", "Save not written"),
+                    m
+                ));
+            }
+            // The screen flag is kept until the texture has been rebuilt:
+            // `lire` has already cleared it on the thread's side.
+            let a_refaire = self.vitrine.ecran_change;
+            self.vitrine = v;
+            self.vitrine.ecran_change |= a_refaire;
+        }
+    }
+
+    /// Takes the machine back from the worker thread, if it holds one.
+    ///
+    /// Blocks for the length of the slice in progress, a few milliseconds at
+    /// most. If the thread died of a panic the machine is lost: we say so and
+    /// carry on with the empty shell rather than panic in turn.
+    fn reprendre_la_machine(&mut self) {
+        let Some(fil) = self.fil.take() else {
+            return;
+        };
+        match fil.reprendre() {
+            Some(rendu) => {
+                let vide = std::mem::replace(&mut self.machine, rendu.machine);
+                self.rechange = Some(vide);
+                self.historique = rendu.historique;
+                self.reprises = rendu.reprises;
+                // The writer thread may have a save pending. Fall in behind
+                // it: otherwise an older version would land after the one about
+                // to be written here.
+                self.reprises.attendre_les_ecritures();
+                self.suivi = rendu.suivi;
+                let mut notes = rendu.notes;
+                self.notes.append(&mut notes);
+                self.debit_depart = (self.machine.cpu.cycles, std::time::Instant::now());
+            }
+            None => {
+                self.status_msg = Some(
+                    self.i18n
+                        .choisir(
+                            "Le fil d'emulation s'est arrete. Recharge la console.",
+                            "The emulation thread stopped. Reload the console.",
+                        )
+                        .to_string(),
+                );
+                self.machine.is_running = false;
+            }
+        }
+    }
+
+    /// Empty machine put in place of the real one while it works.
+    ///
+    /// Its flash has zero length: building it costs nothing, whereas
+    /// `Machine::new` reserves sixteen megabytes.
+    fn machine_vide() -> Box<Machine> {
+        let mut m = Machine::new();
+        m.bus.flash = crate::emulator::mmu::SpiFlash::new(0);
+        Box::new(m)
+    }
+
     /// Marque une broche comme tenue basse pour cette image.
     fn maintenir(&mut self, broche: u32) {
         self.maintenus.insert(broche);
@@ -810,7 +1024,10 @@ impl TamagotchiApp {
     /// tournant pas a la vitesse de la console, tenir trois secondes a la main
     /// ne fait pas trois secondes a ses yeux.
     fn presser_duree(&mut self, broche: u32, duree: u64) {
-        let fin = self.machine.cpu.cycles + duree;
+        // The counter comes from the mirror: the machine may have gone off to
+        // work on the other thread, and one frame's difference on a ten-million
+        // cycle pulse does not show.
+        let fin = self.vitrine.cycles + duree;
         // Un appui deja en cours n'est jamais raccourci.
         let entree = self.appuis.entry(broche).or_insert(fin);
         *entree = (*entree).max(fin);
@@ -819,18 +1036,64 @@ impl TamagotchiApp {
     /// Programme un cran d'encodeur, en quadrature.
     ///
     /// Les deux voies sont hautes au repos. Un cran les fait passer par la
-    /// sequence de Gray, dans un sens ou dans l'autre selon le signe. Une phase
-    /// par image de l'interface suffit : le firmware echantillonne l'encodeur
-    /// dans son interruption de base de temps.
+    /// Gray-code sequence, one way or the other depending on the sign. The
+    /// phases are then spread out over time — one per worker-thread slice, or
+    /// failing that one per frame — because the firmware samples the encoder in
+    /// its timebase interrupt and must see each transition separately.
     fn tourner_molette(&mut self, sens: i32) {
         const AVANT: [(bool, bool); 4] = [(false, true), (false, false), (true, false), (true, true)];
+        // Queue cap, in phases. Sixteen detents of lead is ample; beyond that,
+        // keyboard repeat fills faster than the console consumes and the lag
+        // grows without end. The oldest are then dropped: better to lose a past
+        // detent than to answer two seconds late.
+        const PLAFOND: usize = 64;
         let mut phases: Vec<(bool, bool)> = AVANT.to_vec();
         if sens < 0 {
             phases = phases.iter().map(|&(a, b)| (b, a)).collect();
         }
-        for phase in phases {
-            self.phases_encodeur.push_back(phase);
+        // The magnitude was ignored: only the sign counted, and a wheel turned
+        // five detents within one frame yielded just one.
+        for _ in 0..sens.unsigned_abs().min(8) {
+            while self.phases_encodeur.len() + phases.len() > PLAFOND {
+                self.phases_encodeur.pop_front();
+            }
+            for phase in &phases {
+                self.phases_encodeur.push_back(*phase);
+            }
         }
+    }
+
+    /// Detents owed since a held press began.
+    ///
+    /// The system's keyboard repeat does not suit a dial: its initial delay is
+    /// long, its rate fixed, and it varies from machine to machine. It is
+    /// replaced by our own, which accelerates — that is what gives the feel of
+    /// turning a knob rather than pressing a key.
+    ///
+    /// The figure returned is cumulative: the caller subtracts what it has
+    /// already emitted. A brief press therefore gives exactly one detent, and a
+    /// held one a steady series that does not depend on the frame rate.
+    fn crans_dus(ecoule: std::time::Duration) -> u32 {
+        // Before repeating starts.
+        const DELAI: f32 = 0.25;
+        // Starting rate and peak rate, in detents per second.
+        const DEPART: f32 = 8.0;
+        const POINTE: f32 = 24.0;
+        // Duration of the ramp between the two.
+        const MONTEE: f32 = 1.2;
+        let t = ecoule.as_secs_f32();
+        if t < DELAI {
+            return 1;
+        }
+        let dt = t - DELAI;
+        // Integral of the rate: the rate rises linearly, so the count follows
+        // a parabola and then a straight line.
+        let crans = if dt < MONTEE {
+            DEPART * dt + (POINTE - DEPART) * dt * dt / (2.0 * MONTEE)
+        } else {
+            (DEPART + POINTE) * MONTEE / 2.0 + POINTE * (dt - MONTEE)
+        };
+        1 + crans as u32
     }
 
     /// Toutes les broches de commande de la console.
@@ -847,10 +1110,20 @@ impl TamagotchiApp {
     /// n'est pas ecoulee. Les deux se cumulent : relacher le pointeur pendant
     /// une impulsion ne coupe pas l'appui avant terme.
     fn appliquer_entrees(&mut self) {
-        let reveil_demande = !self.appuis.is_empty()
-            || !self.maintenus.is_empty()
-            || !self.phases_encodeur.is_empty();
-        if reveil_demande && self.machine.reveiller_par_broche() {
+        let consigne = self.calculer_entrees();
+        if let Some(fil) = &self.fil {
+            fil.ordonner(consigne);
+            return;
+        }
+        let crate::fil::Consigne::Entrees {
+            basses,
+            encodeur,
+            reveil,
+        } = consigne
+        else {
+            return;
+        };
+        if reveil && self.machine.reveiller_par_broche() {
             // Le reset remet le compteur de cycles a zero. Les echeances des
             // impulsions appartenaient a l'ancien compteur et resteraient
             // sinon actives pendant une duree demesuree.
@@ -864,21 +1137,14 @@ impl TamagotchiApp {
             self.machine.relacher(Machine::ENCODEUR_2);
             return;
         }
-        let maintenant = self.machine.cpu.cycles;
-        self.appuis.retain(|_, fin| *fin > maintenant);
-        for broche in Self::COMMANDES {
-            let bas = self.maintenus.contains(&broche) || self.appuis.contains_key(&broche);
-            if bas {
-                self.machine.appuyer(broche);
+        for (i, broche) in Self::COMMANDES.iter().enumerate() {
+            if basses[i] {
+                self.machine.appuyer(*broche);
             } else {
-                self.machine.relacher(broche);
+                self.machine.relacher(*broche);
             }
         }
-        // Le clavier est lu avant cet appel, la coque et le navigateur apres :
-        // vider ici laisse les trois alimenter la tranche suivante, et un
-        // bouton relache cesse bien de tenir sa broche.
-        self.maintenus.clear();
-        if let Some((voie1, voie2)) = self.phases_encodeur.pop_front() {
+        if let Some(&(voie1, voie2)) = encodeur.first() {
             if voie1 {
                 self.machine.relacher(Machine::ENCODEUR_1);
             } else {
@@ -889,6 +1155,51 @@ impl TamagotchiApp {
             } else {
                 self.machine.appuyer(Machine::ENCODEUR_2);
             }
+        }
+    }
+
+    /// Wanted pin state for the current frame.
+    ///
+    /// Separated from applying it because both paths use it: on one thread we
+    /// apply immediately, on two we send the command. The press logic stays
+    /// here, the interface being the only one that knows the pointer, the
+    /// keyboard and commands from the browser.
+    ///
+    /// A pin is low while it is held, or while its pulse has not elapsed. The
+    /// two accumulate: releasing the pointer during a pulse does not cut the
+    /// press short.
+    fn calculer_entrees(&mut self) -> crate::fil::Consigne {
+        let reveil = !self.appuis.is_empty()
+            || !self.maintenus.is_empty()
+            || !self.phases_encodeur.is_empty();
+        let maintenant = self.vitrine.cycles;
+        self.appuis.retain(|_, fin| *fin > maintenant);
+        let mut basses = [false; 4];
+        for (i, broche) in Self::COMMANDES.iter().enumerate() {
+            basses[i] = self.maintenus.contains(broche) || self.appuis.contains_key(broche);
+        }
+        // The keyboard is read before this call, the shell and the browser
+        // after: clearing here lets all three feed the next slice, and a
+        // released button does stop holding its pin.
+        self.maintenus.clear();
+        // One wheel detent is four phases, and the queue released only one per
+        // frame: four frames per detent, fifteen detents a second at best.
+        // Keyboard repeat produces twice that, and the queue grew until a wake
+        // or a restore emptied it in one go — hence input that seemed lost.
+        //
+        // With a worker thread they are all sent: it spreads them, one per
+        // four-millisecond slice, which gives two hundred and fifty phases a
+        // second without depending on the frame rate. Without a thread, one
+        // phase per frame.
+        let encodeur: Vec<(bool, bool)> = if self.fil.is_some() {
+            self.phases_encodeur.drain(..).collect()
+        } else {
+            self.phases_encodeur.pop_front().into_iter().collect()
+        };
+        crate::fil::Consigne::Entrees {
+            basses,
+            encodeur,
+            reveil,
         }
     }
 
@@ -1004,6 +1315,10 @@ impl TamagotchiApp {
              pas executes  {}   debit {:.1} millions par seconde\n\
              vitesse       demandee {}   atteinte {:.2} fois le temps reel\n\
              cout interface {:.1} ms par image\n\
+             attente       {:.1}% du temps de console saute, {} avances\n\
+             fil           {}\n\
+             fil, before   {}\n\
+             activite      {}\n\
              moteur        {}\n\
              PC            {:#010x}   mode {}   PRIMASK {}\n\
              trames ecran  {}   instantanes {}\n\
@@ -1026,6 +1341,86 @@ impl TamagotchiApp {
             },
             self.debit / crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as f64,
             self.cout_ui,
+            {
+                // Share of console time gained by the fast-forward. Zero means
+                // the firmware never stops, and therefore that idle detection
+                // is of no use here.
+                let total = self.machine.cpu.cycles;
+                if total == 0 {
+                    0.0
+                } else {
+                    self.machine.cpu.cycles_sautes as f64 * 100.0 / total as f64
+                }
+            },
+            self.machine.cpu.sauts,
+            self.raison_du_fil(),
+            {
+                // The history of the changes. Opening the panel ends the worker
+                // thread, so the line above always reads "inspection mode": it
+                // cannot report what happened before one came to look. This one
+                // can.
+                let maintenant = std::time::Instant::now();
+                let mut sortie = String::new();
+                for (quand, raison) in &self.bascules_du_fil {
+                    if !sortie.is_empty() {
+                        sortie.push_str(" | ");
+                    }
+                    sortie.push_str(&format!(
+                        "{:.0} s ago: {}",
+                        maintenant.duration_since(*quand).as_secs_f32(),
+                        raison
+                    ));
+                }
+                if sortie.is_empty() {
+                    sortie.push_str("(no change)");
+                }
+                sortie
+            },
+            {
+                // What the watched addresses actually hold, and whether they
+                // are being watched at all. A setting that does nothing looks
+                // exactly like an address that is wrong, and an address listed
+                // while the menu entry is off looks exactly like one that is
+                // working: all three call for different next steps, so the
+                // state is spelt out rather than left to be inferred.
+                let mut sortie = String::new();
+                if !self.machine.veille_interdite {
+                    sortie.push_str("veille permise, rien n'est rafraichi ; ");
+                }
+                let lire = |m: &Machine, adresse: u32, largeur: u8| -> u32 {
+                    let o = (adresse.wrapping_sub(0x1800_0000)) as usize;
+                    let n = (largeur as usize).min(4);
+                    let d = &m.bus.sram.data;
+                    if o + n > d.len() {
+                        return 0;
+                    }
+                    let mut octets = [0u8; 4];
+                    octets[..n].copy_from_slice(&d[o..o + n]);
+                    u32::from_le_bytes(octets)
+                };
+                for (a, l) in &self.machine.compteur_inactivite {
+                    sortie.push_str(&format!("compteur {a:#010x}={:#x}  ", lire(&self.machine, *a, *l)));
+                }
+                for (a, l) in &self.machine.horodatage_activite {
+                    sortie.push_str(&format!("horodatage {a:#010x}={:#x}  ", lire(&self.machine, *a, *l)));
+                }
+                for (lieu, l, poser, effacer) in &self.machine.drapeau_activite {
+                    match self.machine.resoudre_lieu(lieu) {
+                        Some(a) => sortie.push_str(&format!(
+                            "drapeau {a:#010x}={:#x} pose {poser:#x} efface {effacer:#x}  ",
+                            lire(&self.machine, a, *l)
+                        )),
+                        None => sortie.push_str(&format!("drapeau {lieu:?} non resolu  ")),
+                    }
+                }
+                if self.machine.compteur_inactivite.is_empty()
+                    && self.machine.horodatage_activite.is_empty()
+                    && self.machine.drapeau_activite.is_empty()
+                {
+                    sortie.push_str("aucune adresse surveillee");
+                }
+                sortie
+            },
             self.moteur,
             self.machine.cpu.regs.pc,
             mode,
@@ -1085,38 +1480,11 @@ impl TamagotchiApp {
     /// n'a pas change, et au plus cinquante millisecondes : passe ce delai
     /// c'est que le firmware la joue vraiment.
     fn note_jouee(&mut self) -> f32 {
-        let joue = self.machine.son_en_cours();
-        // Le tableau des voix est cherche au debut de chaque son, et repris
-        // tant qu'il n'a rien donne. Une seule tentative ne suffit pas : au
-        // premier son la table peut n'etre pas encore allouee, et sur Jade
-        // Forest le drapeau de son reste leve si longtemps que le debut de son
-        // suivant, seule occasion de reessayer, n'arrivait jamais. La reprise
-        // est espacee d'une demi seconde, le balayage lisant toute la memoire
-        // vive.
-        if joue
-            && (!self.son_jouait
-                || (self.machine.voix.is_empty()
-                    && self.derniere_recherche_voix.elapsed().as_secs_f32() > 0.5))
-        {
-            self.machine.localiser_les_voix();
-            self.derniere_recherche_voix = std::time::Instant::now();
-        }
-        if joue && !self.son_jouait {
-            self.note_perimee = self.machine.note_courante();
-            self.perimee_jusqu = self.machine.cpu.cycles
-                + crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as u64 / 20;
-        }
-        self.son_jouait = joue;
-
-        let note = self.machine.note_courante();
-        if note > 0.0 && self.machine.cpu.cycles < self.perimee_jusqu {
-            if (note - self.note_perimee).abs() < 0.5 {
-                return 0.0;
-            }
-            // Une autre note est arrivee : la voix est a jour, plus de doute.
-            self.perimee_jusqu = 0;
-        }
-        note
+        crate::fil::suivre_la_note(
+            &mut self.machine,
+            &mut self.suivi,
+            &mut self.derniere_recherche_voix,
+        )
     }
 
     /// Recopie la memoire d'ecran de la console dans une texture.
@@ -1126,16 +1494,19 @@ impl TamagotchiApp {
     fn rafraichir_la_texture(&mut self, ctx: &Context) {
         // L'ecran est une texture : la retesseler en seize mille rectangles a
         // chaque image mangeait le temps qui doit aller a l'emulation.
-        if self.machine.periph.display.dirty || self.ecran.is_none() {
-            let d = &self.machine.periph.display;
-            let mut pixels = Vec::with_capacity(d.width * d.height);
+        if self.vitrine.ecran_change || self.ecran.is_none() {
+            let d = &self.vitrine;
+            let mut pixels = Vec::with_capacity(d.largeur * d.hauteur);
             for &brut in &d.vram {
                 let r = (((brut >> 11) & 0x1F) * 255 / 31) as u8;
                 let v = (((brut >> 5) & 0x3F) * 255 / 63) as u8;
                 let b = ((brut & 0x1F) * 255 / 31) as u8;
                 pixels.push(egui::Color32::from_rgb(r, v, b));
         }
-            let image = egui::ColorImage { size: [d.width, d.height], pixels };
+            if pixels.is_empty() {
+                return;
+            }
+            let image = egui::ColorImage { size: [d.largeur, d.hauteur], pixels };
             let options = egui::TextureOptions::NEAREST;
             match &mut self.ecran {
                 Some(texture) => texture.set(image, options),
@@ -1143,7 +1514,7 @@ impl TamagotchiApp {
                     self.ecran = Some(ctx.load_texture("ecran_console", image, options));
             }
         }
-            self.machine.periph.display.dirty = false;
+            self.vitrine.ecran_change = false;
             self.publier();
         }
     }
@@ -1169,11 +1540,13 @@ impl TamagotchiApp {
             &habits,
             // L'animation suit la broche, pas le pointeur : un appui au clavier
             // enfonce le bouton dessine comme un clic dessus.
+            // The levels come from the mirror: the machine may be working on
+            // the other thread. The order is that of COMMANDES.
             crate::ui::lcd_panel::Enfonces {
-                a: self.machine.broche_basse(Machine::BOUTON_A),
-                b: self.machine.broche_basse(Machine::BOUTON_B),
-                c: self.machine.broche_basse(Machine::BOUTON_C),
-                molette: self.machine.broche_basse(Machine::BOUTON_MOLETTE),
+                a: self.vitrine.broches[1],
+                b: self.vitrine.broches[3],
+                c: self.vitrine.broches[2],
+                molette: self.vitrine.broches[0],
             },
             self.souris,
         );
@@ -2046,7 +2419,11 @@ impl TamagotchiApp {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(self.i18n.choisir("Points de reprise", "Recovery points")).strong());
             ui.label(
-                egui::RichText::new(format!("{} points", self.reprises.points().len())).small(),
+                egui::RichText::new(match self.reprises.verrouilles() {
+                    0 => format!("{} points", self.reprises.points().len()),
+                    n => format!("{} points, {} verrouilles", self.reprises.points().len(), n),
+                })
+                .small(),
             );
         });
         if !self.reprises.actif() {
@@ -2078,8 +2455,8 @@ impl TamagotchiApp {
         }
         ui.label(
             egui::RichText::new(self.i18n.choisir(
-                "Cliquez sur une heure pour y ramener la console. Un point est pris chaque minute et garde jusqu'a douze heures.",
-                "Click a time to restore the console. A point is created every minute and kept for up to twelve hours.",
+                "Cliquez sur une heure pour y ramener la console. Un point est pris chaque minute et garde jusqu'a douze heures ; le cadenas en garde un pour toujours.",
+                "Click a time to restore the console. A point is created every minute and kept for up to twelve hours; the padlock keeps one forever.",
             ))
             .small()
             .color(egui::Color32::GRAY),
@@ -2088,6 +2465,7 @@ impl TamagotchiApp {
         let mut a_restaurer = None;
         let mut a_oublier = None;
         let mut a_exporter = None;
+        let mut a_verrouiller = None;
         egui::ScrollArea::vertical()
             .max_height(150.0)
             .id_salt("reprises")
@@ -2112,6 +2490,28 @@ impl TamagotchiApp {
                                 .small()
                                 .color(egui::Color32::GRAY),
                         );
+                        // The closed padlock marks a point that pruning can no
+                        // longer carry off. It stays until deleted by hand.
+                        let (dessin, explication) = if point.verrouille {
+                            (
+                                egui::RichText::new("\u{1F512}").color(egui::Color32::from_rgb(220, 170, 60)),
+                                self.i18n.choisir(
+                                    "Point verrouille : il ne sera jamais efface automatiquement. Cliquez pour le deverrouiller.",
+                                    "Locked point: it will never be pruned automatically. Click to unlock.",
+                                ),
+                            )
+                        } else {
+                            (
+                                egui::RichText::new("\u{1F513}").color(egui::Color32::GRAY),
+                                self.i18n.choisir(
+                                    "Verrouiller ce point pour qu'il reste indefiniment",
+                                    "Lock this point so it is kept indefinitely",
+                                ),
+                            )
+                        };
+                        if ui.small_button(dessin).on_hover_text(explication).clicked() {
+                            a_verrouiller = Some(indice);
+                        }
                         if ui
                             .small_button("^")
                             .on_hover_text(self.i18n.choisir("Exporter ce point vers un fichier", "Export this point to a file"))
@@ -2130,6 +2530,21 @@ impl TamagotchiApp {
         }
         if let Some(indice) = a_exporter {
             self.exporter_un_point(indice);
+        }
+        if let Some(indice) = a_verrouiller {
+            let pose = self.reprises.basculer_le_verrou(indice);
+            self.status_msg = Some(
+                if pose {
+                    self.i18n
+                        .choisir("Point verrouille : il sera garde indefiniment.", "Point locked: it will be kept indefinitely.")
+                } else {
+                    self.i18n.choisir(
+                        "Point deverrouille : il suivra de nouveau l'elagage.",
+                        "Point unlocked: it will be pruned like the others.",
+                    )
+                }
+                .to_string(),
+            );
         }
         if let Some(indice) = a_oublier {
             self.reprises.oublier(indice);
@@ -2695,9 +3110,12 @@ impl TamagotchiApp {
                 }
                 if fond.secondary_clicked() {
                     self.uart_bridge.refresh_ports();
+                    // The menu about to open will want the machine: fetch it
+                    // back on the next frame, before the user has been able to
+                    // choose anything.
+                    self.menu_ouvert = true;
                 }
 
-                self.rafraichir_la_texture(ctx);
                 self.dessiner_la_console(ctx, ui, zone);
 
                 // Clic droit sur la coque : le menu de la fenetre.
@@ -2718,6 +3136,8 @@ impl TamagotchiApp {
                 let mut exporter_l_etat = false;
                 let mut partie_voulue = None;
                 let mut basculer_le_son = false;
+                let mut basculer_le_temps = false;
+                let mut basculer_la_console = false;
                 let mut basculer_le_dessus = false;
                 let mut ouvrir_la_saisie = false;
                 let mut port_uart_voulu = None;
@@ -2903,6 +3323,79 @@ impl TamagotchiApp {
                             basculer_le_dessus = true;
                             ui.close_menu();
                         }
+                        // Time passing while the window is closed. The real
+                        // console ages in its drawer; here one may choose.
+                        let bouton = if self.machine.temps_hors_ligne {
+                            self.i18n.choisir(
+                                "Figer la console a la fermeture",
+                                "Pause the console when closed",
+                            )
+                        } else {
+                            self.i18n.choisir(
+                                "Laisser le temps passer hors ligne",
+                                "Let time pass while closed",
+                            )
+                        };
+                        // The console's own sleep. The tooltip says by which
+                        // means it is prevented, because there are two and they
+                        // do not give the same result: clearing the firmware's
+                        // idle count stops the shutdown at its source, while
+                        // the fallback merely catches the console once it has
+                        // already gone.
+                        let veille_par_compteur = !self.machine.compteur_inactivite.is_empty()
+                            || !self.machine.horodatage_activite.is_empty()
+                            || !self.machine.drapeau_activite.is_empty();
+                        if ui
+                            .button(if self.machine.veille_interdite {
+                                self.i18n.choisir(
+                                    "Laisser la console s'endormir",
+                                    "Let the console fall asleep",
+                                )
+                            } else {
+                                self.i18n.choisir(
+                                    "Garder la console eveillee",
+                                    "Keep the console awake",
+                                )
+                            })
+                            .on_hover_text(if !self.machine.veille_interdite {
+                                self.i18n.choisir(
+                                    "Le firmware eteint son ecran apres quelques minutes sans appui, comme sur la vraie machine. Actif : la console reste allumee.",
+                                    "The firmware turns its screen off after a few idle minutes, as on the real device. Turn this on to keep the console lit.",
+                                )
+                            } else if veille_par_compteur {
+                                self.i18n.choisir(
+                                    "Actif. Le compte d'inactivite du firmware est remis a zero chaque seconde, si bien qu'il n'atteint jamais son seuil et que la console ne decide pas de s'eteindre. Si elle s'eteint quand meme, l'adresse ne convient pas a cette edition.",
+                                    "On. The firmware's idle count is cleared every second, so it never reaches its threshold and the console does not decide to shut down. If it still shuts down, the address does not suit this edition.",
+                                )
+                            } else {
+                                self.i18n.choisir(
+                                    "Actif, mais sans rien a rafraichir : la console s'endort puis est rattrapee, ce qui ne fait que retarder et peut se voir.",
+                                    "On, but with nothing to refresh: the console falls asleep and is pulled back, which only delays it and may show.",
+                                )
+                            })
+                            .clicked()
+                        {
+                            basculer_la_console = true;
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button(bouton)
+                            .on_hover_text(if self.machine.temps_hors_ligne {
+                                self.i18n.choisir(
+                                    "Le personnage vieillit pendant que l'emulateur est ferme, comme sur la vraie machine.",
+                                    "The character ages while the emulator is closed, as on the real device.",
+                                )
+                            } else {
+                                self.i18n.choisir(
+                                    "Le monde est en pause tant que l'emulateur est ferme.",
+                                    "The world is paused while the emulator is closed.",
+                                )
+                            })
+                            .clicked()
+                        {
+                            basculer_le_temps = true;
+                            ui.close_menu();
+                        }
 
                         ui.separator();
 
@@ -2929,6 +3422,9 @@ impl TamagotchiApp {
                 }
                 // Menu referme : la prochaine ouverture repart repliee.
                 self.section_menu = if menu_dessine { section_ouverte } else { None };
+                // While the menu is drawn the machine stays here: its commands
+                // read and write it.
+                self.menu_ouvert |= menu_dessine;
                 if let Some(nom) = partie_voulue {
                     self.ouvrir_emplacement(nom);
                 }
@@ -2943,6 +3439,61 @@ impl TamagotchiApp {
                     if !self.audio.enabled {
                         self.audio.silence_buzzer();
                     }
+                    self.retenir_la_partie();
+                }
+                if basculer_la_console {
+                    // The menu was open, so the machine is here, not on the
+                    // worker thread.
+                    self.machine.veille_interdite = !self.machine.veille_interdite;
+                    self.status_msg = Some(
+                        if !self.machine.veille_interdite {
+                            self.i18n
+                                .choisir(
+                                    "La console pourra s'endormir, comme la vraie.",
+                                    "The console may fall asleep, like the real one.",
+                                )
+                                .to_string()
+                        } else if self.machine.compteur_inactivite.is_empty()
+                            && self.machine.horodatage_activite.is_empty()
+                            && self.machine.drapeau_activite.is_empty()
+                        {
+                            self.i18n
+                                .choisir(
+                                    "La console sera rattrapee apres s'etre endormie.",
+                                    "The console will be pulled back after falling asleep.",
+                                )
+                                .to_string()
+                        } else {
+                            self.i18n
+                                .choisir(
+                                    "La console ne s'endormira pas : la molette bouge d'elle meme de temps en temps.",
+                                    "The console will not fall asleep: the wheel moves by itself now and then.",
+                                )
+                                .to_string()
+                        },
+                    );
+                    self.retenir_la_partie();
+                }
+                if basculer_le_temps {
+                    // The menu was open, so the machine is here, not on the
+                    // worker thread. The setting only takes effect on the next
+                    // open, but it is written at once so as to survive an
+                    // abrupt close.
+                    self.machine.temps_hors_ligne = !self.machine.temps_hors_ligne;
+                    self.status_msg = Some(
+                        if self.machine.temps_hors_ligne {
+                            self.i18n.choisir(
+                                "La console vieillira pendant que l'emulateur est ferme.",
+                                "The console will age while the emulator is closed.",
+                            )
+                        } else {
+                            self.i18n.choisir(
+                                "La console sera figee des que l'emulateur se ferme.",
+                                "The console will be frozen while the emulator is closed.",
+                            )
+                        }
+                        .to_string(),
+                    );
                     self.retenir_la_partie();
                 }
                 if let Some(indice) = point_voulu {
@@ -2993,6 +3544,9 @@ impl eframe::App for TamagotchiApp {
     /// L'ecriture periodique est espacee d'une seconde : sans ce dernier
     /// passage, la derniere sauvegarde du jeu pourrait rester en memoire.
     fn on_exit(&mut self) {
+        // The machine may be on the worker thread: without taking it back it is
+        // the empty shell that would be written to disk.
+        self.reprendre_la_machine();
         self.uart_bridge.disconnect();
         let _ = self.machine.ecrire_sauvegarde();
         // Les reglages de son ont pu changer sans qu'on ouvre d'emplacement :
@@ -3109,13 +3663,27 @@ impl eframe::App for TamagotchiApp {
         // infermable. L'icone reste, elle met la fenetre au premier plan ou
         // quitte, et la fenetre ne disparait plus sous le tapis.
         let diagnostic_uart = self.mode == Mode::Inspection && self.onglet == Onglet::Uart;
-        self.machine.regler_diagnostic_uart(diagnostic_uart);
+        if self.fil.is_none() {
+            self.machine.regler_diagnostic_uart(diagnostic_uart);
+        }
         self.uart_bridge.regler_diagnostic(diagnostic_uart);
         let _dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
         self.last_frame_time = now;
 
-        // Auto repaint for 60 FPS emulator loop
-        ctx.request_repaint();
+        // Auto repaint for 60 FPS emulator loop.
+        //
+        // With a worker thread it is the thread that wakes the interface on
+        // every console frame. Here we set only a floor, for the shell's own
+        // animations: running at the display's rate when the console produces
+        // no frames was drawing for nothing.
+        if self.fil.is_some() {
+            // A floor of one display frame: it is also the rate at which the
+            // notes sampled by the thread are handed to the buzzer, and slices
+            // too far apart are audible.
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        } else {
+            ctx.request_repaint();
+        }
 
         // 1. Entrees. Une touche tenue tient la broche basse aussi longtemps
         //    qu'elle reste enfoncee : c'est ce que le jeu attend pour son appui
@@ -3124,11 +3692,16 @@ impl eframe::App for TamagotchiApp {
         // La console ne doit rien entendre pendant qu'un menu ou un champ de
         // saisie est ouvert : taper un nom de partie appuyait sur A et sur C,
         // et derouler le menu du clic droit faisait tourner la molette.
+        // `is_pointer_over_area` was here to catch the right-click menu, which
+        // `any_popup_open` does not count. But it is true as soon as the
+        // pointer hovers any egui area, tooltips included: a mouse resting on
+        // the window was enough to ignore the whole keyboard, with nothing to
+        // say so. The menu flag says exactly what was meant, and no more.
         let mut interface_occupee = ctx.wants_keyboard_input()
             || self.saisie_sauvegarde.is_some()
             || self.suppression_demandee.is_some()
             || ctx.memory(|m| m.any_popup_open())
-            || ctx.is_pointer_over_area();
+            || self.menu_ouvert;
         if interface_occupee {
             // Les broches tenues sont relachees : sans cela un bouton reste
             // enfonce au moment ou le menu s'ouvre le resterait pour toujours.
@@ -3157,16 +3730,45 @@ impl eframe::App for TamagotchiApp {
         let key_f10 = !interface_occupee && ctx.input(|i| i.key_pressed(Key::F10));
         // Fleche haut tourne vers la droite, fleche bas vers la gauche, comme
         // la molette de la console.
-        let molette = if interface_occupee {
+        let sens_tenu = if interface_occupee {
             0
         } else {
             let droite = self.touches.cles(crate::touches::Commande::TournerDroite);
             let gauche = self.touches.cles(crate::touches::Commande::TournerGauche);
             ctx.input(|i| {
-                (droite.iter().any(|k| i.key_pressed(*k)) as i32)
-                    - (gauche.iter().any(|k| i.key_pressed(*k)) as i32)
+                (droite.iter().any(|k| i.key_down(*k)) as i32)
+                    - (gauche.iter().any(|k| i.key_down(*k)) as i32)
             })
         };
+        let mut molette = 0;
+        if sens_tenu == 0 {
+            self.molette_tenue = None;
+        } else {
+            match &mut self.molette_tenue {
+                Some((sens, depuis, emis)) if *sens == sens_tenu => {
+                    let du = Self::crans_dus(depuis.elapsed());
+                    // Never more than four detents of debt: if the queue has
+                    // jammed we do not make up lost time with a burst, or the
+                    // wheel would bolt the moment it frees up.
+                    *emis = (*emis).max(du.saturating_sub(4));
+                    // Two detents of lead in the queue at most. Production
+                    // thereby matches consumption without losing anything: what
+                    // does not fit is simply left to the next frame.
+                    let place = 2usize.saturating_sub(self.phases_encodeur.len() / 4);
+                    let a_emettre = ((du.saturating_sub(*emis)) as usize).min(place) as u32;
+                    if a_emettre > 0 {
+                        molette = a_emettre as i32 * sens_tenu;
+                        *emis += a_emettre;
+                    }
+                }
+                _ => {
+                    // First detent on the press itself: a dial must never make
+                    // you wait for its first detent.
+                    self.molette_tenue = Some((sens_tenu, std::time::Instant::now(), 1));
+                    molette = sens_tenu;
+                }
+            }
+        }
         // Chaque touche tient sa broche tant qu'elle est enfoncee, et plusieurs
         // touches tenues ensemble donnent les combinaisons de la console :
         // molette maintenue plus B pour le menu special, A plus C pour la
@@ -3185,9 +3787,14 @@ impl eframe::App for TamagotchiApp {
         }
         if molette != 0 {
             self.tourner_molette(molette);
+            // The shell's wheel follows the keyboard as it follows the mouse.
+            self.angle_molette += molette as f32 * 24.0;
         }
 
         if key_f10 {
+            // Single-stepping writes the machine: it must be here, not on the
+            // worker thread, or we would be stepping the empty shell.
+            self.reprendre_la_machine();
             self.machine.is_running = false;
             self.machine.step();
         }
@@ -3269,13 +3876,53 @@ impl eframe::App for TamagotchiApp {
             self.maintenir(broche);
         }
 
+        // A live serial link forbids the fast-forward. Skipping delays when the
+        // firmware notices an incoming byte by up to eighty-five microseconds,
+        // which nothing on the console minds — but the transfer protocol at the
+        // other end of the wire counts its timeouts in real milliseconds, and a
+        // retry storm ending in a cancel is what that delay looks like from
+        // there.
+        self.machine.cpu.repos_actif =
+            self.machine.cpu.repos_permis && !self.uart_bridge.is_connected;
+
+        // Choosing the path. The worker thread only runs when nothing here
+        // needs the machine itself: game mode, no menu open, no text field, no
+        // serial link, no local server. Each of those situations reads or
+        // writes the machine from the interface, and falling back to one thread
+        // costs a frame.
+        let interface_exige_la_machine = self.menu_ouvert
+            || self.saisie_sauvegarde.is_some()
+            || self.suppression_demandee.is_some()
+            || ctx.memory(|m| m.any_popup_open());
+        // A halted console — unknown instruction, breakpoint, crash — must
+        // come back here: the halt message, the resume button and going
+        // back to a snapshot all live on this thread. Without that the worker
+        // thread falls asleep on a dead machine and the screen freezes with
+        // nothing to say so.
+        let arretee_ailleurs = self.fil.is_some() && !self.vitrine.en_marche;
+        let veut_fil = self.fil_permis
+            && self.mode == Mode::Jeu
+            && !arretee_ailleurs
+            && self.vitesse > 0.0
+            && self.port_web.is_none()
+            && !self.uart_bridge.is_connected
+            && !interface_exige_la_machine;
+        if veut_fil {
+            self.confier_au_fil(ctx);
+        } else {
+            self.reprendre_la_machine();
+        }
+        self.suivre_le_fil();
+
         self.appliquer_entrees();
         // Les octets deja arrives sont remis au controleur avant sa tranche
         // d'execution. Le port reste non bloquant, donc une liaison silencieuse
         // ne ralentit pas l'emulation.
-        self.uart_bridge.poll_serial(&mut self.machine.periph.uart);
+        if self.fil.is_none() {
+            self.uart_bridge.poll_serial(&mut self.machine.periph.uart);
+        }
         let debut_emulation = std::time::Instant::now();
-        if self.machine.is_running && self.vitesse > 0.0 {
+        if self.fil.is_none() && self.machine.is_running && self.vitesse > 0.0 {
             let debut = std::time::Instant::now();
             let limite = std::time::Duration::from_millis(self.budget_ms.max(1));
             // Une seconde de console vaut 96 millions de cycles : c'est ce que
@@ -3287,13 +3934,15 @@ impl eframe::App for TamagotchiApp {
             if self.vitesse.is_finite() {
                 self.cycles_dus += par_seconde * self.vitesse as f64 * _dt as f64;
                 // Au plus un quart de seconde de retard : au dela, on abandonne
-                // le rattrapage plutot que de partir en trombe.
-                self.cycles_dus = self.cycles_dus.min(par_seconde * 0.25);
+                // catching up rather than bolting. Below zero the debt stays
+                // negative: one frame's overshoot is given back to the next.
+                self.cycles_dus =
+                    self.cycles_dus.clamp(-par_seconde * 0.05, par_seconde * 0.25);
             } else {
                 self.cycles_dus = f64::INFINITY;
             }
             let depart = self.machine.cpu.cycles;
-            while ((self.machine.cpu.cycles - depart) as f64) < self.cycles_dus
+            while (self.machine.cpu.cycles.saturating_sub(depart) as f64) < self.cycles_dus
                 && debut.elapsed() < limite
             {
                 if !matches!(self.machine.run_frame(), crate::emulator::StepResult::Ok(_)) {
@@ -3312,15 +3961,19 @@ impl eframe::App for TamagotchiApp {
                 // releve par image n'en attraperait que des morceaux, dans le
                 // desordre.
                 let note = self.note_jouee();
-                if (note - self.note_courante).abs() > 0.5 {
-                    let duree = self.machine.cpu.cycles.saturating_sub(self.note_depuis);
-                    self.notes.push((self.note_courante, duree));
-                    self.note_courante = note;
-                    self.note_depuis = self.machine.cpu.cycles;
+                if (note - self.suivi.note_courante).abs() > 0.5 {
+                    let duree = self.machine.cpu.cycles.saturating_sub(self.suivi.note_depuis);
+                    self.notes.push((self.suivi.note_courante, duree));
+                    self.suivi.note_courante = note;
+                    self.suivi.note_depuis = self.machine.cpu.cycles;
                 }
             }
-            let faits = (self.machine.cpu.cycles - depart) as f64;
-            self.cycles_dus = (self.cycles_dus - faits).max(0.0);
+            let faits = self.machine.cpu.cycles.saturating_sub(depart) as f64;
+            // The overshoot is carried, not erased. The fast-forward jumps in
+            // blocks and always overshoots a little: forgetting the excess made
+            // the console gain time on every frame.
+            self.cycles_dus =
+                (self.cycles_dus - faits).max(-par_seconde * 0.05);
             self.historique.suivre(&self.machine);
             // Les points de reprise, eux, sont horodates et ecrits sur le
             // disque : un par minute, elagues avec l'age.
@@ -3329,11 +3982,20 @@ impl eframe::App for TamagotchiApp {
             // l'animation de la console s'arrete des qu'on lache la souris.
             ctx.request_repaint();
         }
-        // Recopie sans attendre les octets que le firmware vient d'emettre.
-        self.uart_bridge.poll_serial(&mut self.machine.periph.uart);
-        // La partie suit le jeu sur le disque : eteindre l'ordinateur ne coute
-        // plus rien, la console retrouve son personnage au prochain lancement.
-        self.tenir_la_sauvegarde();
+        if self.fil.is_none() {
+            // Copy across, without waiting, the bytes the firmware just sent.
+            self.uart_bridge.poll_serial(&mut self.machine.periph.uart);
+            // The save follows the game to disk: switching the computer off
+            // costs nothing, the console finds its character again on the next
+            // run. With a worker thread it takes care of this: the rate must
+            // follow emulation, not the display.
+            self.tenir_la_sauvegarde();
+            // The mirror is filled from the machine, as the thread would. All
+            // drawing goes through it, whichever path is taken.
+            crate::fil::garnir(&mut self.vitrine, &self.machine, Self::COMMANDES);
+            self.machine.periph.display.dirty = false;
+            self.vitrine.instantanes = self.historique.len();
+        }
 
         // Le buzzer de la console. On ne modelise pas le peripherique de sortie,
         // que le firmware n'atteint pas : on rend les frequences que son moteur
@@ -3341,13 +4003,36 @@ impl eframe::App for TamagotchiApp {
         // notes relevee pendant la tranche est rendue d'un bloc, a l'echelle du
         // temps reellement ecoule : l'ordre et les durees relatives sont donc
         // ceux de la console, meme quand l'emulation traine.
-        let reste = self.machine.cpu.cycles.saturating_sub(self.note_depuis);
-        if reste > 0 {
-            self.notes.push((self.note_courante, reste));
-            self.note_depuis = self.machine.cpu.cycles;
+        // The note in progress is closed here so that the slice is handed over
+        // whole. With a worker thread it keeps this tracking itself: the
+        // machine is not here and its counter means nothing.
+        if self.fil.is_none() {
+            let reste = self.machine.cpu.cycles.saturating_sub(self.suivi.note_depuis);
+            if reste > 0 {
+                self.notes.push((self.suivi.note_courante, reste));
+                self.suivi.note_depuis = self.machine.cpu.cycles;
+            }
         }
         if self.notes.iter().any(|n| n.0 > 0.0) {
-            self.audio.buzzer_notes(&self.notes, _dt.max(0.001));
+            // The duration comes from the notes themselves, not from the gap
+            // between two frames. The two were equivalent while the interface
+            // ran at a fixed rate; now that it only wakes on screen changes its
+            // gap varies, and stretched or squeezed the sound each time.
+            // Console time is exact by construction.
+            let cycles: u64 = self.notes.iter().map(|n| n.1).sum();
+            let par_seconde =
+                crate::emulator::peripherals::snsys::CYCLES_PAR_SECONDE as f32;
+            let allure = if self.vitesse.is_finite() && self.vitesse > 0.0 {
+                self.vitesse
+            } else {
+                1.0
+            };
+            let secondes = if cycles > 0 {
+                cycles as f32 / (par_seconde * allure)
+            } else {
+                _dt
+            };
+            self.audio.buzzer_notes(&self.notes, secondes.max(0.001));
             ctx.request_repaint();
         } else {
             self.audio.silence_buzzer();
@@ -3356,7 +4041,7 @@ impl eframe::App for TamagotchiApp {
 
         // La table des scenes, une fois pour toutes, des que la fenetre XIP est
         // programmee. Avant cela les pointeurs de noms ne visent rien.
-        if self.table_scenes.is_none() && self.machine.periph.xip.is_enabled() {
+        if self.fil.is_none() && self.table_scenes.is_none() && self.machine.periph.xip.is_enabled() {
             self.table_scenes = crate::emulator::scenes::TableScenes::reperer(
                 &self.machine.bus.flash.data,
                 self.machine.periph.xip.base,
@@ -3370,26 +4055,44 @@ impl eframe::App for TamagotchiApp {
         self.cout_ui = self.cout_ui * 0.9 + (image_ms - emulation_ms).max(0.0) * 0.1;
 
         // Debit reel, mesure sur une demi-seconde.
-        let ecoule = self.debit_depart.1.elapsed().as_secs_f64();
-        if ecoule >= 0.5 {
-            let faits = self.machine.cpu.cycles.saturating_sub(self.debit_depart.0);
-            self.debit = faits as f64 / ecoule;
-            self.debit_depart = (self.machine.cpu.cycles, std::time::Instant::now());
+        if self.fil.is_some() {
+            // The thread measures its own throughput: the cycle counter seen
+            // from here no longer moves, the machine not being present.
+            self.debit = self.vitrine.debit;
+            self.debit_depart = (self.vitrine.cycles, std::time::Instant::now());
+        } else {
+            let ecoule = self.debit_depart.1.elapsed().as_secs_f64();
+            if ecoule >= 0.5 {
+                let faits = self.machine.cpu.cycles.saturating_sub(self.debit_depart.0);
+                self.debit = faits as f64 / ecoule;
+                self.debit_depart = (self.machine.cpu.cycles, std::time::Instant::now());
+            }
         }
 
         // Support Drag and Drop of firmware files onto the emulator
-        ctx.input(|i| {
+        let fichier_depose = ctx.input(|i| {
             if let Some(dropped) = i.raw.dropped_files.first() {
-                if let Some(path) = &dropped.path {
-                    self.load_firmware(path.clone());
-                }
+                dropped.path.clone()
+            } else {
+                None
             }
         });
+        if let Some(chemin) = fichier_depose {
+            // Loading a dump writes the machine: it must be here.
+            self.reprendre_la_machine();
+            self.load_firmware(chemin);
+        }
 
         if self.papier_a_relire {
             self.papier_a_relire = false;
             self.recharger_le_papier(ctx);
         }
+        // The texture is rebuilt here, before drawing: in game mode the machine
+        // may have gone off to work, and the mirror is what feeds it.
+        self.rafraichir_la_texture(ctx);
+        // The menu flag is cleared for the frame that is starting; the drawing
+        // sets it again if it is still open.
+        self.menu_ouvert = false;
         self.appliquer_le_mode(ctx);
         self.dessiner_la_saisie(ctx);
         self.dessiner_la_suppression(ctx);

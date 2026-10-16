@@ -159,9 +159,12 @@ impl Default for Historique {
         Self {
             etats: std::collections::VecDeque::new(),
             profondeur: 12,
-            // Environ deux secondes d'emulation a vingt-cinq millions de pas
-            // par seconde : assez fin pour revenir juste avant un blocage.
-            ecart: 50_000_000,
+            // Two seconds of console time. The counter is in emulated cycles
+            // and the console runs ninety-six million per second, so the
+            // previous fifty million took a snapshot twice a second — each one
+            // copying RAM, program memory and every peripheral. That is a
+            // regular hitch for a safety net that need not be so fine.
+            ecart: 192_000_000,
             dernier: 0,
         }
     }

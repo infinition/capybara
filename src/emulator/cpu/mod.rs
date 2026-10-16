@@ -27,6 +27,69 @@ pub struct Cpu {
     /// change rien a ce que le firmware observe et rend le coeur nettement plus
     /// rapide.
     cycles_en_attente: u32,
+    /// Head address of the last tight loop crossed.
+    ///
+    /// `u32::MAX` means "none": it is not a reachable code address.
+    boucle_tete: u32,
+    /// Register state at the last pass through this loop's head.
+    boucle_regs: Registers,
+    /// Stack pointer of the tracked loop.
+    ///
+    /// A deeper loop — lower pointer — runs inside a function called from the
+    /// tracked one. It is not allowed to take its place: the firmware's wait
+    /// loop calls a function on every iteration, and the slightest backward
+    /// branch in that function replaced the tracked head, so the wait was never
+    /// compared against itself. That is exactly what `boucle_probe` showed: two
+    /// thirds of the time in a loop with identical registers, and not one
+    /// skip.
+    boucle_sp: u32,
+    /// Cycle count at the last pass through the tracked loop's head.
+    ///
+    /// Protection against deeper loops only holds while the tracked loop is
+    /// still running: between two passes through its head it may perfectly well
+    /// call a function containing loops of its own. But a short loop seen once
+    /// in a high-level function and then left must not forbid tracking anything
+    /// below it forever — that is how the TE wait, three call levels under the
+    /// main loop, stayed invisible.
+    boucle_vu_a: u64,
+    /// Iterations of this loop where the registers differed.
+    ///
+    /// Past `ECHECS_MAX` the loop is judged active and we stop watching it
+    /// until it is left: comparing and copying the registers is therefore paid
+    /// a handful of times per loop, not on every iteration of a memcpy.
+    boucle_echecs: u8,
+    /// Iterations elapsed since a loop was judged active.
+    ///
+    /// The verdict is not final: a loop may work for a while and then start
+    /// waiting. Without re-examination, three unlucky iterations at the start —
+    /// three SysTick interrupts, say — condemned a whole wait of several
+    /// thousand iterations.
+    boucle_recul: u16,
+    /// Cycles gained by the fast-forward, and the number of skips. For the
+    /// diagnostic: it is the only way to tell whether the firmware spends its
+    /// time waiting, and therefore whether the optimisation is worth anything.
+    pub cycles_sautes: u64,
+    pub sauts: u64,
+    /// Fast-forward switch.
+    ///
+    /// Idle recognition is conservative but it remains a heuristic: if a loop
+    /// polled a register whose read has a side effect, skipping it would change
+    /// behaviour. Clearing `repos_permis` puts the core back in its old
+    /// step-exact mode, which settles any doubt in two runs; the tests do so
+    /// through `Cpu::step_exact`.
+    ///
+    /// The interface also clears it on its own while a serial link is open. The
+    /// whole point of the fast-forward is to trade *when the firmware notices*
+    /// for speed, by up to `SAUT_MAXIMUM` cycles. That trade is free while the
+    /// console only talks to itself; it is not free when a transfer protocol on
+    /// the other end of a wire is counting the milliseconds. See
+    /// `repos_permis`.
+    pub repos_actif: bool,
+    /// What `repos_actif` should return to once nothing forbids it.
+    ///
+    /// Kept apart so the interface can switch the fast-forward off and back on
+    /// without losing the choice made at construction.
+    pub repos_permis: bool,
 }
 
 impl Default for Cpu {
@@ -43,7 +106,24 @@ impl Cpu {
             cycles: 0,
             is_halted: false,
             cycles_en_attente: 0,
+            boucle_tete: u32::MAX,
+            boucle_regs: Registers::default(),
+            boucle_sp: 0,
+            boucle_vu_a: 0,
+            boucle_echecs: 0,
+            boucle_recul: 0,
+            cycles_sautes: 0,
+            sauts: 0,
+            repos_actif: true,
+            repos_permis: true,
         }
+    }
+
+    /// Turns the idle fast-forward off for good: every instruction is then
+    /// executed, exactly as before the optimisation existed.
+    pub fn step_exact(&mut self) {
+        self.repos_actif = false;
+        self.repos_permis = false;
     }
 
     pub fn reset(&mut self, bus: &mut MemoryBus, periph: &mut Peripherals) {
@@ -51,6 +131,14 @@ impl Cpu {
         self.cycles = 0;
         self.is_halted = false;
         self.cycles_en_attente = 0;
+        self.boucle_tete = u32::MAX;
+        self.boucle_regs = Registers::default();
+        self.boucle_sp = 0;
+        self.boucle_vu_a = 0;
+        self.boucle_echecs = 0;
+        self.boucle_recul = 0;
+        self.cycles_sautes = 0;
+        self.sauts = 0;
 
         // Fetch initial SP from 0x00000000 / VTOR
         let sp = bus.read_u32(self.nvic.vtor, periph, &self.nvic);
@@ -145,6 +233,18 @@ impl Cpu {
             }
         }
 
+        // WFI and WFE. The decoder treated them as NOP: the core went straight
+        // back into the firmware's wait loop and interpreted it at full speed
+        // to do nothing. These two forms say exactly "nothing will happen until
+        // a peripheral speaks" — the one place in the model where we know for
+        // certain the clock can be advanced without executing.
+        if self.repos_actif && (w1 == 0xBF30 || w1 == 0xBF20) {
+            self.cycles += 1;
+            self.cycles_en_attente += 1;
+            let _ = self.sauter_le_temps(periph);
+            return StepResult::Ok(1);
+        }
+
         let result = if is_32 {
             Thumb32::execute(w1, w2, &mut self.regs, bus, periph, &mut self.nvic)
         } else {
@@ -169,6 +269,7 @@ impl Cpu {
                     self.cycles_en_attente = 0;
                     self.entretenir_peripheriques(ecoules, periph);
                 }
+                self.guetter_le_repos(pc, bus, periph);
                 StepResult::Ok(c)
             }
             StepResult::Breakpoint => StepResult::Breakpoint,
@@ -191,6 +292,197 @@ impl Cpu {
     /// Deux cent cinquante six cycles valent moins de trois microsecondes a
     /// 96 MHz, cent fois plus fin que la plus courte echeance du firmware.
     const GRAIN_PERIPHERIQUES: u32 = 256;
+
+    /// Longest backward branch still treated as a wait loop, in bytes.
+    ///
+    /// A polling loop fits in a few instructions: call or read, test a bit, go
+    /// back. Sixty-four bytes leave room for two or three register reads and
+    /// their tests. Beyond that it is real work, and `ECHECS_MAX` bounds what a
+    /// working loop costs if we watched it for nothing anyway.
+    const PORTEE_BOUCLE: u32 = 64;
+
+    /// Longest fast-forward, in cycles.
+    ///
+    /// Eight thousand one hundred and ninety-two cycles are about eighty-five
+    /// microseconds, roughly one byte's time at 115200 baud and a hundredth of
+    /// the firmware's shortest deadline. That is the most the firmware can lag
+    /// in noticing that a polled register changed, since the loop only rereads
+    /// it once the skip is over. The peripherals are serviced at the usual
+    /// granularity throughout: their progress is not approximated, only the
+    /// observation of it is.
+    const SAUT_MAXIMUM: u32 = 8192;
+
+    /// Consecutive iterations with differing registers before giving up on a
+    /// loop.
+    ///
+    /// A wait loop is recognised on the second iteration; a working loop never
+    /// will be. Three iterations settle it, and bound what the watching costs a
+    /// ten-thousand-iteration memcpy.
+    const ECHECS_MAX: u8 = 3;
+
+    /// Iterations to let pass before re-examining a loop judged active.
+    ///
+    /// Rare enough that comparing registers costs nothing on a working loop —
+    /// one iteration in sixty-four — and frequent enough that a wait misjudged
+    /// at the start is picked up after a few microseconds rather than never.
+    const RECUL: u16 = 64;
+
+    /// How long, in cycles, a tracked loop holds its place against deeper
+    /// loops.
+    ///
+    /// One iteration of the TE wait is a hundred and forty cycles, call
+    /// included; two thousand leave ample margin. A loop that has not come back
+    /// through its head for longer than that is no longer running: it has given
+    /// up control, and whatever runs below can be tracked.
+    const PROTECTION: u64 = 2048;
+
+    /// Recognises a wait loop and, where applicable, advances the clock
+    /// instead of interpreting it.
+    ///
+    /// The firmware spends most of its time waiting: it does one frame's work,
+    /// then spins in place until the next signal from the display or the
+    /// SysTick. Interpreting that loop at full speed amounts to emulating doing
+    /// nothing, conscientiously.
+    ///
+    /// Recognition is conservative. Three things are needed together: a short
+    /// backward branch, no store to memory during the whole iteration, and
+    /// registers strictly identical to the previous pass through the loop head.
+    /// An iteration meeting all three can produce no observable effect: the
+    /// next will do exactly the same, and will keep doing so until a peripheral
+    /// changes something. We can therefore jump straight to that moment.
+    ///
+    /// The cost is bounded per loop, not per iteration. The hot half, here,
+    /// does only two address comparisons and folds into `step`; everything else
+    /// lives in `observer_la_boucle`, out of line, reached only on a short
+    /// backward branch. An early version compared and copied the registers on
+    /// every iteration of every short loop, memcpy included: it taxed the whole
+    /// firmware to recognise its waits alone.
+    #[inline(always)]
+    fn guetter_le_repos(&mut self, pc_avant: u32, bus: &mut MemoryBus, periph: &mut Peripherals) {
+        let cible = self.regs.pc;
+        if cible >= pc_avant || pc_avant - cible > Self::PORTEE_BOUCLE {
+            return;
+        }
+        self.observer_la_boucle(cible, bus, periph);
+    }
+
+    /// Cold half of the detector: an iteration of a short loop headed at
+    /// `cible` has just closed.
+    ///
+    /// The order of the tests matters. A loop not yet tracked is recorded
+    /// without looking at the write flag: that flag was filled with no stack
+    /// floor in place, and it is true of the PUSH of any function called. An
+    /// early version consulted it first, and so never recorded a loop that
+    /// calls anything — which is to say the TE wait, which calls its pin read
+    /// on every iteration. The flag only means something from the second pass
+    /// on, once the floor is set.
+    #[inline(never)]
+    fn observer_la_boucle(&mut self, cible: u32, bus: &mut MemoryBus, periph: &mut Peripherals) {
+        if !self.repos_actif {
+            return;
+        }
+        let sp = self.regs.get_sp();
+        let vivante = self.cycles.wrapping_sub(self.boucle_vu_a) < Self::PROTECTION;
+        if self.boucle_tete != u32::MAX && vivante && sp < self.boucle_sp {
+            // Inner loop of a tracked loop that is still running: let it pass
+            // untouched, and without consuming the write flag, which belongs
+            // to the outer loop.
+            return;
+        }
+        if self.boucle_tete != cible || !vivante {
+            // New loop, or return to one left long ago: start over. The floor
+            // is set now; the flag accumulated so far means nothing and is
+            // cleared.
+            self.boucle_tete = cible;
+            self.boucle_sp = sp;
+            self.boucle_vu_a = self.cycles;
+            self.boucle_echecs = 0;
+            self.boucle_recul = 0;
+            bus.plancher_pile = sp;
+            bus.a_ecrit = false;
+            let etat = self.regs.clone();
+            self.boucle_regs = etat;
+            return;
+        }
+        self.boucle_vu_a = self.cycles;
+        if self.boucle_echecs >= Self::ECHECS_MAX {
+            // Loop judged active. We do not give up for good: now and then we
+            // retake the state and give the next iteration a chance. The frame
+            // wait lasts several thousand iterations; three interrupts landing
+            // at the start condemned all of it.
+            bus.a_ecrit = false;
+            self.boucle_recul += 1;
+            if self.boucle_recul >= Self::RECUL {
+                self.boucle_recul = 0;
+                self.boucle_echecs = Self::ECHECS_MAX - 1;
+                self.boucle_sp = sp;
+                bus.plancher_pile = sp;
+                let etat = self.regs.clone();
+                self.boucle_regs = etat;
+            }
+            return;
+        }
+        let a_ecrit = bus.a_ecrit;
+        bus.a_ecrit = false;
+        if a_ecrit {
+            // An iteration that stores above the floor is not idle. But it may
+            // be an interrupt handler that just ran, and the next iteration may
+            // be clean: count a failure and retake the state rather than give
+            // up. A loop that stores on every iteration reaches `ECHECS_MAX` in
+            // three and costs nothing thereafter.
+            self.boucle_echecs += 1;
+            let etat = self.regs.clone();
+            self.boucle_regs = etat;
+            return;
+        }
+        if self.regs == self.boucle_regs {
+            let saute = self.sauter_le_temps(periph);
+            // The skip just made the clock jump: the loop is still alive and
+            // must be marked as such, or the protection would lapse right
+            // after every skip.
+            self.boucle_vu_a = self.cycles;
+            if saute {
+                self.boucle_echecs = 0;
+                self.boucle_recul = 0;
+            } else {
+                // Nothing to skip because an interrupt is already pending
+                // without being takeable: no point insisting every iteration.
+            }
+        } else {
+            self.boucle_echecs += 1;
+            self.boucle_sp = sp;
+            bus.plancher_pile = sp;
+            let etat = self.regs.clone();
+            self.boucle_regs = etat;
+        }
+    }
+
+    /// Advances the clock without interpreting, while nothing can change.
+    ///
+    /// Peripherals are serviced at the usual granularity: what they count, they
+    /// count exactly as if the core had run. The loop stops as soon as an
+    /// interrupt becomes possible, or after `SAUT_MAXIMUM` cycles for waits
+    /// that break on a mere change in a polled register, with no interrupt.
+    fn sauter_le_temps(&mut self, periph: &mut Peripherals) -> bool {
+        if self.nvic.en_attente {
+            return false;
+        }
+        let grain = Self::GRAIN_PERIPHERIQUES;
+        let mut saute = 0u32;
+        while saute < Self::SAUT_MAXIMUM && !self.nvic.en_attente {
+            self.entretenir_peripheriques(grain, periph);
+            saute += grain;
+            if periph.dma.irq_a_lever {
+                periph.dma.irq_a_lever = false;
+                self.nvic
+                    .request_irq(crate::emulator::peripherals::dma::IRQ);
+            }
+        }
+        self.cycles += saute as u64;
+        self.cycles_sautes += saute as u64;
+        self.sauts += 1;
+        saute > 0
+    }
 
     /// Fait avancer tout ce qui vit au rythme des cycles.
     fn entretenir_peripheriques(&mut self, ecoules: u32, periph: &mut Peripherals) {

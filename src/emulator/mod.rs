@@ -2,6 +2,7 @@ pub mod aes;
 pub mod cpu;
 pub mod edition;
 pub mod etat;
+pub mod scribe;
 pub mod loader;
 pub mod reprises;
 pub mod mmu;
@@ -46,6 +47,16 @@ pub struct TraceRefus {
     pub chemin: Vec<u32>,
 }
 
+/// Where a watched flag lives.
+///
+/// Some are at a known address; others are reached through a pointer the
+/// firmware keeps, and move with it.
+#[derive(Clone, Debug)]
+pub enum Lieu {
+    Fixe(u32),
+    Indirect { pointeur: u32, decalage: u32 },
+}
+
 pub struct Machine {
     pub cpu: Cpu,
     pub bus: MemoryBus,
@@ -53,6 +64,18 @@ pub struct Machine {
     pub breakpoints: HashSet<u32>,
     pub is_running: bool,
     pub instructions_per_frame: u32,
+    /// Ceiling on console time for one `run_frame` call, in cycles.
+    ///
+    /// Zero disables it, and that is the default: the probes and the tests rely
+    /// on `instructions_per_frame` alone, and a call returning early would make
+    /// them execute far less than they asked for.
+    ///
+    /// The interface does set it. Now that the core can advance the clock
+    /// without interpreting, twenty thousand instructions spent in a wait are
+    /// worth four thousand skips, a third of a second of console time in one
+    /// go: real-time accounting and melody sampling then happened in enormous
+    /// blocks, and it was audible.
+    pub plafond_cycles: u64,
     /// Console de debug du firmware, telle qu'elle sortirait sur l'UART.
     ///
     /// Dans la boucle de formatage du printf, l'instruction 0x00001070 appelle
@@ -98,6 +121,87 @@ pub struct Machine {
     /// suppose de savoir quelle entree on a trouvee, ce qu'on ignore, et
     /// balayer a l'aveugle autour d'elle manquait le tableau une fois sur deux.
     pub voix: Vec<u32>,
+    /// Does time pass for the console while the emulator is closed?
+    ///
+    /// True by default, like the real device: the save carries a timestamp, and
+    /// the gap is added to the seconds counter on reopening. False makes the
+    /// counter resume exactly where it stopped. Read by `Sauvegarde::appliquer`,
+    /// so it must be set before `ouvrir_sauvegarde`.
+    pub temps_hors_ligne: bool,
+    /// Forbids the console from staying in deep sleep.
+    ///
+    /// The firmware falls asleep on its own after a few minutes without a
+    /// press: it programs the power manager, parks in a loop in PRAM and waits
+    /// for hardware. That is the real device's behaviour, and the screen goes
+    /// dark.
+    ///
+    /// With this flag the emulator brings the console back as soon as it
+    /// sleeps. When the idle counter below is known, nothing is woken at all:
+    /// the firmware never decides to sleep in the first place. Otherwise a
+    /// fallback applies, described at `sortir_de_veille`.
+    pub veille_interdite: bool,
+    /// Addresses of idle counters to clear, with their width in bytes.
+    ///
+    /// A counter of this shape rises while nothing happens and is reset by a
+    /// press. Clearing it now and then means the firmware never sees the count
+    /// reach its threshold.
+    ///
+    /// Nine candidates matching that signature were tried on the water edition
+    /// and none of them governed the shutdown, so nothing is set by default.
+    /// A matching signature is not proof.
+    pub compteur_inactivite: Vec<(u32, u8)>,
+    /// Phases of a synthetic wheel movement still to play, and the console
+    /// cycle at which the next one is due.
+    ///
+    /// Eleven candidate addresses were tried on the water edition — counters
+    /// rising while idle, counters cleared on a press, timestamps of the last
+    /// press — and none of them governed the shutdown. Rather than keep
+    /// guessing where the firmware keeps its idea of idleness, this feeds it
+    /// what it already understands: a real turn of the wheel.
+    ///
+    /// One detent forward and one back. The net effect on the game is nothing —
+    /// a list scrolls down a line and back up — but as far as the firmware is
+    /// concerned somebody touched the console, and whatever it uses to decide
+    /// it has been left alone is reset by its own code.
+    ///
+    /// Addresses of activity timestamps to refresh, with their width in bytes.
+    ///
+    /// The other way of writing the same idea, and the likelier one: rather
+    /// than counting up, the firmware records the second at which the last
+    /// press happened and compares `now - then` against a threshold. Such a
+    /// word does not move while idle and jumps to the current time on a press.
+    ///
+    /// Writing the seconds counter into it once a second means no time ever
+    /// appears to have passed since the last press. It is the firmware's own
+    /// mechanism, so nothing is forced and no scene is short-circuited.
+    ///
+    /// Both shapes are supported.
+    pub horodatage_activite: Vec<(u32, u8)>,
+    /// Flag bits to hold, as a place, a width, bits to set and bits to clear.
+    ///
+    /// The third shape, and the one that governs the water edition. Following
+    /// the calls out of the shutdown routine gave a chain of four gates, each
+    /// reading a bit and passing the decision inward:
+    ///
+    /// ```text
+    /// 0x10054CD2   [[0x18014038] + 20] bit 0 set    -> start winding down
+    /// 0x10030C98   a byte at [r7 + 29]              -> keep going
+    /// 0x1000FEAA   [0x18000BA0] bit 0 clear         -> first call
+    /// 0x1000FEC2   [0x18000BA0] bit 7 set           -> second call
+    /// ```
+    ///
+    /// Holding one of the inner ones is not enough: the firmware simply falls
+    /// through to the next. The outermost, at `0x10054CD2`, is the one worth
+    /// holding, and it is also the honest place to intervene — the inner ones
+    /// have already decided and are only choosing a route.
+    ///
+    /// Such a flag is invisible to a search for values that rise or that jump
+    /// to the clock, which is why three rounds of probing missed it.
+    pub drapeau_activite: Vec<(Lieu, u8, u32, u32)>,
+    /// Cycle of the last wake, to avoid retrying too often.
+    veille_dernier: u64,
+    /// Cycle of the last idle-counter clear.
+    derniere_relance: u64,
 }
 
 impl Default for Machine {
@@ -123,6 +227,7 @@ impl Machine {
             // Sans firmware charge, rien ne tourne.
             is_running: false,
             instructions_per_frame: 20_000,
+            plafond_cycles: 0,
             console: String::new(),
             firmware_path: None,
             device_key: None,
@@ -133,6 +238,13 @@ impl Machine {
             sauvegarde_active: None,
             revision_ecrite: 0,
             voix: Vec::new(),
+            temps_hors_ligne: true,
+            veille_interdite: false,
+            compteur_inactivite: Vec::new(),
+            horodatage_activite: Vec::new(),
+            drapeau_activite: Vec::new(),
+            veille_dernier: 0,
+            derniere_relance: 0,
             trace_refus: None,
             diagnostic_uart_actif: false,
             anneau_appels: vec![0; 256],
@@ -183,6 +295,18 @@ impl Machine {
         Ok(())
     }
 
+    /// Prepares the save without touching the disk.
+    ///
+    /// Encoding reads the machine and must happen here; the system call can
+    /// wait on another thread. It is the only way not to stop emulation once a
+    /// second on a machine whose antivirus inspects every file that goes by.
+    pub fn sauvegarde_a_confier(&mut self) -> Option<(std::path::PathBuf, Vec<u8>)> {
+        let chemin = self.sauvegarde_active.clone()?;
+        let octets = sauvegarde::Sauvegarde::depuis(self).encoder();
+        self.revision_ecrite = self.bus.flash.revision;
+        Some((chemin, octets))
+    }
+
     /// Attache l'etat courant a un nouvel emplacement sans recharger la flash
     /// ni redemarrer le firmware.
     pub fn creer_sauvegarde_depuis_etat(
@@ -210,6 +334,9 @@ impl Machine {
         // Meme raison que dans run_frame : le drapeau est teste ici, l'appel
         // n'a lieu que le jour ou il y a vraiment un reveil a appliquer.
         if self.periph.snsys.reveil_demande && self.reveil_materiel() {
+            return StepResult::Ok(1);
+        }
+        if self.entretenir_la_veille() {
             return StepResult::Ok(1);
         }
         self.cpu.step(&mut self.bus, &mut self.periph)
@@ -298,6 +425,10 @@ impl Machine {
             return StepResult::Halt;
         }
 
+        if self.entretenir_la_veille() {
+            return StepResult::Ok(1);
+        }
+
         // Sans point d'arret pose, il n'y a rien a chercher. La table est une
         // table de hachage : l'interroger a chaque instruction coutait un
         // hachage complet par pas, soit plus cher que le decodage lui meme, et
@@ -306,8 +437,13 @@ impl Machine {
         let poses = !self.breakpoints.is_empty();
 
         let par_trame = self.instructions_per_frame;
+        let plafond = self.plafond_cycles;
+        let depart_cycles = self.cpu.cycles;
         let mut executed = 0;
         while executed < par_trame {
+            if plafond != 0 && self.cpu.cycles.wrapping_sub(depart_cycles) >= plafond {
+                return StepResult::Ok(executed);
+            }
             let pc = self.cpu.regs.pc;
             if poses && self.breakpoints.contains(&pc) {
                 self.is_running = false;
@@ -575,18 +711,37 @@ impl Machine {
         if candidats.is_empty() {
             return;
         }
-        let mut meilleur: Vec<u32> = Vec::new();
+        // The largest group is counted first, then gathered once. The previous
+        // version built a vector per candidate only to keep one: as many
+        // allocations as addresses found, in a function already called at the
+        // start of every sound.
+        let mut tete = candidats[0];
+        let mut taille = 0usize;
         for &a in &candidats {
-            let groupe: Vec<u32> = candidats
+            let n = candidats
                 .iter()
-                .copied()
-                .filter(|&b| (b.max(a) - b.min(a)) % Self::TAILLE_VOIX == 0)
-                .collect();
-            if groupe.len() > meilleur.len() {
-                meilleur = groupe;
+                .filter(|&&b| (b.max(a) - b.min(a)) % Self::TAILLE_VOIX == 0)
+                .count();
+            if n > taille {
+                taille = n;
+                tete = a;
             }
         }
-        self.voix = meilleur;
+        self.voix = candidats
+            .into_iter()
+            .filter(|&b| (b.max(tete) - b.min(tete)) % Self::TAILLE_VOIX == 0)
+            .collect();
+    }
+
+    /// True while the retained addresses still carry the clock value.
+    ///
+    /// A few reads against a sweep of all of RAM: this is what allows the table
+    /// to be relocated only when it has actually moved, instead of redoing it
+    /// at the start of every sound.
+    pub fn voix_encore_valides(&self) -> bool {
+        self.voix
+            .iter()
+            .any(|&base| self.lire_sram_u32(base) == Self::HORLOGE_VOIX)
     }
 
     /// Frequence de la note en cours, zero au silence.
@@ -658,6 +813,33 @@ impl Machine {
             .unwrap_or(0)
     }
 
+    /// The firmware's scene machine, in RAM.
+    ///
+    /// `SCENE` holds the current scene, `PRECEDENTE` the one we came from, and
+    /// the low three bits of `PHASE` say where the cycle stands: 0 entering,
+    /// 1 running, 2 leaving. Writing a scene and clearing those bits amounts to
+    /// asking to enter it on the next pass.
+    pub const SCENE: u32 = 0x1800_1BF4;
+    pub const SCENE_PRECEDENTE: u32 = 0x1800_1BF8;
+    pub const SCENE_PHASE: u32 = 0x1800_1BFA;
+
+    fn lire_sram_u16(&self, adresse: u32) -> u16 {
+        let o = (adresse - 0x1800_0000) as usize;
+        let d = &self.bus.sram.data;
+        if o + 2 > d.len() {
+            return 0;
+        }
+        u16::from_le_bytes([d[o], d[o + 1]])
+    }
+
+    fn ecrire_sram_u16(&mut self, adresse: u32, valeur: u16) {
+        let o = (adresse - 0x1800_0000) as usize;
+        let d = &mut self.bus.sram.data;
+        if o + 2 <= d.len() {
+            d[o..o + 2].copy_from_slice(&valeur.to_le_bytes());
+        }
+    }
+
     fn lire_sram_u32(&self, adresse: u32) -> u32 {
         let o = (adresse - 0x1800_0000) as usize;
         let d = &self.bus.sram.data;
@@ -697,9 +879,227 @@ impl Machine {
     /// materiel, qui remet le coeur a zero. C'est ce que reproduit `appuyer`.
     pub const VEILLE_PROFONDE: std::ops::Range<u32> = 0x0000_23D0..0x0000_2434;
 
+    /// Keeps the console from shutting down, when it has been asked to.
+    ///
+    /// Called from both ways of advancing the machine. The maintenance used to
+    /// live in `run_frame` alone, so anything driven one instruction at a time
+    /// — the probes, and stepping from the keyboard — got the fallback without
+    /// the protection that exists to make the fallback unnecessary, and
+    /// reported that the setting did nothing.
+    ///
+    /// Rend vrai quand un reveil vient d'etre applique et que l'appelant doit
+    /// rendre la main sans interpreter.
+    fn entretenir_la_veille(&mut self) -> bool {
+        if !self.veille_interdite {
+            return false;
+        }
+        // Once a second of console time is ample: the firmware's delay is
+        // measured in minutes. With an address known the console simply never
+        // sleeps and the fallback below is never reached.
+        const RYTHME: u64 = peripherals::snsys::CYCLES_PAR_SECONDE as u64;
+        // The comparison is two-sided. A wake by reset puts the cycle counter
+        // back to zero while this marker keeps a large value: subtracting
+        // saturates at zero for ever after and the refresh never runs again. A
+        // counter that has gone backwards means the clock restarted, so start
+        // over.
+        let ecoule = self.cpu.cycles.wrapping_sub(self.derniere_relance);
+        if self.cpu.cycles < self.derniere_relance || ecoule >= RYTHME {
+            self.derniere_relance = self.cpu.cycles;
+            self.tenir_eveille();
+        }
+        // Fallback, for images whose address is unknown: try to come back to
+        // the previous scene; failing that, wake as a button press would, which
+        // is a reset and returns to the clock screen. It only delays the
+        // shutdown, so it is throttled.
+        self.sortir_de_veille()
+    }
+
+    /// Keeps the firmware from concluding that nothing has happened.
+    ///
+    /// Counters go to zero, timestamps go to the current second, flag bits are
+    /// held: either way the firmware sees no elapsed idle time. Exactly what a
+    /// button press would do, without the press.
+    fn tenir_eveille(&mut self) {
+        for (adresse, largeur) in self.compteur_inactivite.clone() {
+            self.ecrire_sram_petit_boutiste(adresse, largeur, 0);
+        }
+        let maintenant = self.periph.snsys.secondes;
+        for (adresse, largeur) in self.horodatage_activite.clone() {
+            self.ecrire_sram_petit_boutiste(adresse, largeur, maintenant);
+        }
+        // The flags are handled twice over. The value in RAM is corrected, so
+        // that anything reading it by other means agrees; and the bus is told to
+        // force the same bits as the core reads them, which is what actually
+        // settles it. Writing alone lost the race: the firmware sets its flag
+        // and reads it back a few instructions later, long before the next
+        // refresh comes round.
+        self.bus.masques_lecture.clear();
+        for (lieu, largeur, poser, effacer) in self.drapeau_activite.clone() {
+            let Some(adresse) = self.resoudre_lieu(&lieu) else {
+                continue;
+            };
+            let actuel = self.lire_sram_petit_boutiste(adresse, largeur);
+            let voulu = (actuel | poser) & !effacer;
+            if voulu != actuel {
+                self.ecrire_sram_petit_boutiste(adresse, largeur, voulu);
+            }
+            for k in 0..(largeur as u32).min(4) {
+                let p = ((poser >> (k * 8)) & 0xFF) as u8;
+                let e = ((effacer >> (k * 8)) & 0xFF) as u8;
+                if p != 0 || e != 0 {
+                    self.bus.masques_lecture.push((adresse.wrapping_add(k), p, e));
+                }
+            }
+        }
+    }
+
+    /// Turns a place into the address it names right now.
+    ///
+    /// The outermost gate does not live at a fixed address: the firmware keeps
+    /// a pointer at `0x18014038` and the byte of interest sits twenty bytes
+    /// into whatever it points at. That pointer moves, so it has to be followed
+    /// each time rather than resolved once.
+    pub fn resoudre_lieu(&self, lieu: &Lieu) -> Option<u32> {
+        match *lieu {
+            Lieu::Fixe(a) => Some(a),
+            Lieu::Indirect { pointeur, decalage } => {
+                let base = self.lire_sram_petit_boutiste(pointeur, 4);
+                // A pointer the firmware has not filled in yet, or one that
+                // leads outside RAM, names nothing worth writing to.
+                if !(0x1800_0000..0x1802_0000).contains(&base) {
+                    return None;
+                }
+                Some(base.wrapping_add(decalage))
+            }
+        }
+    }
+
+    /// A word of RAM, for tools that need to follow a pointer.
+    pub fn lire_mot_sram(&self, adresse: u32) -> u32 {
+        self.lire_sram_petit_boutiste(adresse, 4)
+    }
+
+    /// A byte of RAM, likewise.
+    pub fn lire_octet_sram(&self, adresse: u32) -> u8 {
+        self.lire_sram_petit_boutiste(adresse, 1) as u8
+    }
+
+    /// Reads `largeur` bytes of RAM little-endian, zero outside it.
+    fn lire_sram_petit_boutiste(&self, adresse: u32, largeur: u8) -> u32 {
+        let o = (adresse.wrapping_sub(0x1800_0000)) as usize;
+        let n = (largeur as usize).min(4);
+        let d = &self.bus.sram.data;
+        if o + n > d.len() {
+            return 0;
+        }
+        let mut octets = [0u8; 4];
+        octets[..n].copy_from_slice(&d[o..o + n]);
+        u32::from_le_bytes(octets)
+    }
+
+    /// Writes `valeur` little-endian over `largeur` bytes of RAM, ignoring
+    /// anything that falls outside it.
+    fn ecrire_sram_petit_boutiste(&mut self, adresse: u32, largeur: u8, valeur: u32) {
+        let o = (adresse.wrapping_sub(0x1800_0000)) as usize;
+        let n = (largeur as usize).min(4);
+        let d = &mut self.bus.sram.data;
+        if o + n <= d.len() {
+            d[o..o + n].copy_from_slice(&valeur.to_le_bytes()[..n]);
+        }
+    }
+
+    /// Brings the console out of sleep, by returning to the caller if possible.
+    fn sortir_de_veille(&mut self) -> bool {
+        if !self.en_veille_profonde() {
+            return false;
+        }
+        // A tenth of a second of console time between attempts. If the trick
+        // does not take, the firmware goes straight back to sleep: without this
+        // brake we would retry thousands of times a second, which cost half the
+        // speed for nothing.
+        const REPOS: u64 = peripherals::snsys::CYCLES_PAR_SECONDE as u64 / 10;
+        // Same two-sided test as the idle clear: a wake by reset restarts the
+        // cycle counter, and a one-sided comparison would then lock this out.
+        if self.veille_dernier != 0
+            && self.cpu.cycles >= self.veille_dernier
+            && self.cpu.cycles - self.veille_dernier < REPOS
+        {
+            return false;
+        }
+        self.veille_dernier = self.cpu.cycles;
+        if self.ecourter_la_veille() {
+            return true;
+        }
+        if self.reveiller_par_broche() {
+            return true;
+        }
+        false
+    }
+
     /// Vrai quand le coeur est gare dans cette boucle.
     pub fn en_veille_profonde(&self) -> bool {
         self.periph.pmu.deep_sleep_active || Self::VEILLE_PROFONDE.contains(&self.cpu.regs.pc)
+    }
+
+    /// Brings the console back from sleep without resetting it.
+    ///
+    /// The hardware wake is a reset: RAM survives, but the firmware restarts
+    /// from its vector and lands on the clock screen. For anyone who only wants
+    /// the console to stay lit on the current scene, that misses the point.
+    ///
+    /// The firmware reached its wait loop through a call, so the link register
+    /// holds the sleep routine's return address. Sending the core there amounts
+    /// to making that routine an empty function: the caller carries on where it
+    /// was, on the same scene, with nothing reinitialised.
+    ///
+    /// Returns false if the link does not look like a code address — the loop
+    /// may have overwritten it with a call of its own. The caller then falls
+    /// back on the hardware wake, poorer but safe.
+    pub fn ecourter_la_veille(&mut self) -> bool {
+        // The shortcut only means anything if the core is parked in the loop:
+        // that is the one situation where the link is the return we want.
+        if !Self::VEILLE_PROFONDE.contains(&self.cpu.regs.pc) {
+            return false;
+        }
+        let lien = self.cpu.regs.lr;
+        let cible = lien & !1;
+        let en_code = cible <= mmu::map::PRAM_END
+            || (mmu::map::ICACHE_BASE..=mmu::map::ICACHE_END).contains(&cible);
+        // The Thumb bit must be set: the core knows no other instruction set,
+        // and an even value is not a return address.
+        if (lien & 1) == 0 || !en_code {
+            return false;
+        }
+        self.periph.pmu.declencher_reveil_broche();
+        self.periph.snsys.reveil_demande = false;
+        self.cpu.regs.pc = cible;
+        self.rappeler_la_scene();
+        true
+    }
+
+    /// Re-requests the scene from before the console fell asleep.
+    ///
+    /// Returning to the caller is not enough: the scene machine has entered its
+    /// power-down scene, and that scene's loop handler calls the sleep routine
+    /// again on every pass. The core therefore came out of sleep only to go
+    /// straight back in — five thousand times in a few minutes, at half speed,
+    /// the screen still dark.
+    ///
+    /// So the previous scene is written back and the phase reset to entry,
+    /// which amounts to asking to enter it on the next pass. The scene left
+    /// behind is not unwound cleanly — whatever it took on the heap stays there
+    /// — but the power-down scene takes next to nothing, and this is the only
+    /// lever available without knowing the firmware's idle counter.
+    fn rappeler_la_scene(&mut self) {
+        let precedente = self.lire_sram_u16(Self::SCENE_PRECEDENTE);
+        let courante = self.lire_sram_u16(Self::SCENE);
+        // A missing or identical predecessor leads nowhere.
+        if precedente == 0xFFFF || precedente == courante {
+            return;
+        }
+        self.ecrire_sram_u16(Self::SCENE, precedente);
+        let phase = self.lire_sram_u16(Self::SCENE_PHASE);
+        self.ecrire_sram_u16(Self::SCENE_PHASE, phase & !0x0007);
     }
 
     /// Reveille le coeur par une entree utilisateur et indique si un reveil a

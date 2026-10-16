@@ -2,6 +2,7 @@ pub mod app;
 pub mod demarrage;
 pub mod audio;
 pub mod emulator;
+pub mod fil;
 pub mod gui;
 pub mod hw_bridge;
 pub mod i18n;

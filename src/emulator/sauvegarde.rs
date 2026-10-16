@@ -130,6 +130,11 @@ impl Sauvegarde {
     /// Tamagotchi a faim quand on le retrouve. On ajoute donc au compteur
     /// enregistre l'ecart entre l'horodatage du fichier et l'heure courante.
     ///
+    /// Unless `machine.temps_hors_ligne` is false: the counter then resumes
+    /// exactly where it stopped, and closing the window pauses the world. The
+    /// alarm is armed either way, otherwise the firmware would take the reopen
+    /// for a fresh battery and ask for the time again.
+    ///
     /// Si l'alarme etait armee et que son echeance est passee pendant ce temps,
     /// on la fait sonner : le firmware retrouvera au demarrage la trace d'un
     /// reveil, et reprendra la partie au lieu de croire a une pile neuve.
@@ -138,7 +143,11 @@ impl Sauvegarde {
         if self.horodatage == 0 && self.compteur == 0 {
             return;
         }
-        let ecoule = maintenant().saturating_sub(self.horodatage);
+        let ecoule = if machine.temps_hors_ligne {
+            maintenant().saturating_sub(self.horodatage)
+        } else {
+            0
+        };
         machine.periph.snsys.secondes =
             self.compteur.saturating_add(ecoule.min(u32::MAX as u64) as u32);
         machine.periph.snsys.poser_registres(&self.registres_systeme);
@@ -544,6 +553,19 @@ pub struct DernierePartie {
     pub couleur_cle_active: bool,
     #[serde(default = "magenta")]
     pub couleur_cle: [u8; 3],
+    /// Time keeps passing for the console while the window is closed.
+    ///
+    /// This is the real device's behaviour and the default: a Tamagotchi left
+    /// in a drawer ages. Turning it off pauses the world on close, which is
+    /// what someone wants who cannot leave the emulator running and would
+    /// rather not find their character neglected.
+    #[serde(default = "vrai")]
+    pub temps_hors_ligne: bool,
+    /// The console must not stay in deep sleep.
+    ///
+    /// False by default: sleeping is the real device's behaviour.
+    #[serde(default)]
+    pub veille_interdite: bool,
 }
 
 /// Couleur de transparence par defaut. Un magenta franc, qui n'apparait ni
@@ -587,6 +609,8 @@ impl Default for DernierePartie {
             couleur_cle_active: false,
             couleur_cle: magenta(),
             langue: langue_par_defaut(),
+            temps_hors_ligne: true,
+            veille_interdite: false,
         }
     }
 }

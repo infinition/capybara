@@ -520,6 +520,72 @@ impl Thumb16 {
         periph: &mut Peripherals,
         nvic: &mut Nvic,
     ) -> StepResult {
+        // PUSH and POP first. They are the two commonest forms in this group —
+        // every function call runs a pair — yet they sat behind six mask tests.
+        // Their ranges, 0xB4xx-0xB5xx and 0xBCxx-0xBDxx, overlap none of the
+        // forms moved below, so the order changes nothing that gets decoded.
+        //
+        // The words are gathered, then stored in one go. The array runs from
+        // the low address to the high one, the stack's own order: low registers
+        // at the bottom, LR or PC at the top.
+
+        // PUSH: 1011 010 m reg_list
+        if (w & 0xFE00) == 0xB400 {
+            let has_lr = (w & 0x0100) != 0;
+            let list = w & 0xFF;
+            let mut mots = [0u32; 9];
+            let mut n = 0usize;
+            for i in 0..8u8 {
+                if (list & (1 << i)) != 0 {
+                    mots[n] = regs.get_reg(i);
+                    n += 1;
+                }
+            }
+            if has_lr {
+                mots[n] = regs.lr;
+                n += 1;
+            }
+            let sp = regs.get_sp().wrapping_sub(4 * n as u32);
+            if !bus.ecrire_mots(sp, &mots[..n]) {
+                let mut a = sp;
+                for v in &mots[..n] {
+                    bus.write_u32(a, *v, periph, nvic);
+                    a = a.wrapping_add(4);
+                }
+            }
+            regs.set_sp(sp);
+            return StepResult::Ok(2);
+        }
+
+        // POP: 1011 110 p reg_list
+        if (w & 0xFE00) == 0xBC00 {
+            let has_pc = (w & 0x0100) != 0;
+            let list = w & 0xFF;
+            let n = list.count_ones() as usize + has_pc as usize;
+            let sp = regs.get_sp();
+            let mut mots = [0u32; 9];
+            if !bus.lire_mots(sp, &mut mots[..n]) {
+                let mut a = sp;
+                for m in mots[..n].iter_mut() {
+                    *m = bus.read_u32(a, periph, nvic);
+                    a = a.wrapping_add(4);
+                }
+            }
+            let mut k = 0usize;
+            for i in 0..8u8 {
+                if (list & (1 << i)) != 0 {
+                    regs.set_reg(i, mots[k]);
+                    k += 1;
+                }
+            }
+            if has_pc {
+                // The Thumb bit is not part of the address.
+                regs.pc = mots[k] & !1;
+            }
+            regs.set_sp(sp.wrapping_add(4 * n as u32));
+            return StepResult::Ok(2);
+        }
+
         // Adjust SP: 1011 0000 s imm7
         if (w & 0xFF00) == 0xB000 {
             let is_sub = (w & 0x0080) != 0;
@@ -586,48 +652,6 @@ impl Thumb16 {
             return StepResult::Ok(1);
         }
 
-        // PUSH: 1011 010 m reg_list
-        if (w & 0xFE00) == 0xB400 {
-            let has_lr = (w & 0x0100) != 0;
-            let list = w & 0xFF;
-            let mut sp = regs.get_sp();
-
-            if has_lr {
-                sp -= 4;
-                bus.write_u32(sp, regs.lr, periph, nvic);
-            }
-            for i in (0..8).rev() {
-                if (list & (1 << i)) != 0 {
-                    sp -= 4;
-                    bus.write_u32(sp, regs.get_reg(i), periph, nvic);
-                }
-            }
-            regs.set_sp(sp);
-            return StepResult::Ok(2);
-        }
-
-        // POP: 1011 110 p reg_list
-        if (w & 0xFE00) == 0xBC00 {
-            let has_pc = (w & 0x0100) != 0;
-            let list = w & 0xFF;
-            let mut sp = regs.get_sp();
-
-            for i in 0..8 {
-                if (list & (1 << i)) != 0 {
-                    let v = bus.read_u32(sp, periph, nvic);
-                    regs.set_reg(i, v);
-                    sp += 4;
-                }
-            }
-            if has_pc {
-                let pc_val = bus.read_u32(sp, periph, nvic);
-                regs.pc = pc_val & !1;
-                sp += 4;
-            }
-            regs.set_sp(sp);
-            return StepResult::Ok(2);
-        }
-
         StepResult::Ok(1)
     }
 
@@ -641,20 +665,44 @@ impl Thumb16 {
         let is_ldm = (w & 0x0800) != 0;
         let rn = ((w >> 8) & 0x7) as u8;
         let list = w & 0xFF;
-        let mut addr = regs.get_reg(rn);
+        let base = regs.get_reg(rn);
+        let n = list.count_ones() as usize;
+        let mut mots = [0u32; 8];
 
-        for i in 0..8 {
-            if (list & (1 << i)) != 0 {
-                if is_ldm {
-                    let v = bus.read_u32(addr, periph, nvic);
-                    regs.set_reg(i, v);
-                } else {
-                    bus.write_u32(addr, regs.get_reg(i), periph, nvic);
+        if is_ldm {
+            if !bus.lire_mots(base, &mut mots[..n]) {
+                let mut a = base;
+                for m in mots[..n].iter_mut() {
+                    *m = bus.read_u32(a, periph, nvic);
+                    a = a.wrapping_add(4);
                 }
-                addr += 4;
+            }
+            let mut k = 0usize;
+            for i in 0..8u8 {
+                if (list & (1 << i)) != 0 {
+                    regs.set_reg(i, mots[k]);
+                    k += 1;
+                }
+            }
+        } else {
+            let mut k = 0usize;
+            for i in 0..8u8 {
+                if (list & (1 << i)) != 0 {
+                    mots[k] = regs.get_reg(i);
+                    k += 1;
+                }
+            }
+            if !bus.ecrire_mots(base, &mots[..n]) {
+                let mut a = base;
+                for v in &mots[..n] {
+                    bus.write_u32(a, *v, periph, nvic);
+                    a = a.wrapping_add(4);
+                }
             }
         }
-        regs.set_reg(rn, addr);
+        // Unconditional writeback, as before: the model does not handle the
+        // case where the base register appears in the list.
+        regs.set_reg(rn, base.wrapping_add(4 * n as u32));
         StepResult::Ok(2)
     }
 
