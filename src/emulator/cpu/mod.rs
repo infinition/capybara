@@ -211,6 +211,9 @@ impl Cpu {
             self.nvic
                 .request_irq(crate::emulator::peripherals::adc_pile::IRQ);
         }
+        // Modele de timer herite (LEGACY_TIMERS, 0x40040000) : le firmware ne
+        // l'arme jamais, cette IRQ 16 ne part donc pas. Ce ne sont pas les
+        // CT32B (IRQ 38..45), qui ne sont pas modelises.
         if periph.timers.tick(ecoules) {
             self.nvic.request_irq(16);
         }

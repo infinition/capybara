@@ -1,3 +1,11 @@
+/// Registres systeme herites, branches sur 0x40004000 (ancienne etiquette
+/// SYSCTRL0).
+///
+/// ATTENTION : 0x40004000 est le timer CT32B4 dans
+/// le SVD ; le firmware n'y accede jamais (recensement L1, 7 executions). Les
+/// vrais registres systeme sont SYS0/SYS1 en 0x45000000/0x45000100 (`snsys`).
+/// L'ecriture du bit 3 de +0 masque la ROM de demarrage ; qui la declenche
+/// n'est pas etabli. Branchement garde tel quel.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct SysRegisters {
     pub osc_ctrl: u32,

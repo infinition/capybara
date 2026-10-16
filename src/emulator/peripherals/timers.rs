@@ -1,3 +1,11 @@
+/// Modele de timer herite, branche sur 0x40040000..0x40046000 (`LEGACY_TIMERS`).
+///
+/// ATTENTION : cette plage n'a aucun
+/// peripherique dans le SVD et le firmware n'y accede jamais. Les vrais timers
+/// sont CT32B0..7 en 0x40000000..0x40007000 (non modelises) ; leur IRQ est
+/// 38 + n, alors que ce modele leve l'IRQ 16 (SDIO_DMA_IRQn dans le SDK).
+/// Les champs `wdt_*` ne sont pas le chien de garde (WDT0/WDT1 en
+/// 0x40008000/0x40009000). Code mort garde tel quel pour ne rien changer.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Timers {
     pub timer0_count: u32,

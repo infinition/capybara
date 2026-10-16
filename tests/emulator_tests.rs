@@ -291,7 +291,7 @@ fn test_sonix_sys0_osc_ctrl_hide_bit() {
     let mut machine = Machine::new();
     assert!(!machine.bus.boot_rom.is_hidden);
     machine.bus.write_u32(
-        periph::SYSCTRL0,
+        periph::CT32B4,
         0x08,
         &mut machine.periph,
         &mut machine.cpu.nvic,
@@ -318,19 +318,19 @@ fn test_gpio_buttons_and_dial() {
 
     let initial = machine
         .bus
-        .read_u32(periph::GPIO0, &mut machine.periph, &machine.cpu.nvic);
+        .read_u32(periph::LEGACY_GPIO_CTRL, &mut machine.periph, &machine.cpu.nvic);
     assert_eq!(initial, 0xFFFF_FFFF);
 
     machine.periph.gpio.set_button_a(true);
     let pressed = machine
         .bus
-        .read_u32(periph::GPIO0, &mut machine.periph, &machine.cpu.nvic);
+        .read_u32(periph::LEGACY_GPIO_CTRL, &mut machine.periph, &machine.cpu.nvic);
     assert_eq!(pressed & 1, 0);
 
     machine.periph.gpio.step_dial(3);
     let dial = machine
         .bus
-        .read_u32(periph::GPIO0 + 4, &mut machine.periph, &machine.cpu.nvic);
+        .read_u32(periph::LEGACY_GPIO_CTRL + 4, &mut machine.periph, &machine.cpu.nvic);
     assert_eq!(dial, 3);
 }
 
@@ -339,22 +339,22 @@ fn un_registre_non_mappe_est_trace_et_pas_avale() {
     let mut machine = Machine::new();
     machine.bus.mmio_trace.enabled = true;
 
-    // SPI1 n'est pas encore modelise : l'acces doit laisser une trace.
+    // IDMA0 (0x40020000, ancienne etiquette SPI1) n'est pas modelise : l'acces doit laisser une trace.
     machine.bus.write_u32(
-        periph::SPI1 + 8,
+        periph::IDMA0 + 8,
         0x42,
         &mut machine.periph,
         &mut machine.cpu.nvic,
     );
     machine
         .bus
-        .read_u32(periph::SPI1 + 8, &mut machine.periph, &machine.cpu.nvic);
+        .read_u32(periph::IDMA0 + 8, &mut machine.periph, &machine.cpu.nvic);
 
     let stat = machine
         .bus
         .mmio_trace
         .unknown
-        .get(&(periph::SPI1 + 8))
+        .get(&(periph::IDMA0 + 8))
         .copied();
     let stat = stat.expect("l'acces aurait du etre enregistre");
     assert_eq!(stat.writes, 1);
@@ -363,7 +363,7 @@ fn un_registre_non_mappe_est_trace_et_pas_avale() {
 
     let hot = machine.bus.mmio_trace.hottest(1);
     assert_eq!(
-        hot[0].1, "SPI1",
+        hot[0].1, "IDMA0",
         "le registre doit etre attribue a son peripherique"
     );
 }
@@ -726,14 +726,14 @@ fn le_modele_herite_saradc_sur_0x4000a000_leve_son_bit_6() {
     // cette coincidence explique que rien n'ait proteste jusqu'au routage de
     // 0x4000B000 vers l'UART.
     assert_eq!(
-        bus.read_u32(periph::SAR_ADC0 + 0x14, &mut periph, &nvic) & 0x40,
+        bus.read_u32(periph::UART0 + 0x14, &mut periph, &nvic) & 0x40,
         0
     );
 
     // Une ecriture sur +0x00, puis la lecture du bit 6 pose, comme le modele
     // l'a toujours decrit pour son "canal".
-    bus.write_u32(periph::SAR_ADC0, 3, &mut periph, &mut nvic);
-    let statut = bus.read_u32(periph::SAR_ADC0 + 0x14, &mut periph, &nvic);
+    bus.write_u32(periph::UART0, 3, &mut periph, &mut nvic);
+    let statut = bus.read_u32(periph::UART0 + 0x14, &mut periph, &nvic);
     assert_ne!(statut << 25 & 0x8000_0000, 0, "le bit 6 doit etre pose");
 }
 
@@ -1222,7 +1222,7 @@ fn le_convertisseur_de_pile_rend_son_echantillon_et_enchaine() {
     let mut bus = MemoryBus::default();
     let mut periph = Peripherals::default();
     let mut nvic = Nvic::default();
-    let adc = periph::WDT;
+    let adc = periph::SAR_ADC;
 
     // Sequence de depart relevee en 0x000051F6 a 0x000052D8.
     bus.write_u32(adc + adc_pile::CTRL, 0x8000, &mut periph, &mut nvic);
