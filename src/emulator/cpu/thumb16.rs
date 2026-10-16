@@ -14,6 +14,7 @@ pub enum StepResult {
 pub struct Thumb16;
 
 impl Thumb16 {
+    /// Execute une instruction de 16 bits hors de tout bloc IT.
     pub fn execute(
         w: u16,
         regs: &mut Registers,
@@ -21,6 +22,28 @@ impl Thumb16 {
         periph: &mut Peripherals,
         nvic: &mut Nvic,
     ) -> StepResult {
+        Self::execute_it(w, false, regs, bus, periph, nvic)
+    }
+
+    /// Execute une instruction de 16 bits. `in_it` dit si elle se trouve dans
+    /// un bloc IT, y compris la derniere du bloc : il doit etre calcule AVANT
+    /// que l'etat IT n'avance.
+    ///
+    /// ARMv7-M (A7.7, pseudo-code `setflags = !InITBlock()`) : dans un bloc IT,
+    /// les encodages 16 bits MOVS, ADDS, SUBS, LSLS, LSRS, ASRS, ANDS, EORS,
+    /// ADCS, SBCS, RORS, RSBS, ORRS, MULS, BICS et MVNS ne posent aucun
+    /// drapeau, retenue de decalage comprise. CMP, CMN et TST les posent
+    /// toujours. Le modele les posait aussi dans un bloc IT, ce qui changeait
+    /// la condition des instructions suivantes du bloc.
+    pub fn execute_it(
+        w: u16,
+        in_it: bool,
+        regs: &mut Registers,
+        bus: &mut MemoryBus,
+        periph: &mut Peripherals,
+        nvic: &mut Nvic,
+    ) -> StepResult {
+        let setflags = !in_it;
         // Aiguillage sur le quartet haut. C'etait une chaine d'une quinzaine de
         // tests de masque parcourue a chaque instruction, et les formes les plus
         // frequentes se trouvaient a la fin : les acces relatifs au pointeur de
@@ -29,15 +52,15 @@ impl Thumb16 {
         // en fait une table de saut.
         match w >> 12 {
             // Decalage par immediat, et addition ou soustraction a trois registres.
-            0x0 | 0x1 => Self::exec_decalage(w, regs),
+            0x0 | 0x1 => Self::exec_decalage(w, regs, setflags),
 
             // Deplacement, comparaison, addition et soustraction immediates.
-            0x2 | 0x3 => Self::exec_imm8(w, regs),
+            0x2 | 0x3 => Self::exec_imm8(w, regs, setflags),
 
             0x4 => {
                 if (w & 0x0C00) == 0x0000 {
                     // Traitement de donnees : 0100 00 op rm rdn
-                    Self::exec_alu(w, regs)
+                    Self::exec_alu(w, regs, setflags)
                 } else if (w & 0x0C00) == 0x0400 {
                     // Registres hauts, BX et BLX : 0100 01 op h1 h2 rm rdn
                     Self::exec_high_reg(w, regs)
@@ -140,65 +163,75 @@ impl Thumb16 {
     }
 
     /// Decalage par immediat, et addition ou soustraction a trois registres.
-    fn exec_decalage(w: u16, regs: &mut Registers) -> StepResult {
+    /// `setflags` est faux dans un bloc IT (voir `execute_it`).
+    fn exec_decalage(w: u16, regs: &mut Registers, setflags: bool) -> StepResult {
         let op = (w >> 11) & 0x3;
         let imm5 = ((w >> 6) & 0x1F) as u32;
         let rm = (w >> 3) & 0x7;
         let rd = w & 0x7;
         let rm_val = regs.get_reg(rm as u8);
 
-        let res = match op {
+        // Retenue sortante du decaleur ; None = inchangee (LSL #0, alias MOVS).
+        let (res, carry) = match op {
             0 => {
                 // LSL
                 if imm5 == 0 {
-                    rm_val
+                    (rm_val, None)
                 } else {
-                    regs.set_flag_c((rm_val & (1 << (32 - imm5))) != 0);
-                    rm_val << imm5
+                    (rm_val << imm5, Some((rm_val & (1 << (32 - imm5))) != 0))
                 }
             }
             1 => {
                 // LSR
                 let shift = if imm5 == 0 { 32 } else { imm5 };
-                regs.set_flag_c((rm_val & (1 << (shift - 1))) != 0);
-                if shift >= 32 { 0 } else { rm_val >> shift }
+                let c = (rm_val & (1 << (shift - 1))) != 0;
+                (if shift >= 32 { 0 } else { rm_val >> shift }, Some(c))
             }
             2 => {
                 // ASR
                 let shift = if imm5 == 0 { 32 } else { imm5 };
-                regs.set_flag_c((rm_val & (1 << (shift - 1))) != 0);
+                let c = (rm_val & (1 << (shift - 1))) != 0;
                 let s = rm_val as i32;
-                if shift >= 32 {
+                let v = if shift >= 32 {
                     if s < 0 { 0xFFFF_FFFF } else { 0 }
                 } else {
                     (s >> shift) as u32
-                }
+                };
+                (v, Some(c))
             }
             _ => {
                 // Add/Sub 3-register: 0001 10 op rn rd / rm rn rd
-                return Self::exec_add_sub(w, regs);
+                return Self::exec_add_sub(w, regs, setflags);
             }
         };
 
         regs.set_reg(rd as u8, res);
-        regs.set_nz(res);
+        if setflags {
+            regs.set_nz(res);
+            if let Some(c) = carry {
+                regs.set_flag_c(c);
+            }
+        }
         return StepResult::Ok(1);
     }
 
     /// Deplacement, comparaison, addition et soustraction immediates.
-    fn exec_imm8(w: u16, regs: &mut Registers) -> StepResult {
+    /// `setflags` est faux dans un bloc IT ; CMP pose toujours ses drapeaux.
+    fn exec_imm8(w: u16, regs: &mut Registers, setflags: bool) -> StepResult {
         let op = (w >> 11) & 0x3;
         let rd = ((w >> 8) & 0x7) as u8;
         let imm8 = (w & 0xFF) as u32;
 
         match op {
             0 => {
-                // MOVS rd, #imm8
+                // MOVS rd, #imm8 (MOV dans un bloc IT)
                 regs.set_reg(rd, imm8);
-                regs.set_nz(imm8);
+                if setflags {
+                    regs.set_nz(imm8);
+                }
             }
             1 => {
-                // CMP rn, #imm8
+                // CMP rn, #imm8 : toujours, meme dans un bloc IT
                 let rn_val = regs.get_reg(rd);
                 let (res, borrow) = rn_val.overflowing_sub(imm8);
                 regs.set_nz(res);
@@ -206,29 +239,33 @@ impl Thumb16 {
                 regs.set_flag_v(((rn_val ^ imm8) & (rn_val ^ res) & 0x8000_0000) != 0);
             }
             2 => {
-                // ADDS rd, #imm8
+                // ADDS rd, #imm8 (ADD dans un bloc IT)
                 let rd_val = regs.get_reg(rd);
                 let (res, carry) = rd_val.overflowing_add(imm8);
                 regs.set_reg(rd, res);
-                regs.set_nz(res);
-                regs.set_flag_c(carry);
-                regs.set_flag_v((!(rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
+                if setflags {
+                    regs.set_nz(res);
+                    regs.set_flag_c(carry);
+                    regs.set_flag_v((!(rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
+                }
             }
             3 => {
-                // SUBS rd, #imm8
+                // SUBS rd, #imm8 (SUB dans un bloc IT)
                 let rd_val = regs.get_reg(rd);
                 let (res, borrow) = rd_val.overflowing_sub(imm8);
                 regs.set_reg(rd, res);
-                regs.set_nz(res);
-                regs.set_flag_c(!borrow);
-                regs.set_flag_v(((rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
+                if setflags {
+                    regs.set_nz(res);
+                    regs.set_flag_c(!borrow);
+                    regs.set_flag_v(((rd_val ^ imm8) & (rd_val ^ res) & 0x8000_0000) != 0);
+                }
             }
             _ => {}
         }
         return StepResult::Ok(1);
     }
 
-    fn exec_add_sub(w: u16, regs: &mut Registers) -> StepResult {
+    fn exec_add_sub(w: u16, regs: &mut Registers, setflags: bool) -> StepResult {
         let is_sub = (w & 0x0200) != 0;
         let is_imm = (w & 0x0400) != 0;
         let rn = ((w >> 3) & 0x7) as u8;
@@ -244,15 +281,19 @@ impl Thumb16 {
         if is_sub {
             let (res, borrow) = val1.overflowing_sub(val2);
             regs.set_reg(rd, res);
-            regs.set_nz(res);
-            regs.set_flag_c(!borrow);
-            regs.set_flag_v(((val1 ^ val2) & (val1 ^ res) & 0x8000_0000) != 0);
+            if setflags {
+                regs.set_nz(res);
+                regs.set_flag_c(!borrow);
+                regs.set_flag_v(((val1 ^ val2) & (val1 ^ res) & 0x8000_0000) != 0);
+            }
         } else {
             let (res, carry) = val1.overflowing_add(val2);
             regs.set_reg(rd, res);
-            regs.set_nz(res);
-            regs.set_flag_c(carry);
-            regs.set_flag_v((!(val1 ^ val2) & (val1 ^ res) & 0x8000_0000) != 0);
+            if setflags {
+                regs.set_nz(res);
+                regs.set_flag_c(carry);
+                regs.set_flag_v((!(val1 ^ val2) & (val1 ^ res) & 0x8000_0000) != 0);
+            }
         }
 
         StepResult::Ok(1)
@@ -263,7 +304,10 @@ impl Thumb16 {
     /// La table etait incomplete : CMP, CMN, ADC, SBC, RSB, LSR, ASR et ROR
     /// tombaient dans la branche par defaut. CMP en particulier ne posait aucun
     /// drapeau, ce qui faisait echouer tous les BEQ et BNE qui la suivent.
-    fn exec_alu(w: u16, regs: &mut Registers) -> StepResult {
+    ///
+    /// `setflags` est faux dans un bloc IT : seuls TST, CMP et CMN posent
+    /// alors leurs drapeaux.
+    fn exec_alu(w: u16, regs: &mut Registers, setflags: bool) -> StepResult {
         let op = (w >> 6) & 0xF;
         let rm = ((w >> 3) & 0x7) as u8;
         let rdn = (w & 0x7) as u8;
@@ -355,9 +399,12 @@ impl Thumb16 {
         if writes_back {
             regs.set_reg(rdn, res);
         }
-        regs.set_nz(res);
-        regs.set_flag_c(c_out);
-        regs.set_flag_v(v_out);
+        // TST, CMP et CMN (ceux qui ne rangent rien) posent toujours.
+        if setflags || !writes_back {
+            regs.set_nz(res);
+            regs.set_flag_c(c_out);
+            regs.set_flag_v(v_out);
+        }
         StepResult::Ok(1)
     }
 
@@ -573,7 +620,9 @@ impl Thumb16 {
                 0 => rm_val.swap_bytes(), // REV
                 1 => ((rm_val & 0x00FF00FF) << 8) | ((rm_val & 0xFF00FF00) >> 8), // REV16
                 3 => (rm_val as i16).swap_bytes() as i32 as u32, // REVSH
-                _ => rm_val,
+                // 1011 1010 10xx xxxx n'est pas alloue (A5.2.5). Le modele
+                // copiait Rm dans Rd.
+                _ => return StepResult::Undefined(w),
             };
             regs.set_reg(rd, res);
             return StepResult::Ok(1);
@@ -628,7 +677,13 @@ impl Thumb16 {
             return StepResult::Ok(2);
         }
 
-        StepResult::Ok(1)
+        // Reste du groupe divers (A5.2.5) : 1011 0110 hors CPS (dont SETEND,
+        // absent de v7-M), 1011 0111, 1011 1000. Non alloue : on le signale
+        // comme partout ailleurs au lieu de l'avaler comme un NOP. Les vraies
+        // indications (NOP, YIELD, WFE, WFI, SEV et les indications non
+        // allouees de 1011 1111 xxxx 0000, executees comme NOP) sont traitees
+        // avant l'appel, avec IT et BKPT.
+        StepResult::Undefined(w)
     }
 
     fn exec_ldm_stm(
@@ -654,7 +709,15 @@ impl Thumb16 {
                 addr += 4;
             }
         }
-        regs.set_reg(rn, addr);
+        // ARMv7-M A7.7.40 (LDM T1) : `wback = (registers<n> == '0')`. Quand Rn
+        // fait partie de la liste, il garde la valeur lue et la base n'est pas
+        // mise a jour (forme `ldm r0, {r0, r1, r2}`, sans `!`). La reecrire
+        // ici remplacait la valeur chargee par l'adresse de fin. STM (T1)
+        // ecrit toujours la base ; si Rn est dans la liste il est range avec
+        // sa valeur d'origine (seul cas defini : Rn est le plus bas).
+        if !is_ldm || (list & (1 << rn)) == 0 {
+            regs.set_reg(rn, addr);
+        }
         StepResult::Ok(2)
     }
 

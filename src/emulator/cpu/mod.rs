@@ -135,7 +135,13 @@ impl Cpu {
         // Bloc IT : l'instruction courante est conditionnee par ITSTATE[7:4].
         // On fait avancer l'etat avant d'executer, car une instruction IT ne peut
         // pas elle-meme se trouver dans un bloc.
-        if (self.regs.itstate & 0x0F) != 0 {
+        //
+        // `in_it` est capture avant l'avance : la derniere instruction du bloc
+        // en fait encore partie, alors que l'etat est deja nul quand elle
+        // s'execute. Les encodages 16 bits a drapeaux en dependent (ARMv7-M :
+        // pas de drapeaux dans un bloc IT, sauf CMP, CMN et TST).
+        let in_it = (self.regs.itstate & 0x0F) != 0;
+        if in_it {
             let cond = ((self.regs.itstate >> 4) & 0xF) as u16;
             let taken = Thumb16::eval_condition(cond, &self.regs);
             self.advance_itstate();
@@ -148,7 +154,7 @@ impl Cpu {
         let result = if is_32 {
             Thumb32::execute(w1, w2, &mut self.regs, bus, periph, &mut self.nvic)
         } else {
-            Thumb16::execute(w1, &mut self.regs, bus, periph, &mut self.nvic)
+            Thumb16::execute_it(w1, in_it, &mut self.regs, bus, periph, &mut self.nvic)
         };
 
         match result {
