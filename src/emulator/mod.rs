@@ -555,14 +555,19 @@ impl Machine {
         self.lire_sram_u8(self.adresse_son_en_cours()) != 0
     }
 
-    /// Homebrew reuses the factory audio engine's SRAM for unrelated data.
-    /// Read its hardware PWM instead of treating those bytes as live voices.
-    fn note_programme(&self) -> Option<f32> {
+    /// Use the programmed PWM whenever the guest has configured its period.
+    /// Factory voice addresses vary between ROM revisions; the hardware does
+    /// not. A configured but disabled timer means silence, even if stale voice
+    /// data remains in SRAM. Older ROMs without PWM retain the voice fallback.
+    pub fn note_programme(&self) -> Option<f32> {
         let custom_vectors = self.last_report.as_ref().is_some_and(|report| {
             self.bus.pram.read_u32(0) != report.entry_sp
                 || self.bus.pram.read_u32(4) != report.entry_pc
         });
-        if custom_vectors || self.bus.pram.read_u32(0x140) == 0x444C4546 {
+        let regs = &self.periph.timers.buzzer_regs;
+        let pwm_configured = regs[0x24 / 4] > 0
+            && regs[0x18 / 4] > 0 && regs[0x18 / 4] < regs[0x24 / 4];
+        if pwm_configured || custom_vectors || self.bus.pram.read_u32(0x140) == 0x444C4546 {
             Some(self.periph.timers.buzzer_frequency())
         } else { None }
     }

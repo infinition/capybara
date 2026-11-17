@@ -1093,6 +1093,14 @@ impl TamagotchiApp {
     /// n'a pas change, et au plus cinquante millisecondes : passe ce delai
     /// c'est que le firmware la joue vraiment.
     fn note_jouee(&mut self) -> f32 {
+        // PWM already describes the live output. The SRAM voice workaround
+        // below delays an unchanged first note by 50 ms, swallowing short
+        // button tones entirely when applied to hardware output.
+        if let Some(note) = self.machine.note_programme() {
+            self.son_jouait = note > 0.0;
+            self.perimee_jusqu = 0;
+            return note;
+        }
         let joue = self.machine.son_en_cours();
         // Le tableau des voix est cherche au debut de chaque son, et repris
         // tant qu'il n'a rien donne. Une seule tentative ne suffit pas : au
@@ -3482,9 +3490,8 @@ impl eframe::App for TamagotchiApp {
         // plus rien, la console retrouve son personnage au prochain lancement.
         self.tenir_la_sauvegarde();
 
-        // Le buzzer de la console. On ne modelise pas le peripherique de sortie,
-        // que le firmware n'atteint pas : on rend les frequences que son moteur
-        // audio a calculees, en signal carre, ce qu'est un buzzer. La suite de
+        // Le buzzer de la console : PWM materiel quand il est configure,
+        // sinon frequences du moteur audio des anciens firmwares. La suite de
         // notes relevee pendant la tranche est rendue d'un bloc, a l'echelle du
         // temps reellement ecoule : l'ordre et les durees relatives sont donc
         // ceux de la console, meme quand l'emulation traine.
