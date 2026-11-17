@@ -520,6 +520,8 @@ pub struct DernierePartie {
     /// Taille de la fenetre du mode jeu, en fraction de sa taille de base.
     #[serde(default = "un")]
     pub zoom_jeu: f32,
+    #[serde(default)]
+    pub screen_only: bool,
     /// Fenetre du mode jeu maintenue au dessus des autres.
     #[serde(default)]
     pub toujours_devant: bool,
@@ -580,6 +582,7 @@ impl Default for DernierePartie {
             hauteur: 1.0,
             coque: String::new(),
             zoom_jeu: 1.0,
+            screen_only: false,
             toujours_devant: false,
             touches: crate::touches::Touches::default(),
             souris: crate::touches::Souris::default(),

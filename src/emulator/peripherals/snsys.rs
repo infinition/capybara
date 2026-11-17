@@ -33,9 +33,24 @@ pub struct SnSysRegisters {
     /// materiel, qui sur la puce remet le coeur a zero.
     #[serde(default)]
     pub reveil_demande: bool,
+    #[serde(default)]
+    pub power_down_requested: bool,
 }
 
 impl SnSysRegisters {
+    pub fn power_down_active(&self) -> bool {
+        // The register is also present in snapshots made before the explicit
+        // flag existed. It is the hardware source of truth after migration.
+        self.power_down_requested || self.read_reg(0x300) & 1 != 0
+    }
+
+    pub fn clear_power_down(&mut self) {
+        self.power_down_requested = false;
+        if let Some(value) = self.regs.get_mut(&0x300) {
+            *value &= !1;
+        }
+    }
+
     /// Compteur de secondes de la console, lu par la couche date du firmware en
     /// `0x00003754`, qui n'est qu'un `ldr r0, [0x45000304]`.
     pub const COMPTEUR_SECONDES: u32 = 0x304;
@@ -65,6 +80,9 @@ impl SnSysRegisters {
     }
 
     pub fn write_reg(&mut self, offset: u32, val: u32) {
+        if offset == 0x300 {
+            self.power_down_requested = val & 1 != 0;
+        }
         // 0x04 recoit la valeur magique de deblocage avant la configuration.
         if offset == 0x04 && val == 0xA55A_0000 {
             self.pll_locked = true;

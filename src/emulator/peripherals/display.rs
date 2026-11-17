@@ -11,6 +11,17 @@ pub const LCD_HEIGHT: usize = 128;
 /// plus 0x1C, en 0x00004506.
 pub const PANNEAU_DONNEES: u32 = 0x4000_E01C;
 
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
+struct PanelStream {
+    command: u8,
+    params: Vec<u8>,
+    columns: [u16; 2],
+    rows: [u16; 2],
+    x: u16,
+    y: u16,
+    high: Option<u8>,
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DisplayController {
     pub ctrl: u32,
@@ -23,6 +34,8 @@ pub struct DisplayController {
     /// Nombre de trames recues du controleur de transferts. Un compteur fige
     /// est le signe le plus direct d'un blocage.
     pub trames: u64,
+    #[serde(default)]
+    stream: PanelStream,
 }
 
 impl Default for DisplayController {
@@ -42,6 +55,7 @@ impl DisplayController {
             is_enabled: true,
             dirty: true,
             trames: 0,
+            stream: PanelStream::default(),
         }
     }
 
@@ -76,6 +90,56 @@ impl DisplayController {
                 self.vram[idx] = rgb565;
                 self.dirty = true;
             }
+        }
+    }
+
+    /// Direct SPI writes used by homebrew, alongside the factory DMA path.
+    /// P0.5 selects command/data; panel coordinates include a 2,1 border.
+    pub fn write_panel_byte(&mut self, data: bool, byte: u8) {
+        if !data {
+            self.stream.command = byte;
+            self.stream.params.clear();
+            self.stream.high = None;
+            match byte {
+                0x2C => {
+                    self.stream.x = self.stream.columns[0];
+                    self.stream.y = self.stream.rows[0];
+                }
+                0x28 | 0x10 => self.is_enabled = false,
+                0x29 => self.is_enabled = true,
+                _ => {}
+            }
+            return;
+        }
+        match self.stream.command {
+            0x2A | 0x2B => {
+                if self.stream.params.len() == 4 { return; }
+                self.stream.params.push(byte);
+                if self.stream.params.len() == 4 {
+                    let p = &self.stream.params;
+                    let range = [u16::from_be_bytes([p[0], p[1]]), u16::from_be_bytes([p[2], p[3]])];
+                    if self.stream.command == 0x2A { self.stream.columns = range; }
+                    else { self.stream.rows = range; }
+                }
+            }
+            0x2C => {
+                if let Some(high) = self.stream.high.take() {
+                    let x = self.stream.x;
+                    let y = self.stream.y;
+                    if x >= 2 && y >= 1 {
+                        self.write_vram_pixel((x - 2) as usize, (y - 1) as usize,
+                            u16::from_be_bytes([high, byte]));
+                    }
+                    if x >= self.stream.columns[1] {
+                        self.stream.x = self.stream.columns[0];
+                        if y >= self.stream.rows[1] {
+                            self.stream.y = self.stream.rows[0];
+                            self.trames += 1;
+                        } else { self.stream.y = y.saturating_add(1); }
+                    } else { self.stream.x = x.saturating_add(1); }
+                } else { self.stream.high = Some(byte); }
+            }
+            _ => {}
         }
     }
 

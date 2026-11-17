@@ -1,6 +1,7 @@
 pub mod app;
 pub mod demarrage;
 pub mod audio;
+pub mod capture;
 pub mod emulator;
 pub mod gui;
 pub mod hw_bridge;

@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui::{CentralPanel, Context, Key, SidePanel, TopBottomPanel};
+use egui::{CentralPanel, Color32, Context, Key, SidePanel, TopBottomPanel};
 
 // Le retour sonore de l'interface, clic de bouton et cran de molette, a ete
 // retire : il se superposait aux tonalites du jeu et brouillait le seul son
@@ -187,6 +187,9 @@ pub struct TamagotchiApp {
     pub machine: Machine,
     pub uart_bridge: UartBridge,
     pub audio: AudioEngine,
+    recorder: Option<crate::capture::Recorder>,
+    capture_notice: Option<(String, std::time::Instant)>,
+    screen_only: bool,
     pub i18n: I18n,
     pub shell_color: ShellColor,
     pub hex_base_addr: u32,
@@ -385,6 +388,9 @@ impl TamagotchiApp {
             machine,
             uart_bridge: UartBridge::default(),
             audio,
+            recorder: None,
+            capture_notice: None,
+            screen_only: false,
             i18n,
             shell_color: ShellColor::BlueWater,
             hex_base_addr: 0x6001_1000,
@@ -605,6 +611,7 @@ impl TamagotchiApp {
                 hauteur: self.audio.hauteur,
                 coque: self.shell_color.nom().to_string(),
                 zoom_jeu: self.zoom_jeu,
+                screen_only: self.screen_only,
                 toujours_devant: self.toujours_devant,
                 langue: self.i18n.language().code().to_string(),
                 touches: self.touches.clone(),
@@ -630,6 +637,7 @@ impl TamagotchiApp {
         self.audio.volume = partie.volume.clamp(0.0, 1.0);
         self.audio.hauteur = if partie.hauteur > 0.0 { partie.hauteur } else { 1.0 };
         self.zoom_jeu = if partie.zoom_jeu > 0.0 { partie.zoom_jeu.clamp(0.5, 3.0) } else { 1.0 };
+        self.screen_only = partie.screen_only;
         self.toujours_devant = partie.toujours_devant;
         self.touches = partie.touches.clone();
         self.souris = partie.souris;
@@ -1117,6 +1125,115 @@ impl TamagotchiApp {
             self.perimee_jusqu = 0;
         }
         note
+    }
+
+    fn capture_frame(&self) -> Result<crate::capture::CaptureFrame, String> {
+        let lcd = &self.machine.periph.display;
+        crate::capture::CaptureFrame::from_rgb565(lcd.width as u32, lcd.height as u32,
+            &lcd.vram, lcd.is_enabled)
+    }
+
+    fn capture_result(&mut self, text: String) {
+        self.status_msg = Some(text.clone());
+        self.capture_notice = Some((text, std::time::Instant::now()));
+    }
+
+    fn screenshot(&mut self) {
+        let frame = match self.capture_frame() {
+            Ok(frame) => frame,
+            Err(error) => { self.capture_result(error); return; }
+        };
+        let name = format!("Capybara-{}.png", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+        let Some(mut path) = rfd::FileDialog::new().set_file_name(&name)
+            .add_filter("PNG screenshot", &["png"]).save_file() else { return; };
+        if path.extension().is_none() { path.set_extension("png"); }
+        match crate::capture::screenshot_png(&path, &frame, 4) {
+            Ok(()) => self.capture_result(format!("{} {}", self.i18n.choisir("Capture enregistree :", "Screenshot saved:"), path.display())),
+            Err(error) => self.capture_result(format!("Screenshot: {error}")),
+        }
+    }
+
+    fn start_recording(&mut self, format: crate::capture::CaptureFormat) {
+        if self.recorder.is_some() { return; }
+        let extension = if format == crate::capture::CaptureFormat::Mp4 { "mp4" } else { "gif" };
+        let name = format!("Capybara-{}.{}", chrono::Local::now().format("%Y%m%d-%H%M%S"), extension);
+        let Some(mut path) = rfd::FileDialog::new().set_file_name(&name)
+            .add_filter(extension, &[extension]).save_file() else { return; };
+        if path.extension().is_none() { path.set_extension(extension); }
+        match self.capture_frame().and_then(|frame| crate::capture::Recorder::start(path, format, frame)) {
+            Ok(recorder) => self.recorder = Some(recorder),
+            Err(error) => self.capture_result(format!("Recording: {error}")),
+        }
+    }
+
+    fn dessiner_captures(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            if ui.button(self.i18n.choisir("Capture PNG...", "Screenshot PNG...")).clicked() { self.screenshot(); }
+            if let Some(recorder) = self.recorder.as_ref() {
+                let elapsed = recorder.elapsed().as_secs();
+                ui.label(format!("REC {:02}:{:02}", elapsed / 60, elapsed % 60));
+                if recorder.is_stopping() {
+                    ui.label(self.i18n.choisir("Finalisation...", "Finishing..."));
+                } else if ui.button(self.i18n.choisir("Arreter", "Stop recording")).clicked() { recorder.stop(); }
+            } else {
+                if ui.add_enabled(crate::capture::ffmpeg_available(), egui::Button::new(
+                    self.i18n.choisir("Enregistrer MP4...", "Record MP4...")
+                )).on_hover_text(self.i18n.choisir("Video et son du jeu. FFmpeg requis.", "Game video and audio. Requires FFmpeg.")).clicked() {
+                    self.start_recording(crate::capture::CaptureFormat::Mp4);
+                }
+                if ui.button(self.i18n.choisir("Enregistrer GIF...", "Record GIF...")).clicked() {
+                    self.start_recording(crate::capture::CaptureFormat::Gif);
+                }
+            }
+        });
+        if let Some((message, when)) = &self.capture_notice {
+            if when.elapsed().as_secs() < 8 { ui.label(egui::RichText::new(message).small()); }
+        }
+    }
+
+    fn update_capture(&mut self) {
+        if self.recorder.is_none() { return; }
+        if let Ok(frame) = self.capture_frame() {
+            if let Some(recorder) = self.recorder.as_ref() { let _ = recorder.update_frame(&frame); }
+        }
+        let result = self.recorder.as_mut().and_then(|r| r.poll_completion().map(|result| (r.path().to_owned(), result)));
+        if let Some((path, result)) = result {
+            self.recorder = None;
+            self.capture_result(match result {
+                Ok(()) => format!("{} {}", self.i18n.choisir("Video enregistree :", "Recording saved:"), path.display()),
+                Err(error) => format!("Recording: {error}"),
+            });
+        }
+    }
+
+    fn dessiner_ecran_seul(&mut self, ctx: &Context, ui: &mut egui::Ui, zone: egui::Rect, response: &egui::Response) {
+        ui.painter().rect_filled(zone, 0.0, Color32::BLACK);
+        let size = zone.width().min(zone.height());
+        let rect = egui::Rect::from_center_size(zone.center(), egui::vec2(size, size));
+        if self.machine.periph.display.is_enabled {
+            if let Some(texture) = &self.ecran {
+                ui.painter().image(texture.id(), rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+            }
+        }
+        if !ctx.memory(|m| m.any_popup_open()) && response.hovered() {
+            for (button, command) in [(egui::PointerButton::Primary, self.souris.primaire),
+                (egui::PointerButton::Middle, self.souris.milieu)] {
+                let pin = match command {
+                        crate::touches::Bouton::A => Some(Machine::BOUTON_A),
+                        crate::touches::Bouton::B => Some(Machine::BOUTON_B),
+                        crate::touches::Bouton::C => Some(Machine::BOUTON_C),
+                        crate::touches::Bouton::Molette => Some(Machine::BOUTON_MOLETTE),
+                        _ => None,
+                };
+                if let Some(pin) = pin {
+                    if response.clicked_by(button) { self.presser(pin); }
+                    else if ctx.input(|i| i.pointer.button_down(button)) && !response.dragged() { self.maintenir(pin); }
+                }
+            }
+            let scroll = ctx.input(|i| i.raw_scroll_delta.y);
+            if scroll != 0.0 { self.tourner_molette(if scroll > 0.0 { 1 } else { -1 }); }
+        }
     }
 
     /// Recopie la memoire d'ecran de la console dans une texture.
@@ -2226,7 +2343,9 @@ impl TamagotchiApp {
                 // Forme de la console : 6,5 sur 7,5, plus le debord de la
                 // molette. La fenetre est donc presque carree.
                 let z = self.zoom_jeu.clamp(0.5, 3.0);
-                ctx.send_viewport_cmd(Cmd::InnerSize(egui::vec2(430.0 * z, 450.0 * z)));
+                let size = if self.screen_only { egui::vec2(512.0, 512.0) }
+                    else { egui::vec2(430.0, 450.0) };
+                ctx.send_viewport_cmd(Cmd::InnerSize(size * z));
             }
             Mode::Inspection => {
                 ctx.send_viewport_cmd(Cmd::Decorations(true));
@@ -2409,7 +2528,7 @@ impl TamagotchiApp {
     fn decouper_la_fenetre(&mut self, ctx: &Context, frame: &eframe::Frame) {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-        let actif = self.couleur_cle_active && self.mode == Mode::Jeu;
+        let actif = self.couleur_cle_active && self.mode == Mode::Jeu && !self.screen_only;
         let (contour, antenne) = &self.silhouette;
         // Une empreinte de la geometrie : inutile de refaire la region tant que
         // la coque n'a ni bouge ni change de taille.
@@ -2689,7 +2808,7 @@ impl TamagotchiApp {
                         .collect()
                 });
 
-                let fond = ui.allocate_rect(zone, egui::Sense::drag());
+                let fond = ui.allocate_rect(zone, egui::Sense::click_and_drag());
                 if fond.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
@@ -2698,7 +2817,11 @@ impl TamagotchiApp {
                 }
 
                 self.rafraichir_la_texture(ctx);
-                self.dessiner_la_console(ctx, ui, zone);
+                if self.screen_only {
+                    self.dessiner_ecran_seul(ctx, ui, zone, &fond);
+                } else {
+                    self.dessiner_la_console(ctx, ui, zone);
+                }
 
                 // Clic droit sur la coque : le menu de la fenetre.
                 let mut mode_voulu = None;
@@ -2725,6 +2848,15 @@ impl TamagotchiApp {
                 let mut langue_voulue = None;
                 fond.context_menu(|ui| {
                     menu_dessine = true;
+                    let mut only = self.screen_only;
+                    if ui.checkbox(&mut only, self.i18n.choisir("Ecran seul", "Screen only")).changed() {
+                        self.screen_only = only;
+                        self.mode_applique = None;
+                        self.retenir_la_partie();
+                        ui.close_menu();
+                    }
+                    self.dessiner_captures(ui);
+                    ui.separator();
                     // Des sections qui se deplient sur place, et non des sous
                     // menus. La fenetre du mode jeu fait quatre cents pixels de
                     // large : un sous menu n'y tient pas a droite, egui le
@@ -2797,6 +2929,20 @@ impl TamagotchiApp {
                             }
                             if ui.button(self.i18n.choisir("Actualiser les ports", "Refresh ports")).clicked() {
                                 self.uart_bridge.refresh_ports();
+                            }
+                            #[cfg(unix)]
+                            {
+                                if let Some(path) = self.uart_bridge.virtual_port_name().map(str::to_owned) {
+                                    ui.label(egui::RichText::new(&path).monospace().small());
+                                    if ui.button(self.i18n.choisir("Copier le port virtuel", "Copy virtual port path")).clicked() {
+                                        ui.output_mut(|o| o.copied_text = path);
+                                    }
+                                } else if ui.button(self.i18n.choisir("Creer un UART virtuel", "Create virtual UART")).clicked() {
+                                    match self.uart_bridge.start_virtual_port() {
+                                        Ok(_) => self.machine.periph.uart.vider_la_ligne(),
+                                        Err(e) => self.status_msg = Some(format!("UART : {e}")),
+                                    }
+                                }
                             }
                             if self.uart_bridge.is_connected {
                                 ui.separator();
@@ -2993,6 +3139,7 @@ impl eframe::App for TamagotchiApp {
     /// L'ecriture periodique est espacee d'une seconde : sans ce dernier
     /// passage, la derniere sauvegarde du jeu pourrait rester en memoire.
     fn on_exit(&mut self) {
+        if let Some(recorder) = &mut self.recorder { let _ = recorder.finish(); }
         self.uart_bridge.disconnect();
         let _ = self.machine.ecrire_sauvegarde();
         // Les reglages de son ont pu changer sans qu'on ouvre d'emplacement :
@@ -3006,7 +3153,7 @@ impl eframe::App for TamagotchiApp {
         // Un fond transparent que la carte refuse de composer devient un carre
         // noir. Mieux vaut alors une fenetre ordinaire qu'un trou : le reglage
         // permet de retomber dessus sans rien deviner.
-        if self.mode == Mode::Jeu && self.fond_transparent {
+        if self.mode == Mode::Jeu && self.fond_transparent && !self.screen_only {
             [0.0, 0.0, 0.0, 0.0]
         } else {
             visuals.panel_fill.to_normalized_gamma_f32()
@@ -3128,7 +3275,7 @@ impl eframe::App for TamagotchiApp {
             || self.saisie_sauvegarde.is_some()
             || self.suppression_demandee.is_some()
             || ctx.memory(|m| m.any_popup_open())
-            || ctx.is_pointer_over_area();
+            || !ctx.input(|i| i.focused);
         if interface_occupee {
             // Les broches tenues sont relachees : sans cela un bouton reste
             // enfonce au moment ou le menu s'ouvre le resterait pour toujours.
@@ -3352,7 +3499,12 @@ impl eframe::App for TamagotchiApp {
         } else {
             self.audio.silence_buzzer();
         }
+        if let Some(recorder) = self.recorder.as_ref() {
+            let _ = recorder.update_audio_notes(&self.notes, _dt.max(0.001),
+                self.audio.volume, self.audio.hauteur, self.audio.enabled);
+        }
         self.notes.clear();
+        self.update_capture();
 
         // La table des scenes, une fois pour toutes, des que la fenetre XIP est
         // programmee. Avant cela les pointeurs de noms ne visent rien.
@@ -3414,6 +3566,11 @@ impl eframe::App for TamagotchiApp {
 
                 if ui.button(self.i18n.choisir("Retour au jeu", "Back to game")).clicked() {
                     self.mode = Mode::Jeu;
+                }
+                if ui.button(self.i18n.choisir("Ecran seul", "Screen only")).clicked() {
+                    self.screen_only = true;
+                    self.mode = Mode::Jeu;
+                    self.mode_applique = None;
                 }
                 if ui.button(self.i18n.choisir("Accueil", "Home")).clicked() {
                     self.mode = Mode::Accueil;
@@ -3734,6 +3891,11 @@ impl eframe::App for TamagotchiApp {
 
                     if self.onglet == Onglet::Console {
                     ui.separator();
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new(self.i18n.choisir("Captures", "Capture")).strong());
+                        self.dessiner_captures(ui);
+                        ui.label(self.i18n.choisir("PNG et GIF sans son ; MP4 avec le son du jeu.", "PNG screenshots, silent GIF animation, MP4 with game audio."));
+                    });
 
                     // Vitesse, son et serveur : tout ce qui sert a jouer, au
                     // meme endroit. Le son etait dans la barre du haut, loin de

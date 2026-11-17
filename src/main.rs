@@ -2,6 +2,7 @@
 
 mod app;
 mod audio;
+mod capture;
 mod demarrage;
 mod emulator;
 mod gui;

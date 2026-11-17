@@ -169,15 +169,23 @@ whatever the console's own silhouette is.
 which a real device receives items or plays with another one. The controller is
 modelled and a bidirectional host bridge is in place.
 
-> **For now the link needs an intermediary.** Two programs cannot open the same
-> COM port, and Capybara has no wire. You need a virtual serial port pairing
-> tool, such as Virtual Serial Port Driver or com0com. This is a temporary
-> requirement: a built-in transport that needs no driver at all is the next step.
+On macOS and Linux, choose **UART → Create virtual UART**, then **Copy path**.
+The external tool opens that device path, while Capybara owns the other end.
+The endpoint uses raw binary data and supports client disconnect/reconnect;
+it exists until you disconnect the bridge or quit Capybara. Configure the
+client for 460800 baud, 8 data bits, no parity and 1 stop bit. No change to the
+console's UART protocol or to Paramix Studio is needed.
 
-It creates two COM ports wired back to back: Capybara
-opens one end, the transfer tool opens the other. Both sides use 460800 baud, 8
-data bits, no parity, 1 stop bit, and the same port cannot be opened twice.
-Paired that way, a transfer tool talks to your console as if it were plugged in.
+This endpoint is a pseudoterminal (PTY), suitable for Python, command-line
+clients and native tools that accept an explicit device path. **Chrome on
+macOS does not enumerate ordinary PTYs in its Web Serial device picker.**
+Unmodified browser tools such as Paramix Studio need a system-registered
+virtual serial driver or a physical serial bridge for that picker to see a
+port. Creating a PTY does not install such a driver.
+
+The existing host-port bridge remains available: a pairing tool such as
+com0com can provide two COM ports, with Capybara opening one and the external
+tool opening the other. Two programs cannot open the same end simultaneously.
 
 <div align="center">
 <img src="assets/screenshots/uart-connecting.png" alt="The console connecting over the serial link" width="300">
@@ -189,6 +197,21 @@ Paired that way, a transfer tool talks to your console as if it were plugged in.
 
 **Browser view.** A local server publishes the screen and accepts the controls,
 so the console can be watched or played from a phone on the same network.
+
+**Screen only.** The Screen only button in the inspector, or the same checkbox
+in the game's right-click menu, hides the shell and shows just the LCD in a
+square window. Keyboard controls still work; drag to move the window and
+right-click to switch back to the shell. This choice is remembered.
+
+**Screenshots and recording.** The Console tab and the game's right-click menu
+offer Screenshot PNG, Record MP4, Record GIF and Stop recording. Captures contain
+only the LCD, enlarged four times with sharp pixel edges. PNG saves the frame
+at the moment the button is pressed. GIF records at 10 fps without sound;
+MP4 records at 30 fps with the emulated game's audio, respecting mute, volume
+and pitch. No microphone or desktop audio is recorded. MP4 requires an installed
+FFmpeg; Homebrew locations are detected even when the app opens from Finder.
+GIF and PNG need no external encoder. Recording finalizes in the background
+after Stop; closing the app also finalizes an active recording.
 
 ### Where your files go
 
@@ -224,6 +247,16 @@ cargo build --release
 ```
 
 The binary lands in `target/release/capybara`.
+
+For an Apple Silicon macOS application bundle, run:
+
+```sh
+sh scripts/package-macos.sh
+```
+
+The result is `target/macos/Capybara.app`, with an icon and a local ad-hoc
+signature. The script requires the Rust toolchain, macOS command-line tools,
+and Python 3; it does not notarize or publish the application.
 
 ### For contributors
 

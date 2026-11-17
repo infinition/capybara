@@ -551,7 +551,20 @@ impl Machine {
 
     /// Vrai quand le firmware est en train de jouer un son.
     pub fn son_en_cours(&self) -> bool {
+        if let Some(note) = self.note_programme() { return note > 0.0; }
         self.lire_sram_u8(self.adresse_son_en_cours()) != 0
+    }
+
+    /// Homebrew reuses the factory audio engine's SRAM for unrelated data.
+    /// Read its hardware PWM instead of treating those bytes as live voices.
+    fn note_programme(&self) -> Option<f32> {
+        let custom_vectors = self.last_report.as_ref().is_some_and(|report| {
+            self.bus.pram.read_u32(0) != report.entry_sp
+                || self.bus.pram.read_u32(4) != report.entry_pc
+        });
+        if custom_vectors || self.bus.pram.read_u32(0x140) == 0x444C4546 {
+            Some(self.periph.timers.buzzer_frequency())
+        } else { None }
     }
 
     /// Cherche le tableau des voix en memoire vive et retient ses adresses.
@@ -596,6 +609,7 @@ impl Machine {
     /// de l'interface, bien trop grossiere : une melodie dure cent cinquante
     /// millisecondes et l'interface ne rend que soixante images par seconde.
     pub fn note_courante(&self) -> f32 {
+        if let Some(note) = self.note_programme() { return note; }
         if !self.son_en_cours() {
             return 0.0;
         }
@@ -623,6 +637,9 @@ impl Machine {
     /// rend donc le vrai son, sans avoir a modeliser le peripherique de sortie,
     /// que le firmware n'atteint pas dans le modele actuel.
     pub fn voix_audio(&self) -> Vec<(f32, f32)> {
+        if let Some(note) = self.note_programme() {
+            return if note > 0.0 { vec![(note, 1.0)] } else { Vec::new() };
+        }
         if !self.son_en_cours() {
             return Vec::new();
         }
@@ -686,20 +703,12 @@ impl Machine {
         }
     }
 
-    /// Boucle de veille profonde du firmware, en PRAM.
-    ///
-    /// Elle demande la mise hors tension du coeur par le bit 0 de
-    /// `0x45000300`, execute un `WFI`, puis se rebranche sur elle meme sans
-    /// aucune condition de sortie : le saut de `0x00002432` vers `0x000023D0`
-    /// est inconditionnel, et les deux seules interruptions restees autorisees,
-    /// 2 et 3, ont des gestionnaires qui reviennent dans la boucle. Aucune
-    /// sortie logicielle n'existe donc, et le reveil ne peut venir que du
-    /// materiel, qui remet le coeur a zero. C'est ce que reproduit `appuyer`.
-    pub const VEILLE_PROFONDE: std::ops::Range<u32> = 0x0000_23D0..0x0000_2434;
-
-    /// Vrai quand le coeur est gare dans cette boucle.
+    /// Sleep is requested by hardware registers, never by an address range:
+    /// the old Water sleep-loop addresses contain ordinary GPIO code in
+    /// Tropical, where a held key otherwise reset the CPU during every boot.
     pub fn en_veille_profonde(&self) -> bool {
-        self.periph.pmu.deep_sleep_active || Self::VEILLE_PROFONDE.contains(&self.cpu.regs.pc)
+        self.periph.pmu.deep_sleep_active
+            || self.periph.snsys.power_down_active()
     }
 
     /// Reveille le coeur par une entree utilisateur et indique si un reveil a

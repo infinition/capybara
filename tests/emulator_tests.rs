@@ -6,6 +6,194 @@ use capybara::emulator::mmu::{map, periph, MemoryBus};
 use capybara::emulator::peripherals::Peripherals;
 use capybara::emulator::Machine;
 
+#[test]
+fn negative_pc_relative_loads_use_the_full_immediate() {
+    let mut regs = Registers::default();
+    let mut bus = MemoryBus::default();
+    let mut p = Peripherals::default();
+    let mut nvic = Nvic::default();
+    regs.pc = 0xE0E; // instruction at 0xE0A; align architectural PC to 0xE0C
+    regs.r[12] = 0xDEAD_BEEF; // must not be used as an offset register
+    bus.write_u32(0xAF0, 0x9CB4, &mut p, &mut nvic);
+    assert!(matches!(Thumb32::execute(0xF85F, 0x231C,
+        &mut regs, &mut bus, &mut p, &mut nvic), StepResult::Ok(_)));
+    assert_eq!(regs.r[2], 0x9CB4);
+    // The literal's immediate may have bit 11 set too.
+    bus.write_u32(0x50C, 0x1234_ABCD, &mut p, &mut nvic);
+    Thumb32::execute(0xF85F, 0x2900, &mut regs, &mut bus, &mut p, &mut nvic);
+    assert_eq!(regs.r[2], 0x1234_ABCD);
+}
+
+#[test]
+fn paramix_audio_uses_pwm_and_ignores_reused_factory_sram() {
+    let mut m = Machine::new();
+    m.bus.pram.data[0x140..0x144].copy_from_slice(b"FELD");
+    let address = m.adresse_son_en_cours();
+    m.bus.write_u8(address, 1, &mut m.periph, &mut m.cpu.nvic);
+    assert!(!m.son_en_cours());
+    assert_eq!(m.note_courante(), 0.0);
+    assert!(m.voix_audio().is_empty());
+    for (off, value) in [(0x24, 72000), (0x18, 69750), (0x34, 0x100001), (0, 1)] {
+        m.bus.write_u32(0x40007000 + off, value, &mut m.periph, &mut m.cpu.nvic);
+    }
+    assert_eq!(m.note_courante(), 1000.0);
+    assert!(m.son_en_cours());
+    m.bus.write_u32(0x40007034, 0, &mut m.periph, &mut m.cpu.nvic);
+    assert_eq!(m.note_courante(), 0.0);
+    assert!(m.voix_audio().is_empty());
+}
+
+#[test]
+fn paramix_code_at_factory_sleep_addresses_does_not_trigger_a_reset() {
+    let mut m = Machine::new();
+    m.bus.pram.data[0x140..0x144].copy_from_slice(b"FELD");
+    m.cpu.regs.pc = 0x23E0;
+    assert!(!m.en_veille_profonde());
+    m.appuyer(Machine::BOUTON_C);
+    assert_eq!(m.cpu.regs.pc, 0x23E0);
+    assert!(m.broche_basse(Machine::BOUTON_C));
+}
+
+#[test]
+fn wake_resets_nvic_and_uses_the_reset_vectors() {
+    let mut m = Machine::new();
+    m.bus.pram.data[..4].copy_from_slice(&0x1801E000u32.to_le_bytes());
+    m.bus.pram.data[4..8].copy_from_slice(&0x101u32.to_le_bytes());
+    m.cpu.nvic.vtor = 0x800;
+    m.cpu.nvic.iser[0] = 0xFFFF;
+    m.cpu.nvic.ispr[0] = 0xFFFF;
+    m.cpu.nvic.systick_pending = true;
+    m.cpu.regs.primask = 1;
+    m.periph.pmu.deep_sleep_active = true;
+    m.appuyer(Machine::BOUTON_A);
+    assert_eq!(m.cpu.regs.pc, 0x100);
+    assert_eq!(m.cpu.regs.msp, 0x1801E000);
+    assert_eq!(m.cpu.regs.primask, 0);
+    assert_eq!(m.cpu.nvic.iser, [0;8]);
+    assert_eq!(m.cpu.nvic.ispr, [0;8]);
+    assert!(!m.cpu.nvic.systick_pending);
+    assert!(!m.en_veille_profonde());
+}
+
+#[test]
+fn power_down_register_wakes_outside_the_legacy_sleep_loop() {
+    let mut m = Machine::new();
+    m.bus.pram.data[..4].copy_from_slice(&0x1801E000u32.to_le_bytes());
+    m.bus.pram.data[4..8].copy_from_slice(&0x101u32.to_le_bytes());
+    m.cpu.regs.pc = 0x6000; // different firmware build, different sleep routine
+    m.bus.write_u32(0x45000300, 1, &mut m.periph, &mut m.cpu.nvic);
+    assert!(m.en_veille_profonde());
+    m.appuyer(Machine::BOUTON_B);
+    assert_eq!(m.cpu.regs.pc, 0x100);
+    assert!(!m.en_veille_profonde());
+    assert_eq!(m.periph.pmu.status & 0x40, 0x40);
+}
+
+#[test]
+fn implicit_thumb_flags_are_preserved_through_an_it_block() {
+    let mut m = Machine::new();
+    // CMP r0,#0; ITTT NE; MOVNE r1,#0; ADDNE r2,#1; MOVNE r3,#2.
+    // The zero result in r1 must not change the remaining NE conditions.
+    for (i, opcode) in [0x2800u16, 0xBF1E, 0x2100, 0x3201, 0x2302].iter().enumerate() {
+        m.bus.pram.data[0x100 + i * 2..0x102 + i * 2].copy_from_slice(&opcode.to_le_bytes());
+    }
+    m.cpu.regs.pc = 0x100;
+    m.cpu.regs.r[0] = 1;
+    for _ in 0..5 { assert!(matches!(m.step(), StepResult::Ok(_))); }
+    assert_eq!(m.cpu.regs.r[1..4], [0, 1, 2]);
+    assert!(!m.cpu.regs.flag_z());
+    assert_eq!(m.cpu.regs.itstate, 0);
+}
+
+#[test]
+fn paramix_direct_spi_draws_a_rectangle_without_dma() {
+    let mut m = Machine::new();
+    // P0.5 is the LCD command/data output, driven via the bit-band alias.
+    m.bus.write_u32(0x4001_8004, 1 << 5, &mut m.periph, &mut m.cpu.nvic);
+    let dc = 0x4230_0014;
+    for (command, params) in [
+        (0x2A, vec![0, 2, 0, 3]),
+        (0x2B, vec![0, 1, 0, 2]),
+        (0x2C, vec![0xF8, 0, 0x07, 0xE0, 0, 0x1F, 0xFF, 0xFF]),
+    ] {
+        m.bus.write_u32(dc, 0, &mut m.periph, &mut m.cpu.nvic);
+        m.bus.write_u32(0x4000_E01C, command, &mut m.periph, &mut m.cpu.nvic);
+        m.bus.write_u32(dc, 1, &mut m.periph, &mut m.cpu.nvic);
+        for byte in params {
+            m.bus.write_u32(0x4000_E01C, byte, &mut m.periph, &mut m.cpu.nvic);
+        }
+    }
+    assert_eq!(&m.periph.display.vram[..2], &[0xF800, 0x07E0]);
+    assert_eq!(&m.periph.display.vram[128..130], &[0x001F, 0xFFFF]);
+    assert_eq!(m.periph.display.trames, 1);
+    // Unrelated display configuration must keep the factory polling behavior.
+    assert_eq!(m.bus.read_u32(0x4000_E00C, &mut m.periph, &m.cpu.nvic), 0);
+}
+
+#[test]
+fn aircr_requires_the_write_key() {
+    let mut nvic = Nvic::default();
+    for value in [4, 0xFA05_0004, 0x1234_0704] {
+        nvic.write_reg(0xE000_ED0C, value);
+        assert!(!nvic.reset_requested);
+        assert_eq!(nvic.read_reg(0xE000_ED0C), 0xFA05_0000);
+    }
+    nvic.write_reg(0xE000_ED0C, 0x05FA_0300);
+    assert_eq!(nvic.read_reg(0xE000_ED0C), 0xFA05_0300);
+    assert!(!nvic.reset_requested);
+    nvic.write_reg(0xE000_ED0C, 0x05FA_0304);
+    assert!(nvic.reset_requested);
+}
+
+#[test]
+fn paramix_reset_boots_replaced_pram_and_preserves_ram() {
+    let mut machine = Machine::new();
+    let mut image = vec![0; 0x200];
+    image[0..4].copy_from_slice(&0x1801_E000u32.to_le_bytes());
+    image[4..8].copy_from_slice(&0x101u32.to_le_bytes());
+    image[0x100..0x102].copy_from_slice(&0x225Au16.to_le_bytes()); // MOVS r2,#90
+    image[0x102..0x104].copy_from_slice(&0xE7FEu16.to_le_bytes()); // B .
+    image[0x180..0x182].copy_from_slice(&0x6001u16.to_le_bytes()); // STR r1,[r0]
+    image[0x182..0x184].copy_from_slice(&0xE7FEu16.to_le_bytes()); // wait for reset
+    machine.bus.pram.load(&image);
+    machine.cpu.regs.pc = 0x180;
+    machine.cpu.regs.set_reg(0, 0xE000_ED0C);
+    machine.cpu.regs.set_reg(1, 0x05FA_0004);
+    machine.cpu.regs.primask = 1;
+    machine.cpu.nvic.vtor = 0x800;
+    machine.cpu.nvic.iser[0] = 1;
+    machine.cpu.nvic.ispr[0] = 1;
+    machine.cpu.nvic.syst_csr = 7;
+    machine.cpu.cycles = 100;
+    machine.periph.snsys.secondes = 123;
+    machine.bus.write_u32(0x1800_0100, 0x1234_5678,
+        &mut machine.periph, &mut machine.cpu.nvic);
+    machine.bus.write_u32(0x2000_0FFC, 0x5258_4D50,
+        &mut machine.periph, &mut machine.cpu.nvic);
+
+    assert!(matches!(machine.step(), StepResult::Ok(_)));
+    assert!(machine.cpu.nvic.reset_requested);
+    assert!(matches!(machine.step(), StepResult::Ok(_)));
+    assert_eq!(machine.cpu.regs.pc, 0x100);
+    assert_eq!(machine.cpu.regs.msp, 0x1801_E000);
+    assert_eq!(machine.cpu.regs.primask, 0);
+    assert_eq!(machine.cpu.nvic.vtor, 0);
+    assert_eq!(machine.cpu.nvic.iser, [0; 8]);
+    assert_eq!(machine.cpu.nvic.ispr, [0; 8]);
+    assert_eq!(machine.cpu.nvic.syst_csr, 0);
+    assert!(!machine.cpu.nvic.reset_requested);
+    assert!(machine.cpu.cycles > 100);
+    assert_eq!(machine.periph.snsys.secondes, 123);
+    assert_eq!(machine.bus.read_u32(0x1800_0100,
+        &mut machine.periph, &machine.cpu.nvic), 0x1234_5678);
+    assert_eq!(machine.bus.read_u32(0x2000_0FFC,
+        &mut machine.periph, &machine.cpu.nvic), 0x5258_4D50);
+    assert_eq!(&machine.bus.pram.data[..image.len()], image.as_slice());
+    assert!(machine.bus.pram.data[image.len()..].iter().all(|b| *b == 0));
+    assert!(matches!(machine.step(), StepResult::Ok(_)));
+    assert_eq!(machine.cpu.regs.get_reg(2), 90);
+}
+
 /// Dump de la console de l'auteur, absent du depot. Les tests qui en dependent
 /// sont neutres quand il n'est pas la.
 const REAL_DUMP: &str = r"%SONIX_DUMPS%\Tamagotchi_Paradise_Earth_MX25L12835F.bin";

@@ -50,6 +50,9 @@ winresource = "0.1"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 serialport = { version = "4.8", default-features = false }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Le coeur est un interpreteur : il passe son temps dans une poignee de
 # fonctions qui s'appellent des millions de fois par seconde. L'optimisation
 # entre modules et une seule unite de generation permettent de les fondre, ce

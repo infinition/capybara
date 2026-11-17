@@ -745,6 +745,7 @@ impl MemoryBus {
         let page = addr & !0xFFF;
         let off = addr & 0xFFF;
         match page {
+            0x4000_7000 if off < 0x40 => p.timers.read_buzzer_reg(off),
             periph::CHECKSUM => p.crc.read_reg(off),
             // 0x4000E000 et 0x40007000 restent hors modele, et 0x4000A000
             // (UART0) aussi. La premiere porte l'interface serie de la dalle :
@@ -799,6 +800,11 @@ impl MemoryBus {
         let page = addr & !0xFFF;
         let off = addr & 0xFFF;
         match page {
+            0x4000_7000 if off < 0x40 => p.timers.write_buzzer_reg(off, val),
+            periph::SPI0 if off == 0x1C => {
+                let data = p.port0.read_reg(0) & (1 << 5) != 0;
+                p.display.write_panel_byte(data, val as u8);
+            }
             periph::CHECKSUM => {
                 if let Some(c) = p.crc.write_reg(off, val) {
                     self.executer_calcul(c, p);

@@ -102,6 +102,8 @@ pub struct UartHostBridge {
 
     #[cfg(not(target_arch = "wasm32"))]
     serial: Option<Box<dyn serialport::SerialPort>>,
+    #[cfg(unix)]
+    virtual_port: Option<super::virtual_uart::VirtualUart>,
     /// Octets releves par le fil de lecture, en attente d'etre remis au
     /// controleur.
     #[cfg(not(target_arch = "wasm32"))]
@@ -139,6 +141,8 @@ impl Default for UartHostBridge {
             pending_to_host: VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             serial: None,
+            #[cfg(unix)]
+            virtual_port: None,
             #[cfg(not(target_arch = "wasm32"))]
             recus: Arc::new(Mutex::new(VecDeque::new())),
             #[cfg(not(target_arch = "wasm32"))]
@@ -156,6 +160,47 @@ impl Default for UartHostBridge {
 }
 
 impl UartHostBridge {
+    /// Create a local PTY. External native tools open the returned slave path;
+    /// no separate null-modem pairing utility is required.
+    pub fn start_virtual_port(&mut self) -> Result<String, String> {
+        self.disconnect();
+        self.last_error = None;
+        #[cfg(unix)]
+        {
+            match super::virtual_uart::VirtualUart::create() {
+                Ok(port) => {
+                    self.port_name = port.path().to_owned();
+                    self.virtual_port = Some(port);
+                    self.is_connected = true;
+                    self.bytes_sent = 0;
+                    self.bytes_received = 0;
+                    self.compteur_emis.store(0, Ordering::Relaxed);
+                    self.debut_vers_tama.clear();
+                    self.debut_vers_hote.clear();
+                    return Ok(self.port_name.clone());
+                }
+                Err(error) => {
+                    let message = format!("Virtual UART: {error}");
+                    self.last_error = Some(message.clone());
+                    return Err(message);
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let message = "Creating a virtual UART is supported on macOS and Linux".to_owned();
+            self.last_error = Some(message.clone());
+            Err(message)
+        }
+    }
+
+    pub fn virtual_port_name(&self) -> Option<&str> {
+        #[cfg(unix)]
+        { self.virtual_port.as_ref().map(|port| port.path()) }
+        #[cfg(not(unix))]
+        { None }
+    }
+
     /// Cree un pont en memoire deja connecte. Ce constructeur est destine aux
     /// tests et aux transports personnalises.
     pub fn new(port_name: &str, baud_rate: u32) -> Self {
@@ -174,6 +219,8 @@ impl UartHostBridge {
             pending_to_host: VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             serial: None,
+            #[cfg(unix)]
+            virtual_port: None,
             #[cfg(not(target_arch = "wasm32"))]
             recus: Arc::new(Mutex::new(VecDeque::new())),
             #[cfg(not(target_arch = "wasm32"))]
@@ -357,6 +404,8 @@ impl UartHostBridge {
 
     /// Ferme le port sans toucher aux donnees deja emises par le controleur.
     pub fn disconnect(&mut self) {
+        #[cfg(unix)]
+        { self.virtual_port = None; }
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(arret) = self.arret_lecteur.take() {
@@ -428,6 +477,18 @@ impl UartHostBridge {
             return;
         }
 
+        #[cfg(unix)]
+        if let Some(mut port) = self.virtual_port.take() {
+            let result = self.sync_with_stream(uart, &mut port);
+            if let Err(error) = result {
+                self.last_error = Some(format!("Virtual UART: {error}"));
+                self.disconnect();
+            } else {
+                self.virtual_port = Some(port);
+            }
+            return;
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.pending_to_host.extend(uart.drain_hote());
@@ -471,20 +532,36 @@ impl UartHostBridge {
         self.pending_to_host.extend(uart.drain_hote());
         if !self.pending_to_host.is_empty() {
             let donnees = self.pending_to_host.make_contiguous();
-            let n = stream.write(donnees)?;
-            self.pending_to_host.drain(..n);
-            self.bytes_sent += n;
+            match stream.write(donnees) {
+                Ok(n) => {
+                    let diagnostic = self.diagnostic_est_actif();
+                    if diagnostic {
+                        let sent: Vec<_> = self.pending_to_host.iter().take(n).copied().collect();
+                        Self::garder_debut(&mut self.debut_vers_hote, &sent);
+                    }
+                    self.pending_to_host.drain(..n);
+                    self.bytes_sent += n;
+                }
+                Err(e) if attente_normale(&e) || e.kind() == io::ErrorKind::Interrupted => {},
+                Err(e) => return Err(e),
+            }
         }
 
         let mut buf = [0u8; 4096];
-        match stream.read(&mut buf) {
-            Ok(n) if n > 0 => {
-                self.bytes_received += n;
-                uart.inject_rx_bytes(&buf[..n]);
+        for _ in 0..LECTURES_PAR_TOUR {
+            match stream.read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    self.bytes_received += n;
+                    if self.diagnostic_est_actif() {
+                        Self::garder_debut(&mut self.debut_vers_tama, &buf[..n]);
+                    }
+                    uart.inject_rx_bytes(&buf[..n]);
+                }
+                Ok(_) => break,
+                Err(e) if attente_normale(&e) => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
             }
-            Ok(_) => {}
-            Err(e) if attente_normale(&e) => {}
-            Err(e) => return Err(e),
         }
         Ok(())
     }
@@ -546,5 +623,82 @@ mod tests {
         assert_eq!(bridge.host_read(), vec![0x12, 0x34]);
         assert_eq!(bridge.bytes_sent, 2);
         assert_eq!(bridge.bytes_received, 32);
+    }
+
+    #[test]
+    fn nonblocking_backpressure_retains_every_guest_byte() {
+        struct StalledWriter { blocked: bool, written: Vec<u8> }
+        impl Read for StalledWriter {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+        impl Write for StalledWriter {
+            fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+                if self.blocked { return Err(io::ErrorKind::WouldBlock.into()); }
+                let n = data.len().min(3);
+                self.written.extend_from_slice(&data[..n]);
+                Ok(n)
+            }
+            fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        }
+        let mut bridge = UartHostBridge::new("test", 460_800);
+        let mut uart = UartController::new();
+        let mut stream = StalledWriter { blocked: true, written: Vec::new() };
+        let expected: Vec<_> = (0..16).collect();
+        for byte in &expected { uart.write_reg(0, *byte as u32); }
+        uart.tick(40_000, 96_000_000);
+        bridge.sync_with_stream(&mut uart, &mut stream).unwrap();
+        assert_eq!(bridge.pending_bytes(), expected.len());
+        assert_eq!(bridge.bytes_sent, 0);
+        stream.blocked = false;
+        while bridge.pending_bytes() > 0 {
+            bridge.sync_with_stream(&mut uart, &mut stream).unwrap();
+        }
+        assert_eq!(stream.written, expected);
+        assert_eq!(bridge.bytes_sent, expected.len());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn virtual_endpoint_reaches_the_emulated_uart_in_both_directions() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut bridge = UartHostBridge::default();
+        let path = bridge.start_virtual_port().unwrap();
+        assert_eq!(bridge.virtual_port_name(), Some(path.as_str()));
+        let mut client = OpenOptions::new().read(true).write(true)
+            .custom_flags(libc::O_NONBLOCK).open(&path).unwrap();
+        let mut uart = UartController::new();
+        let request = [0, 0x0A, 0x0D, 0x11, 0x13, 0xFF];
+        client.write_all(&request).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while bridge.bytes_received < request.len() {
+            bridge.poll_serial(&mut uart);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        uart.tick(20_000, 96_000_000);
+        let received: Vec<_> = (0..request.len()).map(|_| uart.read_reg(0) as u8).collect();
+        assert_eq!(received, request);
+        let reply = [0xAA, 0x55, 0, 0x0D];
+        for byte in reply { uart.write_reg(0, byte as u32); }
+        uart.tick(20_000, 96_000_000);
+        let mut received = Vec::new();
+        while received.len() < reply.len() {
+            bridge.poll_serial(&mut uart);
+            let mut buffer = [0; 32];
+            match client.read(&mut buffer) {
+                Ok(n) => received.extend_from_slice(&buffer[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
+                other => panic!("PTY client read failed: {other:?}"),
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(received, reply);
+        assert_eq!(bridge.bytes_sent, reply.len());
+        bridge.disconnect();
+        assert!(!bridge.is_connected);
+        assert!(bridge.virtual_port_name().is_none());
     }
 }
