@@ -6,6 +6,19 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag, e.g. v0.2.2-plus.1 (built from the selected branch)'
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.version || github.ref_name }}
+
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -17,6 +30,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG"
+            exit 1
+          fi
+          existing=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}" 2>/dev/null || true)
+          if [[ -n "$existing" && "$existing" != "$GITHUB_SHA" ]]; then
+            echo "Tag $RELEASE_TAG already points to another commit"
+            exit 1
+          fi
       - name: Aucune donnee de console suivie par git
         run: |
           set -e
@@ -81,7 +109,7 @@ jobs:
           cp "target/${{ matrix.cible }}/release/capybara.exe" paquet/
           cp assets/capybara.ico paquet/
           cp README.md LICENSE index.html paquet/
-          7z a "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.zip" ./paquet/*
+          7z a "capybara-${RELEASE_TAG}-${{ matrix.nom }}.zip" ./paquet/*
 
       - name: Paquet Debian et AppImage
         if: runner.os == 'Linux'
@@ -92,7 +120,7 @@ jobs:
           # target/release : on lui donne la cible explicitement.
           cargo install cargo-deb --locked
           cargo deb --no-build --target ${{ matrix.cible }} --output \
-            "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.deb"
+            "capybara-${RELEASE_TAG}-${{ matrix.nom }}.deb"
 
           # AppImage monte a la main plutot que par linuxdeploy : l'arbre est
           # trivial et les greffons de linuxdeploy cassent souvent en CI.
@@ -109,41 +137,21 @@ jobs:
           chmod +x appimagetool-x86_64.AppImage
           # Sans FUSE dans le conteneur, appimagetool doit s'extraire lui meme.
           ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir \
-            "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.AppImage"
+            "capybara-${RELEASE_TAG}-${{ matrix.nom }}.AppImage"
 
       - name: Paquet macOS
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -e
-          # Un bundle .app monte a la main. Il n'est pas signe : voir la note
-          # de la release pour le contournement de Gatekeeper.
-          APP="Capybara.app"
-          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-          cp "target/${{ matrix.cible }}/release/capybara" "$APP/Contents/MacOS/"
-          cp assets/icone.png "$APP/Contents/Resources/capybara.png"
-          cat > "$APP/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>CFBundleName</key><string>Capybara</string>
-            <key>CFBundleDisplayName</key><string>Capybara</string>
-            <key>CFBundleIdentifier</key><string>io.github.infinition.capybara</string>
-            <key>CFBundleExecutable</key><string>capybara</string>
-            <key>CFBundleVersion</key><string>${GITHUB_REF_NAME#v}</string>
-            <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>LSUIElement</key><false/>
-            <key>LSMinimumSystemVersion</key><string>10.15</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict></plist>
-          PLIST
+          sh scripts/package-macos.sh
+          APP="target/macos/Capybara.app"
           mkdir -p paquet
           cp -R "$APP" paquet/
           cp README.md LICENSE index.html paquet/
           # ditto plutot que zip : il preserve la structure du bundle.
           ditto -c -k --sequesterRsrc --keepParent paquet \
-            "capybara-${GITHUB_REF_NAME}-${{ matrix.nom }}.zip"
+            "capybara-${RELEASE_TAG}-${{ matrix.nom }}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -173,15 +181,15 @@ jobs:
         shell: bash
         run: |
           set -e
-          precedente=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          precedente=$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)
           if [ -z "$precedente" ]; then
             echo "Premiere version." > journal.md
             echo "" >> journal.md
-            git log --pretty=format:'- %s' "${GITHUB_REF_NAME}" | head -50 >> journal.md
+            git log --pretty=format:'- %s' --max-count=50 "$GITHUB_SHA" >> journal.md
           else
             echo "Changements depuis \`${precedente}\`." > journal.md
             echo "" >> journal.md
-            git log --pretty=format:'- %s' "${precedente}..${GITHUB_REF_NAME}" >> journal.md
+            git log --pretty=format:'- %s' "${precedente}..${GITHUB_SHA}" >> journal.md
           fi
           cat >> journal.md <<'NOTE'
 
@@ -211,6 +219,9 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          name: Capybara ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: Capybara ${{ env.RELEASE_TAG }}
+          fail_on_unmatched_files: true
           body_path: journal.md
           files: paquets/*
