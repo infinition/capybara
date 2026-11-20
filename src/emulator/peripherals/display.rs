@@ -28,7 +28,7 @@ pub struct DisplayController {
     pub fb_base_addr: u32,
     pub width: usize,
     pub height: usize,
-    pub vram: Vec<u16>, // 128x128 RGB565 buffer
+    pub vram: Vec<u16>, // RGB565 framebuffer
     pub is_enabled: bool,
     pub dirty: bool,
     /// Nombre de trames recues du controleur de transferts. Un compteur fige
@@ -36,6 +36,8 @@ pub struct DisplayController {
     pub trames: u64,
     #[serde(default)]
     stream: PanelStream,
+    #[serde(default)]
+    pub my_lab: bool,
 }
 
 impl Default for DisplayController {
@@ -56,6 +58,22 @@ impl DisplayController {
             dirty: true,
             trames: 0,
             stream: PanelStream::default(),
+            my_lab: false,
+        }
+    }
+
+    pub fn for_my_lab() -> Self {
+        let mut lcd = Self { my_lab: true, ..Self::default() };
+        lcd.resize(160, 128);
+        lcd
+    }
+
+    fn resize(&mut self, width: usize, height: usize) {
+        if width != 0 && height != 0 && width <= 512 && height <= 512 {
+            self.width = width;
+            self.height = height;
+            self.vram.resize(width * height, 0);
+            self.dirty = true;
         }
     }
 
@@ -76,8 +94,7 @@ impl DisplayController {
             }
             0x04 => self.fb_base_addr = val,
             0x08 => {
-                self.width = (val & 0xFFFF) as usize;
-                self.height = (val >> 16) as usize;
+                self.resize((val & 0xFFFF) as usize, (val >> 16) as usize);
             }
             _ => {}
         }
@@ -124,22 +141,33 @@ impl DisplayController {
             }
             0x2C => {
                 if let Some(high) = self.stream.high.take() {
-                    let x = self.stream.x;
-                    let y = self.stream.y;
-                    if x >= 2 && y >= 1 {
-                        self.write_vram_pixel((x - 2) as usize, (y - 1) as usize,
-                            u16::from_be_bytes([high, byte]));
-                    }
-                    if x >= self.stream.columns[1] {
-                        self.stream.x = self.stream.columns[0];
-                        if y >= self.stream.rows[1] {
-                            self.stream.y = self.stream.rows[0];
-                            self.trames += 1;
-                        } else { self.stream.y = y.saturating_add(1); }
-                    } else { self.stream.x = x.saturating_add(1); }
+                    self.write_panel_pixel(u16::from_be_bytes([high, byte]));
                 } else { self.stream.high = Some(byte); }
             }
             _ => {}
+        }
+    }
+
+    fn write_panel_pixel(&mut self, pixel: u16) {
+        let (x, y) = (self.stream.x, self.stream.y);
+        if self.my_lab {
+            // The LCD controller uses portrait coordinates in the landscape shell.
+            if let Some(column) = (self.width - 1).checked_sub(y as usize) {
+                self.write_vram_pixel(column, x as usize, pixel);
+            }
+        } else if x >= 2 && y >= 1 {
+            self.write_vram_pixel((x - 2) as usize, (y - 1) as usize, pixel);
+        }
+        if x >= self.stream.columns[1] {
+            self.stream.x = self.stream.columns[0];
+            if y >= self.stream.rows[1] {
+                self.stream.y = self.stream.rows[0];
+                self.trames += 1;
+            } else {
+                self.stream.y = y.saturating_add(1);
+            }
+        } else {
+            self.stream.x = x.saturating_add(1);
         }
     }
 
@@ -150,6 +178,12 @@ impl DisplayController {
     /// d'image dans le registre de donnees. Une trame plus courte que l'ecran
     /// n'ecrase que son debut, une trame plus longue est tronquee.
     pub fn recevoir_trame(&mut self, pixels: &[u16]) {
+        if self.my_lab && self.stream.command == 0x2c {
+            for &pixel in pixels {
+                self.write_panel_pixel(pixel);
+            }
+            return;
+        }
         let n = pixels.len().min(self.vram.len());
         self.vram[..n].copy_from_slice(&pixels[..n]);
         self.dirty = true;

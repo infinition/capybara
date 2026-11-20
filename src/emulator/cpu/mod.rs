@@ -178,22 +178,7 @@ impl Cpu {
 
         match result {
             StepResult::Ok(c) => {
-                self.cycles += c as u64;
-                // Le bus realise la copie du controleur de transferts mais ne
-                // voit pas le NVIC : la fin de transfert se signale ici. Elle
-                // reste hors du regroupement, un simple drapeau ne coutant rien
-                // et l'ecran attendant cette interruption au plus tot.
-                if periph.dma.irq_a_lever {
-                    periph.dma.irq_a_lever = false;
-                    self.nvic
-                        .request_irq(crate::emulator::peripherals::dma::IRQ);
-                }
-                self.cycles_en_attente += c as u32;
-                if self.cycles_en_attente >= Self::GRAIN_PERIPHERIQUES {
-                    let ecoules = self.cycles_en_attente;
-                    self.cycles_en_attente = 0;
-                    self.entretenir_peripheriques(ecoules, periph);
-                }
+                self.finish_execution(c as u32, periph);
                 StepResult::Ok(c)
             }
             StepResult::Breakpoint => StepResult::Breakpoint,
@@ -216,6 +201,21 @@ impl Cpu {
     /// Deux cent cinquante six cycles valent moins de trois microsecondes a
     /// 96 MHz, cent fois plus fin que la plus courte echeance du firmware.
     const GRAIN_PERIPHERIQUES: u32 = 256;
+
+    #[inline(always)]
+    pub(crate) fn finish_execution(&mut self, cycles: u32, periph: &mut Peripherals) {
+        self.cycles += u64::from(cycles);
+        if periph.dma.irq_a_lever {
+            periph.dma.irq_a_lever = false;
+            self.nvic.request_irq(crate::emulator::peripherals::dma::IRQ);
+        }
+        self.cycles_en_attente += cycles;
+        if self.cycles_en_attente >= Self::GRAIN_PERIPHERIQUES {
+            let elapsed = self.cycles_en_attente;
+            self.cycles_en_attente = 0;
+            self.entretenir_peripheriques(elapsed, periph);
+        }
+    }
 
     /// Fait avancer tout ce qui vit au rythme des cycles.
     fn entretenir_peripheriques(&mut self, ecoules: u32, periph: &mut Peripherals) {

@@ -190,6 +190,15 @@ pub struct TamagotchiApp {
     recorder: Option<crate::capture::Recorder>,
     capture_notice: Option<(String, std::time::Instant)>,
     screen_only: bool,
+    screen_scale: u8,
+    sd_notice: Option<String>,
+    machine_profile: Option<String>,
+    machines_open: bool,
+    machines_previous_size: Option<egui::Vec2>,
+    machine_name_input: String,
+    peer_port_input: String,
+    machine_notice: Option<String>,
+    restoring_mode: Option<Mode>,
     pub i18n: I18n,
     pub shell_color: ShellColor,
     pub hex_base_addr: u32,
@@ -361,6 +370,10 @@ pub struct TamagotchiApp {
 
 impl TamagotchiApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        Self::new_for_machine(cc, None)
+    }
+
+    pub fn new_for_machine(cc: &eframe::CreationContext<'_>, machine_profile: Option<String>) -> Self {
         let audio = AudioEngine::new();
         let i18n = I18n::default();
         let message_initial = i18n
@@ -391,6 +404,15 @@ impl TamagotchiApp {
             recorder: None,
             capture_notice: None,
             screen_only: false,
+            screen_scale: 4,
+            sd_notice: None,
+            machine_profile,
+            machines_open: false,
+            machines_previous_size: None,
+            machine_name_input: String::new(),
+            peer_port_input: String::new(),
+            machine_notice: None,
+            restoring_mode: None,
             i18n,
             shell_color: ShellColor::BlueWater,
             hex_base_addr: 0x6001_1000,
@@ -590,17 +612,17 @@ impl TamagotchiApp {
     /// Note le dump et l'emplacement en cours, pour les retrouver au prochain
     /// lancement.
     fn retenir_la_partie(&self) {
-        // Rien a retenir tant qu'aucun dump n'est reellement charge : ecrire le
-        // chemin d'un fichier qui a echoue le ferait retenter a chaque
-        // lancement.
-        if self.load_path_input.is_empty() || self.machine.empreinte.is_none() {
-            return;
-        }
+        // Persist display preferences even before a firmware has been loaded.
+        let dump = if self.machine.empreinte.is_some() {
+            self.load_path_input.clone()
+        } else {
+            String::new()
+        };
         crate::emulator::sauvegarde::ecrire_derniere_partie(
             &crate::emulator::sauvegarde::DernierePartie {
-                dump: self.load_path_input.clone(),
+                dump,
                 emplacement: self.emplacement_choisi.clone(),
-                mode: match self.mode {
+                mode: match self.restoring_mode.unwrap_or(self.mode) {
                     Mode::Accueil => "accueil",
                     Mode::Jeu => "jeu",
                     Mode::Inspection => "inspection",
@@ -612,6 +634,7 @@ impl TamagotchiApp {
                 coque: self.shell_color.nom().to_string(),
                 zoom_jeu: self.zoom_jeu,
                 screen_only: self.screen_only,
+                screen_scale: self.screen_scale,
                 toujours_devant: self.toujours_devant,
                 langue: self.i18n.language().code().to_string(),
                 touches: self.touches.clone(),
@@ -638,6 +661,7 @@ impl TamagotchiApp {
         self.audio.hauteur = if partie.hauteur > 0.0 { partie.hauteur } else { 1.0 };
         self.zoom_jeu = if partie.zoom_jeu > 0.0 { partie.zoom_jeu.clamp(0.5, 3.0) } else { 1.0 };
         self.screen_only = partie.screen_only;
+        self.screen_scale = partie.screen_scale.clamp(1, 4);
         self.toujours_devant = partie.toujours_devant;
         self.touches = partie.touches.clone();
         self.souris = partie.souris;
@@ -650,27 +674,28 @@ impl TamagotchiApp {
             Language::Fr
         });
 
-        let chemin = std::path::PathBuf::from(&partie.dump);
-        if !chemin.is_file() {
-            return;
-        }
-        self.load_firmware(chemin);
-        if !partie.emplacement.is_empty() && partie.emplacement != self.emplacement_choisi {
-            self.ouvrir_emplacement(partie.emplacement);
-        }
-        // La coque suit l'edition par defaut ; un choix a la main la remplace.
-        if let Some(coque) =
-            ShellColor::TOUTES.iter().find(|c| c.nom() == partie.coque)
-        {
-            self.shell_color = *coque;
-        }
-        // On ne rallume en mode jeu que si la console y est prete : sans dump
-        // demarrable, l'accueil est le seul endroit ou faire quelque chose.
-        self.mode = match partie.mode.as_str() {
-            "jeu" if self.machine.is_running => Mode::Jeu,
+        let saved_mode = match partie.mode.as_str() {
+            "jeu" => Mode::Jeu,
             "inspection" => Mode::Inspection,
             _ => Mode::Accueil,
         };
+        let chemin = std::path::PathBuf::from(&partie.dump);
+        if chemin.is_file() {
+            // Loading the dump opens a save slot and writes preferences. Keep
+            // the requested mode while an encrypted dump is still loading.
+            self.restoring_mode = Some(saved_mode);
+            self.load_firmware(chemin);
+            if !partie.emplacement.is_empty() && partie.emplacement != self.emplacement_choisi {
+                self.ouvrir_emplacement(partie.emplacement);
+            }
+        }
+        if let Some(coque) = ShellColor::TOUTES.iter().find(|c| c.nom() == partie.coque) {
+            self.shell_color = *coque;
+        }
+        if saved_mode != Mode::Jeu || self.machine.is_running {
+            self.mode = saved_mode;
+            self.restoring_mode = None;
+        }
     }
 
     /// Recopie la partie sur le disque quand le jeu a ecrit sa flash.
@@ -714,6 +739,7 @@ impl TamagotchiApp {
         match self.machine.load_firmware_file(&path) {
             Ok(report) => {
                 self.load_path_input = nouveau_chemin;
+                self.mode_applique = None;
                 self.ecran = None;
                 self.table_scenes = None;
                 // Les dumps Earth et Land ont ete extraits pile faible : sans
@@ -1214,10 +1240,55 @@ impl TamagotchiApp {
         }
     }
 
+    fn lcd_resolution(&self) -> String {
+        let lcd = &self.machine.periph.display;
+        format!("{} × {}", lcd.width, lcd.height)
+    }
+
+    fn my_lab_sd_controls(&mut self, ui: &mut egui::Ui) {
+        if !self.machine.periph.display.my_lab {
+            return;
+        }
+        if ui.button(self.i18n.choisir("Monter un dossier SD…", "Mount SD folder…")).clicked() {
+            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                self.mount_my_lab_sd(path);
+            }
+        }
+        if let Some(card) = &self.machine.my_lab_card {
+            let path = card.directory.clone();
+            ui.label(format!("{} ({} {})", path.file_name().unwrap_or(path.as_os_str()).to_string_lossy(),
+                card.read_count, self.i18n.choisir("secteurs lus", "sectors read")))
+                .on_hover_text(path.display().to_string());
+            if ui.button(self.i18n.choisir("Recharger le dossier", "Refresh SD folder")).clicked() {
+                self.mount_my_lab_sd(path);
+            }
+            if ui.button(self.i18n.choisir("Ejecter la carte SD", "Eject SD card")).clicked() {
+                self.machine.my_lab_card = None;
+                self.sd_notice = None;
+            }
+        }
+        if let Some(notice) = &self.sd_notice {
+            ui.label(notice);
+        }
+    }
+
+    fn mount_my_lab_sd(&mut self, path: std::path::PathBuf) {
+        match crate::emulator::my_lab_sd::Card::open(path) {
+            Ok(card) => {
+                self.machine.my_lab_card = Some(card);
+                self.sd_notice = None;
+            }
+            Err(error) => self.sd_notice = Some(error),
+        }
+    }
+
+    fn lcd_only(&self) -> bool {
+        self.screen_only || self.machine.periph.display.my_lab
+    }
+
     fn dessiner_ecran_seul(&mut self, ctx: &Context, ui: &mut egui::Ui, zone: egui::Rect, response: &egui::Response) {
         ui.painter().rect_filled(zone, 0.0, Color32::BLACK);
-        let size = zone.width().min(zone.height());
-        let rect = egui::Rect::from_center_size(zone.center(), egui::vec2(size, size));
+        let rect = crate::ui::lcd_panel::fit_lcd(zone, &self.machine.periph.display);
         if self.machine.periph.display.is_enabled {
             if let Some(texture) = &self.ecran {
                 ui.painter().image(texture.id(), rect,
@@ -1251,8 +1322,8 @@ impl TamagotchiApp {
     fn rafraichir_la_texture(&mut self, ctx: &Context) {
         // L'ecran est une texture : la retesseler en seize mille rectangles a
         // chaque image mangeait le temps qui doit aller a l'emulation.
-        if self.machine.periph.display.dirty || self.ecran.is_none() {
-            let d = &self.machine.periph.display;
+        let d = &self.machine.periph.display;
+        if d.dirty || self.ecran.as_ref().is_none_or(|texture| texture.size() != [d.width, d.height]) {
             let mut pixels = Vec::with_capacity(d.width * d.height);
             for &brut in &d.vram {
                 let r = (((brut >> 11) & 0x1F) * 255 / 31) as u8;
@@ -2325,6 +2396,94 @@ impl TamagotchiApp {
         });
     }
 
+    fn bouton_machines(&mut self, ui: &mut egui::Ui) {
+        if ui.button(self.i18n.choisir("Machines…", "Machines…")).clicked() {
+            self.machines_open = true;
+            ui.close_menu();
+        }
+    }
+
+    fn dessiner_machines(&mut self, ctx: &Context) {
+        if !self.machines_open {
+            return;
+        }
+        let available = ctx.screen_rect().size();
+        let dialog_size = egui::vec2(360.0, 320.0);
+        if self.mode == Mode::Jeu && self.lcd_only()
+            && (available.x < dialog_size.x || available.y < dialog_size.y)
+            && self.machines_previous_size.is_none()
+        {
+            self.machines_previous_size = Some(available);
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(available.max(dialog_size)));
+        }
+        let mut open = !ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        egui::Window::new("Machines").open(&mut open).collapsible(false).show(ctx, |ui| {
+            ui.label(self.machine_profile.as_deref().unwrap_or(self.i18n.choisir("Principale", "Main")));
+            ui.label(self.i18n.choisir("Nom : lettres minuscules, chiffres ou tirets", "Name: lowercase letters, digits or hyphens"));
+            ui.text_edit_singleline(&mut self.machine_name_input);
+            if ui.button(self.i18n.choisir("Ouvrir une machine", "Open machine")).clicked() {
+                let name = self.machine_name_input.trim();
+                self.machine_notice = match std::env::current_exe().and_then(|exe| {
+                    std::process::Command::new(exe).arg(format!("--machine={name}")).spawn()
+                }) {
+                    Ok(mut child) => {
+                        std::thread::spawn(move || { let _ = child.wait(); });
+                        None
+                    }
+                    Err(error) => Some(error.to_string()),
+                };
+            }
+            ui.separator();
+            ui.label("UART");
+            if let Some(port) = self.uart_bridge.machine_listening_port() {
+                ui.label(format!("{} {port}", self.i18n.choisir("En attente sur le port", "Waiting on port")));
+                if ui.button(self.i18n.choisir("Copier le port", "Copy port")).clicked() {
+                    ui.output_mut(|out| out.copied_text = port.to_string());
+                }
+            } else if self.uart_bridge.machine_connected() {
+                ui.label(self.i18n.choisir("Machine connectee", "Machine connected"));
+            } else if self.uart_bridge.is_connected {
+                ui.label(&self.uart_bridge.port_name);
+            } else {
+                if ui.button(self.i18n.choisir("Attendre une machine", "Listen for machine")).clicked() {
+                    self.machine_notice = self.uart_bridge.listen_for_machine().err().map(|e| e.to_string());
+                }
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut self.peer_port_input)
+                        .hint_text(self.i18n.choisir("Port de l'autre machine", "Other machine's port"))
+                        .desired_width(128.0));
+                    let port = self.peer_port_input.trim().parse::<u16>().ok().filter(|&port| port != 0);
+                    if ui.add_enabled(port.is_some(), egui::Button::new(self.i18n.choisir("Connecter", "Connect"))).clicked() {
+                        if let Some(port) = port {
+                            self.machine_notice = match self.uart_bridge.connect_to_machine(port) {
+                                Ok(()) => {
+                                    self.machine.periph.uart.vider_la_ligne();
+                                    None
+                                }
+                                Err(error) => Some(error.to_string()),
+                            };
+                        }
+                    }
+                });
+            }
+            if (self.uart_bridge.is_connected || self.uart_bridge.machine_listening_port().is_some())
+                && ui.button(self.i18n.choisir("Deconnecter", "Disconnect")).clicked()
+            {
+                self.uart_bridge.disconnect();
+                self.machine.periph.uart.vider_la_ligne();
+            }
+            if let Some(error) = self.machine_notice.as_ref().or(self.uart_bridge.last_error.as_ref()) {
+                ui.label(error);
+            }
+        });
+        self.machines_open = open;
+        if !open {
+            if let Some(size) = self.machines_previous_size.take() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+            }
+        }
+    }
+
     /// Pose la fenetre pour le mode courant, une seule fois par changement.
     fn appliquer_le_mode(&mut self, ctx: &Context) {
         use egui::ViewportCommand as Cmd;
@@ -2333,16 +2492,28 @@ impl TamagotchiApp {
         }
         self.mode_applique = Some(self.mode);
         self.retenir_la_partie();
+        let screen = self.mode == Mode::Jeu && self.lcd_only();
+        let lcd = &self.machine.periph.display;
+        let native = egui::vec2(lcd.width as f32, lcd.height as f32);
+        let min_size = if screen { native } else { egui::vec2(300.0, 380.0) };
+        ctx.send_viewport_cmd(Cmd::MinInnerSize(min_size));
+        let mut title = if self.machine.empreinte.is_some() {
+            format!("{} · Capybara", self.lcd_resolution())
+        } else {
+            "Capybara".to_owned()
+        };
+        if let Some(profile) = &self.machine_profile {
+            title.push_str(&format!(" · {profile}"));
+        }
+        ctx.send_viewport_cmd(Cmd::Title(title));
         match self.mode {
             Mode::Accueil => {
                 ctx.send_viewport_cmd(Cmd::Decorations(true));
                 ctx.send_viewport_cmd(Cmd::InnerSize(egui::vec2(560.0, 600.0)));
             }
             Mode::Jeu => {
-                // Sans cadre ni barre de titre : ne reste que la coque,
-                // decoupee sur le bureau. La fenetre garde la proportion de
-                // l'oeuf, un peu plus haute que large.
-                ctx.send_viewport_cmd(Cmd::Decorations(false));
+                // Le mode coque reste decoupe, l'ecran seul garde le cadre systeme.
+                ctx.send_viewport_cmd(Cmd::Decorations(self.lcd_only()));
                 ctx.send_viewport_cmd(Cmd::WindowLevel(if self.toujours_devant {
                     egui::viewport::WindowLevel::AlwaysOnTop
                 } else {
@@ -2351,9 +2522,12 @@ impl TamagotchiApp {
                 // Forme de la console : 6,5 sur 7,5, plus le debord de la
                 // molette. La fenetre est donc presque carree.
                 let z = self.zoom_jeu.clamp(0.5, 3.0);
-                let size = if self.screen_only { egui::vec2(512.0, 512.0) }
-                    else { egui::vec2(430.0, 450.0) };
-                ctx.send_viewport_cmd(Cmd::InnerSize(size * z));
+                let size = if self.lcd_only() {
+                    native * f32::from(self.screen_scale)
+                } else {
+                    egui::vec2(430.0, 450.0) * z
+                };
+                ctx.send_viewport_cmd(Cmd::InnerSize(size));
             }
             Mode::Inspection => {
                 ctx.send_viewport_cmd(Cmd::Decorations(true));
@@ -2366,6 +2540,7 @@ impl TamagotchiApp {
     fn dessiner_accueil(&mut self, ctx: &Context) {
         CentralPanel::default().show(ctx, |ui| {
             self.dessiner_langue(ui);
+            self.bouton_machines(ui);
             ui.add_space(24.0);
             ui.vertical_centered(|ui| {
                 ui.label(egui::RichText::new("Capybara").size(28.0).strong());
@@ -2484,6 +2659,9 @@ impl TamagotchiApp {
                 }
             });
 
+            if self.machine.periph.display.my_lab {
+                ui.group(|ui| self.my_lab_sd_controls(ui));
+            }
             ui.add_space(16.0);
 
             ui.vertical_centered(|ui| {
@@ -2536,7 +2714,7 @@ impl TamagotchiApp {
     fn decouper_la_fenetre(&mut self, ctx: &Context, frame: &eframe::Frame) {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-        let actif = self.couleur_cle_active && self.mode == Mode::Jeu && !self.screen_only;
+        let actif = self.couleur_cle_active && self.mode == Mode::Jeu && !self.lcd_only();
         let (contour, antenne) = &self.silhouette;
         // Une empreinte de la geometrie : inutile de refaire la region tant que
         // la coque n'a ni bouge ni change de taille.
@@ -2817,7 +2995,7 @@ impl TamagotchiApp {
                 });
 
                 let fond = ui.allocate_rect(zone, egui::Sense::click_and_drag());
-                if fond.drag_started() {
+                if fond.drag_started() && !self.lcd_only() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
                 if fond.secondary_clicked() {
@@ -2825,7 +3003,7 @@ impl TamagotchiApp {
                 }
 
                 self.rafraichir_la_texture(ctx);
-                if self.screen_only {
+                if self.lcd_only() {
                     self.dessiner_ecran_seul(ctx, ui, zone, &fond);
                 } else {
                     self.dessiner_la_console(ctx, ui, zone);
@@ -2857,20 +3035,48 @@ impl TamagotchiApp {
                 fond.context_menu(|ui| {
                     menu_dessine = true;
                     let mut only = self.screen_only;
-                    if ui.checkbox(&mut only, self.i18n.choisir("Ecran seul", "Screen only")).changed() {
+                    if !self.machine.periph.display.my_lab &&
+                        ui.checkbox(&mut only, self.i18n.choisir("Ecran seul", "Screen only")).changed()
+                    {
                         self.screen_only = only;
                         self.mode_applique = None;
                         self.retenir_la_partie();
                         ui.close_menu();
                     }
-                    self.dessiner_captures(ui);
+                    ui.label(format!("LCD {}", self.lcd_resolution()));
+                    if self.lcd_only() {
+                        ui.horizontal(|ui| {
+                            for scale in 1..=4 {
+                                if ui.selectable_label(self.screen_scale == scale, format!("{scale}×")).clicked() {
+                                    self.screen_scale = scale;
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                                    self.mode_applique = None;
+                                    self.retenir_la_partie();
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                    }
+                    self.bouton_machines(ui);
+                    let compact = self.lcd_only() && zone.width() < 260.0;
+                    if !compact {
+                        self.dessiner_captures(ui);
+                    }
                     ui.separator();
                     // Des sections qui se deplient sur place, et non des sous
                     // menus. La fenetre du mode jeu fait quatre cents pixels de
                     // large : un sous menu n'y tient pas a droite, egui le
                     // renvoie a gauche, et il recouvre le menu qui l'a ouvert.
-                    ui.set_min_width(210.0);
-                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                    if !compact {
+                        ui.set_min_width(210.0);
+                    }
+                    egui::ScrollArea::vertical().max_height(if compact { 48.0 } else { 360.0 }).show(ui, |ui| {
+                        if self.machine.periph.display.my_lab {
+                            section(ui, &mut section_ouverte, 6, "SD", |ui| self.my_lab_sd_controls(ui));
+                        }
+                        if compact {
+                            section(ui, &mut section_ouverte, 5, "Capture", |ui| self.dessiner_captures(ui));
+                        }
                         section(ui, &mut section_ouverte, 0, self.i18n.choisir("Partie", "Game"), |ui| {
                             if self.machine.empreinte.is_none() {
                                 ui.label(egui::RichText::new(self.i18n.choisir("Aucune console chargee.", "No console loaded.")).small());
@@ -3006,20 +3212,22 @@ impl TamagotchiApp {
                             }
                         });
 
-                        section(ui, &mut section_ouverte, 3, self.i18n.choisir("Taille", "Size"), |ui| {
-                            if ui.button(self.i18n.choisir("Agrandir de 25 %", "Increase by 25%" )).clicked() {
-                                zoom_voulu = Some((self.zoom_jeu * 1.25).min(3.0));
-                                ui.close_menu();
-                            }
-                            if ui.button(self.i18n.choisir("Reduire de 25 %", "Decrease by 25%" )).clicked() {
-                                zoom_voulu = Some((self.zoom_jeu / 1.25).max(0.5));
-                                ui.close_menu();
-                            }
-                            if ui.button(self.i18n.choisir("Taille d'origine", "Original size")).clicked() {
-                                zoom_voulu = Some(1.0);
-                                ui.close_menu();
-                            }
-                        });
+                        if !self.lcd_only() {
+                            section(ui, &mut section_ouverte, 3, self.i18n.choisir("Taille", "Size"), |ui| {
+                                if ui.button(self.i18n.choisir("Agrandir de 25 %", "Increase by 25%" )).clicked() {
+                                    zoom_voulu = Some((self.zoom_jeu * 1.25).min(3.0));
+                                    ui.close_menu();
+                                }
+                                if ui.button(self.i18n.choisir("Reduire de 25 %", "Decrease by 25%" )).clicked() {
+                                    zoom_voulu = Some((self.zoom_jeu / 1.25).max(0.5));
+                                    ui.close_menu();
+                                }
+                                if ui.button(self.i18n.choisir("Taille d'origine", "Original size")).clicked() {
+                                    zoom_voulu = Some(1.0);
+                                    ui.close_menu();
+                                }
+                            });
+                        }
 
                         ui.separator();
 
@@ -3161,7 +3369,7 @@ impl eframe::App for TamagotchiApp {
         // Un fond transparent que la carte refuse de composer devient un carre
         // noir. Mieux vaut alors une fenetre ordinaire qu'un trou : le reglage
         // permet de retomber dessus sans rien deviner.
-        if self.mode == Mode::Jeu && self.fond_transparent && !self.screen_only {
+        if self.mode == Mode::Jeu && self.fond_transparent && !self.lcd_only() {
             [0.0, 0.0, 0.0, 0.0]
         } else {
             visuals.panel_fill.to_normalized_gamma_f32()
@@ -3280,6 +3488,7 @@ impl eframe::App for TamagotchiApp {
         // saisie est ouvert : taper un nom de partie appuyait sur A et sur C,
         // et derouler le menu du clic droit faisait tourner la molette.
         let mut interface_occupee = ctx.wants_keyboard_input()
+            || self.machines_open
             || self.saisie_sauvegarde.is_some()
             || self.suppression_demandee.is_some()
             || ctx.memory(|m| m.any_popup_open())
@@ -3549,7 +3758,22 @@ impl eframe::App for TamagotchiApp {
             self.papier_a_relire = false;
             self.recharger_le_papier(ctx);
         }
+        if self.machine.is_running {
+            if let Some(mode) = self.restoring_mode.take() {
+                self.mode = mode;
+            }
+        }
+        if self.mode == Mode::Jeu && self.lcd_only() && !self.machines_open && !ctx.wants_keyboard_input() {
+            for (key, scale) in [(egui::Key::Num1, 1), (egui::Key::Num2, 2), (egui::Key::Num3, 3), (egui::Key::Num4, 4)] {
+                if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, key)) {
+                    self.screen_scale = scale;
+                    self.mode_applique = None;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                }
+            }
+        }
         self.appliquer_le_mode(ctx);
+        self.dessiner_machines(ctx);
         self.dessiner_la_saisie(ctx);
         self.dessiner_la_suppression(ctx);
         match self.mode {
@@ -3583,6 +3807,7 @@ impl eframe::App for TamagotchiApp {
                     self.mode = Mode::Accueil;
                 }
                 self.menu_des_consoles(ui);
+                self.bouton_machines(ui);
                 ui.separator();
                 self.dessiner_langue(ui);
                 // Le son, la coque et l'inspecteur de flash sont partis dans
@@ -3897,6 +4122,10 @@ impl eframe::App for TamagotchiApp {
                     } // fin de l'onglet Sauvegardes
 
                     if self.onglet == Onglet::Console {
+                    ui.label(format!("LCD {}", self.lcd_resolution()));
+                    if self.machine.periph.display.my_lab {
+                        ui.group(|ui| self.my_lab_sd_controls(ui));
+                    }
                     ui.separator();
                     ui.group(|ui| {
                         ui.label(egui::RichText::new(self.i18n.choisir("Captures", "Capture")).strong());
@@ -4037,7 +4266,7 @@ impl eframe::App for TamagotchiApp {
                                 if ui.button(self.i18n.choisir("Demarrer le serveur local", "Start local server")).clicked() {
                                     match crate::web::demarrer(
                                         std::sync::Arc::clone(&self.partage),
-                                        7340,
+                                        if self.machine_profile.is_some() { 0 } else { 7340 },
                                     ) {
                                         Ok((port, temoin)) => {
                                             self.port_web = Some(port);
@@ -4208,7 +4437,12 @@ impl eframe::App for TamagotchiApp {
             let available_rect = ui.available_rect_before_wrap();
 
             self.rafraichir_la_texture(ctx);
-            self.dessiner_la_console(ctx, ui, available_rect);
+            if self.lcd_only() {
+                let screen = ui.allocate_rect(available_rect, egui::Sense::click_and_drag());
+                self.dessiner_ecran_seul(ctx, ui, available_rect, &screen);
+            } else {
+                self.dessiner_la_console(ctx, ui, available_rect);
+            }
         });
 
         // 6. Modals

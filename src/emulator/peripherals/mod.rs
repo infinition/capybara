@@ -1,5 +1,6 @@
 pub mod adc;
 pub mod crc;
+pub mod crypto;
 pub mod display;
 pub mod flashctl;
 pub mod fuses;
@@ -49,6 +50,8 @@ pub struct Peripherals {
     pub adc: [SarAdc; 2],
     pub flashctl: FlashController,
     pub crc: ChecksumUnit,
+    #[serde(default)]
+    pub crypto: crypto::Crypto,
     pub adc_pile: AdcPile,
     #[serde(default)]
     pub tic: TicSysteme,
@@ -78,6 +81,7 @@ impl Default for Peripherals {
             adc: Default::default(),
             flashctl: FlashController::default(),
             crc: ChecksumUnit::default(),
+            crypto: crypto::Crypto::default(),
             adc_pile: AdcPile::default(),
             tic: TicSysteme::default(),
             dma: DmaController::default(),

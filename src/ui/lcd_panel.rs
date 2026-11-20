@@ -5,6 +5,13 @@ use crate::gui::ShellColor;
 
 pub struct LcdPanel;
 
+/// Fit the native pixel grid inside a viewport without stretching either axis.
+pub(crate) fn fit_lcd(bounds: Rect, display: &DisplayController) -> Rect {
+    let native = vec2(display.width.max(1) as f32, display.height.max(1) as f32);
+    let scale = (bounds.width() / native.x).min(bounds.height() / native.y).max(0.0);
+    Rect::from_center_size(bounds.center(), native * scale)
+}
+
 /// Etat d'un bouton pour une image.
 ///
 /// Les deux cas sont distincts : `maintenu` dit que le pointeur reste enfonce,
@@ -554,10 +561,11 @@ impl LcdPanel {
         let base = (largeur - 2.0 * marge).min(hauteur * 0.38).max(64.0);
         let cote = (base * habillage.ecran_taille.clamp(0.3, 2.0)).min(largeur * 0.98);
         let milieu = centre.y - hauteur * 0.04;
-        let ecran_rect = Rect::from_center_size(
+        let ecran_bounds = Rect::from_center_size(
             pos2(centre.x, milieu + hauteur * habillage.ecran_dy.clamp(-0.4, 0.4)),
             vec2(cote, cote),
         );
+        let ecran_rect = fit_lcd(ecran_bounds, display);
         // La fenetre transparente ne suit pas la dalle : elle a sa taille et sa
         // position propres, sans quoi agrandir l'ecran agrandirait son cadre.
         let cote_fenetre = (base * habillage.fenetre_taille.clamp(0.3, 2.2)).min(largeur * 1.1);
@@ -1067,5 +1075,28 @@ impl LcdPanel {
         peintre.rect_stroke(roue, arrondi, Stroke::new(1.5, ombre_col));
 
         commandes
+    }
+}
+
+
+#[cfg(test)]
+mod aspect_tests {
+    use super::*;
+
+    #[test]
+    fn my_lab_stays_landscape_in_square_and_rectangular_viewports() {
+        let display = DisplayController::for_my_lab();
+        for (bounds_size, expected) in [
+            (vec2(400.0, 400.0), vec2(400.0, 320.0)),
+            (vec2(640.0, 512.0), vec2(640.0, 512.0)),
+            (vec2(800.0, 320.0), vec2(400.0, 320.0)),
+        ] {
+            let bounds = Rect::from_min_size(pos2(20.0, 40.0), bounds_size);
+            let lcd = fit_lcd(bounds, &display);
+            assert_eq!(lcd.size(), expected);
+            assert_eq!(lcd.center(), bounds.center());
+        }
+        let square = Rect::from_min_size(Pos2::ZERO, vec2(320.0, 320.0));
+        assert_eq!(fit_lcd(square, &DisplayController::default()), square);
     }
 }

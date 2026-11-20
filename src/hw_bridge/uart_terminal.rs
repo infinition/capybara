@@ -38,6 +38,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 
 #[cfg(windows)]
 use std::ffi::c_void;
@@ -99,6 +100,8 @@ pub struct UartHostBridge {
     host_rx_stream: VecDeque<u8>,
     host_tx_stream: VecDeque<u8>,
     pending_to_host: VecDeque<u8>,
+    machine_listener: Option<TcpListener>,
+    machine_stream: Option<TcpStream>,
 
     #[cfg(not(target_arch = "wasm32"))]
     serial: Option<Box<dyn serialport::SerialPort>>,
@@ -139,6 +142,8 @@ impl Default for UartHostBridge {
             host_rx_stream: VecDeque::new(),
             host_tx_stream: VecDeque::new(),
             pending_to_host: VecDeque::new(),
+            machine_listener: None,
+            machine_stream: None,
             #[cfg(not(target_arch = "wasm32"))]
             serial: None,
             #[cfg(unix)]
@@ -160,6 +165,46 @@ impl Default for UartHostBridge {
 }
 
 impl UartHostBridge {
+    pub fn listen_for_machine(&mut self) -> io::Result<u16> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        listener.set_nonblocking(true)?;
+        let port = listener.local_addr()?.port();
+        self.disconnect();
+        self.last_error = None;
+        self.machine_listener = Some(listener);
+        Ok(port)
+    }
+
+    pub fn machine_listening_port(&self) -> Option<u16> {
+        Some(self.machine_listener.as_ref()?.local_addr().ok()?.port())
+    }
+
+    pub fn connect_to_machine(&mut self, port: u16) -> io::Result<()> {
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let stream = TcpStream::connect_timeout(&address, Duration::from_millis(100))?;
+        self.attach_machine(stream)
+    }
+
+    fn attach_machine(&mut self, stream: TcpStream) -> io::Result<()> {
+        stream.set_nonblocking(true)?;
+        stream.set_nodelay(true)?;
+        let peer = stream.peer_addr()?;
+        self.disconnect();
+        self.machine_stream = Some(stream);
+        self.port_name = format!("Capybara UART ({peer})");
+        self.is_connected = true;
+        self.last_error = None;
+        self.bytes_sent = 0;
+        self.bytes_received = 0;
+        self.debut_vers_tama.clear();
+        self.debut_vers_hote.clear();
+        Ok(())
+    }
+
+    pub fn machine_connected(&self) -> bool {
+        self.machine_stream.is_some()
+    }
+
     /// Create a local PTY. External native tools open the returned slave path;
     /// no separate null-modem pairing utility is required.
     pub fn start_virtual_port(&mut self) -> Result<String, String> {
@@ -217,6 +262,8 @@ impl UartHostBridge {
             host_rx_stream: VecDeque::new(),
             host_tx_stream: VecDeque::new(),
             pending_to_host: VecDeque::new(),
+            machine_listener: None,
+            machine_stream: None,
             #[cfg(not(target_arch = "wasm32"))]
             serial: None,
             #[cfg(unix)]
@@ -404,6 +451,8 @@ impl UartHostBridge {
 
     /// Ferme le port sans toucher aux donnees deja emises par le controleur.
     pub fn disconnect(&mut self) {
+        self.machine_stream = None;
+        self.machine_listener = None;
         #[cfg(unix)]
         { self.virtual_port = None; }
         #[cfg(not(target_arch = "wasm32"))]
@@ -473,6 +522,35 @@ impl UartHostBridge {
     /// Echange les donnees disponibles avec le port serie ouvert. La methode
     /// est bornee et peut etre appelee a chaque image de l'interface.
     pub fn poll_serial(&mut self, uart: &mut UartController) {
+        if let Some(listener) = &self.machine_listener {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    if let Err(error) = self.attach_machine(stream) {
+                        self.last_error = Some(error.to_string());
+                        self.disconnect();
+                    } else {
+                        uart.vider_la_ligne();
+                    }
+                }
+                Err(error) if attente_normale(&error) || error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    self.last_error = Some(error.to_string());
+                    self.disconnect();
+                }
+            }
+        }
+
+        if let Some(mut stream) = self.machine_stream.take() {
+            match self.sync_stream(uart, &mut stream, true) {
+                Ok(()) => self.machine_stream = Some(stream),
+                Err(error) => {
+                    self.last_error = Some(error.to_string());
+                    self.disconnect();
+                }
+            }
+            return;
+        }
+
         if !self.is_connected {
             return;
         }
@@ -529,7 +607,19 @@ impl UartHostBridge {
         uart: &mut UartController,
         stream: &mut S,
     ) -> io::Result<()> {
+        self.sync_stream(uart, stream, false)
+    }
+
+    fn sync_stream<S: Read + Write>(
+        &mut self,
+        uart: &mut UartController,
+        stream: &mut S,
+        eof_disconnects: bool,
+    ) -> io::Result<()> {
         self.pending_to_host.extend(uart.drain_hote());
+        if eof_disconnects && self.pending_to_host.len() > 256 * 1024 {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "Peer UART is not reading"));
+        }
         if !self.pending_to_host.is_empty() {
             let donnees = self.pending_to_host.make_contiguous();
             match stream.write(donnees) {
@@ -557,6 +647,7 @@ impl UartHostBridge {
                     }
                     uart.inject_rx_bytes(&buf[..n]);
                 }
+                Ok(_) if eof_disconnects => return Err(io::ErrorKind::UnexpectedEof.into()),
                 Ok(_) => break,
                 Err(e) if attente_normale(&e) => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -623,6 +714,43 @@ mod tests {
         assert_eq!(bridge.host_read(), vec![0x12, 0x34]);
         assert_eq!(bridge.bytes_sent, 2);
         assert_eq!(bridge.bytes_received, 32);
+    }
+
+    #[test]
+    fn machine_uart_exchanges_bytes_in_both_directions_and_detects_close() {
+        let mut left = UartHostBridge::new("left", 460_800);
+        let mut right = UartHostBridge::new("right", 460_800);
+        let mut left_uart = UartController::new();
+        let mut right_uart = UartController::new();
+        let port = left.listen_for_machine().unwrap();
+        right.connect_to_machine(port).unwrap();
+        left.poll_serial(&mut left_uart);
+        assert!(left.machine_connected());
+
+        left_uart.write_reg(0, 0x12);
+        right_uart.write_reg(0, 0x34);
+        left_uart.tick(40_000, 96_000_000);
+        right_uart.tick(40_000, 96_000_000);
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while left.bytes_received == 0 || right.bytes_received == 0 {
+            assert!(std::time::Instant::now() < deadline, "UART transfer timed out");
+            left.poll_serial(&mut left_uart);
+            right.poll_serial(&mut right_uart);
+            std::thread::yield_now();
+        }
+        left_uart.tick(40_000, 96_000_000);
+        right_uart.tick(40_000, 96_000_000);
+        assert_eq!(left_uart.read_reg(0), 0x34);
+        assert_eq!(right_uart.read_reg(0), 0x12);
+
+        left.disconnect();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while right.machine_connected() {
+            assert!(std::time::Instant::now() < deadline, "UART disconnect timed out");
+            right.poll_serial(&mut right_uart);
+            std::thread::yield_now();
+        }
+        assert!(!right.is_connected);
     }
 
     #[test]
