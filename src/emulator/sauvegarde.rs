@@ -271,7 +271,35 @@ impl Sauvegarde {
 /// logiciel a change de nom. Si le deplacement echoue, parce qu'un fichier est
 /// ouvert ou que les deux dossiers ne sont pas sur le meme volume, on continue
 /// sur l'ancien plutot que de repartir sur un dossier vide.
+static MACHINE_PROFILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Keep each additional machine's saves and preferences in its own directory.
+/// Hold the returned lock for the lifetime of the application.
+pub fn ouvrir_profil_machine(name: &str) -> std::io::Result<std::fs::File> {
+    if name.is_empty() || name.len() > 32
+        || !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
+            "Use 1–32 lowercase letters, digits or hyphens"));
+    }
+    // Prefix the directory to avoid reserved filenames on Windows.
+    let directory = calculer_le_dossier_de_donnees().join("machines").join(format!("machine-{name}"));
+    std::fs::create_dir_all(&directory)?;
+    let lock = std::fs::OpenOptions::new().read(true).write(true).create(true)
+        .truncate(false).open(directory.join("instance.lock"))?;
+    lock.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists, "This machine is already open"),
+        std::fs::TryLockError::Error(error) => error,
+    })?;
+    MACHINE_PROFILE.set(directory).map_err(|_| std::io::Error::other("Machine already selected"))?;
+    Ok(lock)
+}
+
 pub fn dossier_donnees() -> PathBuf {
+    if let Some(profile) = MACHINE_PROFILE.get() {
+        return profile.clone();
+    }
     static DOSSIER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     DOSSIER.get_or_init(calculer_le_dossier_de_donnees).clone()
 }
@@ -458,6 +486,7 @@ fn adopter_la_cle(source: &Path) {
 /// sont deplacees une fois, sans quoi une partie en cours serait perdue de vue
 /// au premier lancement de cette version ci.
 pub fn migrer_les_anciennes_donnees() {
+    if MACHINE_PROFILE.get().is_some() { return; }
     let Some(voisin) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
@@ -520,6 +549,10 @@ pub struct DernierePartie {
     /// Taille de la fenetre du mode jeu, en fraction de sa taille de base.
     #[serde(default = "un")]
     pub zoom_jeu: f32,
+    #[serde(default)]
+    pub screen_only: bool,
+    #[serde(default = "screen_scale_default")]
+    pub screen_scale: u8,
     /// Fenetre du mode jeu maintenue au dessus des autres.
     #[serde(default)]
     pub toujours_devant: bool,
@@ -549,6 +582,10 @@ pub struct DernierePartie {
 /// Couleur de transparence par defaut. Un magenta franc, qui n'apparait ni
 /// dans les coques ni dans l'ecran de la console : tout pixel de cette teinte
 /// devient un trou, autant en choisir une qu'on ne dessine jamais.
+fn screen_scale_default() -> u8 {
+    4
+}
+
 fn magenta() -> [u8; 3] {
     [255, 0, 255]
 }
@@ -580,6 +617,8 @@ impl Default for DernierePartie {
             hauteur: 1.0,
             coque: String::new(),
             zoom_jeu: 1.0,
+            screen_only: false,
+            screen_scale: screen_scale_default(),
             toujours_devant: false,
             touches: crate::touches::Touches::default(),
             souris: crate::touches::Souris::default(),

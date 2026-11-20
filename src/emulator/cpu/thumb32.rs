@@ -491,7 +491,14 @@ impl Thumb32 {
             // Mise a jour differee de la base, pour les formes indexees.
             let mut writeback: Option<(u8, u32)> = None;
 
-            let addr = if (w1 & 0x0080) != 0 {
+            let addr = if rn == 0xF && is_ldr {
+                // Literal loads use a signed 12-bit PC-relative offset. The
+                // negative form is not the register-offset addressing form.
+                let base = regs.pc & !3;
+                let offset = (w2 & 0x0FFF) as u32;
+                if w1 & 0x0080 != 0 { base.wrapping_add(offset) }
+                else { base.wrapping_sub(offset) }
+            } else if (w1 & 0x0080) != 0 {
                 // Forme T3 : offset immediat 12 bits, toujours positif, sans
                 // mise a jour de la base.
                 let imm12 = (w2 & 0x0FFF) as u32;

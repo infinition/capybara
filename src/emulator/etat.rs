@@ -23,6 +23,10 @@ pub struct Instantane {
     pub cycles: u64,
     pub pram: Vec<u8>,
     pub sram: Vec<u8>,
+    /// Shared mailbox RAM contains boot-loader pointers and homebrew state.
+    /// Older snapshots omitted it; keep freshly loaded boot info in that case.
+    #[serde(default)]
+    pub mailbox: Vec<u8>,
     /// Pages de flash modifiees depuis le chargement, avec leur contenu.
     pub pages_flash: BTreeMap<usize, Vec<u8>>,
     pub regs: Registers,
@@ -55,6 +59,7 @@ impl Machine {
             cycles: self.cpu.cycles,
             pram: self.bus.pram.data.clone(),
             sram: self.bus.sram.data.clone(),
+            mailbox: self.bus.sram.mailbox.clone(),
             pages_flash,
             regs: self.cpu.regs.clone(),
             nvic: self.cpu.nvic.clone(),
@@ -111,6 +116,9 @@ impl Machine {
 
         self.bus.pram.data.clone_from(&etat.pram);
         self.bus.sram.data.clone_from(&etat.sram);
+        if etat.mailbox.len() == self.bus.sram.mailbox.len() {
+            self.bus.sram.mailbox.clone_from(&etat.mailbox);
+        }
         self.cpu.regs = etat.regs.clone();
         self.cpu.nvic = etat.nvic.clone();
         self.cpu.cycles = etat.cycles;

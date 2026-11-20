@@ -110,7 +110,16 @@ impl FirmwareLoader {
 
         report.entry_sp = bus.pram.read_u32(0);
         report.entry_pc = bus.pram.read_u32(4);
-        report.bootable = report.entry_pc & 1 == 1;
+        let stack = report.entry_sp;
+        let reset = report.entry_pc & !1;
+        report.bootable = stack & 3 == 0
+            && ((0x1800_0000..=0x1804_0000).contains(&stack)
+                || (0x2000_0000..=0x2004_0000).contains(&stack))
+            && report.entry_pc & 1 != 0 && reset >= 8
+            && (reset as usize) < end - src;
+        if !report.bootable {
+            bus.pram.clear();
+        }
 
         Ok(report)
     }

@@ -48,6 +48,8 @@ impl Cpu {
 
     pub fn reset(&mut self, bus: &mut MemoryBus, periph: &mut Peripherals) {
         self.regs = Registers::default();
+        self.nvic = Nvic::default();
+        periph.snsys.clear_power_down();
         self.cycles = 0;
         self.is_halted = false;
         self.cycles_en_attente = 0;
@@ -62,6 +64,18 @@ impl Cpu {
     }
 
     pub fn step(&mut self, bus: &mut MemoryBus, periph: &mut Peripherals) -> StepResult {
+        if self.nvic.reset_requested {
+            // Paramix replaces PRAM before requesting a system reset. Boot the
+            // vectors now in RAM, without reloading the original flash image.
+            // Keep the host cycle timeline monotonic across guest resets.
+            let cycles = self.cycles;
+            self.nvic = Nvic::default();
+            self.reset(bus, periph);
+            self.cycles = cycles + 1;
+            periph.uart.reinitialiser();
+            periph.timers.buzzer_regs = [0; 16];
+            return StepResult::Ok(1);
+        }
         if self.is_halted {
             return StepResult::Halt;
         }
@@ -135,7 +149,8 @@ impl Cpu {
         // Bloc IT : l'instruction courante est conditionnee par ITSTATE[7:4].
         // On fait avancer l'etat avant d'executer, car une instruction IT ne peut
         // pas elle-meme se trouver dans un bloc.
-        if (self.regs.itstate & 0x0F) != 0 {
+        let in_it_block = (self.regs.itstate & 0x0F) != 0;
+        if in_it_block {
             let cond = ((self.regs.itstate >> 4) & 0xF) as u16;
             let taken = Thumb16::eval_condition(cond, &self.regs);
             self.advance_itstate();
@@ -145,30 +160,25 @@ impl Cpu {
             }
         }
 
+        let flags = self.regs.xpsr & 0xF000_0000;
         let result = if is_32 {
             Thumb32::execute(w1, w2, &mut self.regs, bus, periph, &mut self.nvic)
         } else {
             Thumb16::execute(w1, &mut self.regs, bus, periph, &mut self.nvic)
         };
 
+        // Narrow arithmetic/logical instructions have implicit SetFlags =
+        // !InITBlock(). CMP, CMN and TST still update flags explicitly.
+        let implicit_flags = w1 < 0x2000
+            || ((0x2000..0x4000).contains(&w1) && w1 & 0xF800 != 0x2800)
+            || (w1 & 0xFC00 == 0x4000 && !matches!((w1 >> 6) & 15, 8 | 10 | 11));
+        if in_it_block && !is_32 && implicit_flags {
+            self.regs.xpsr = (self.regs.xpsr & !0xF000_0000) | flags;
+        }
+
         match result {
             StepResult::Ok(c) => {
-                self.cycles += c as u64;
-                // Le bus realise la copie du controleur de transferts mais ne
-                // voit pas le NVIC : la fin de transfert se signale ici. Elle
-                // reste hors du regroupement, un simple drapeau ne coutant rien
-                // et l'ecran attendant cette interruption au plus tot.
-                if periph.dma.irq_a_lever {
-                    periph.dma.irq_a_lever = false;
-                    self.nvic
-                        .request_irq(crate::emulator::peripherals::dma::IRQ);
-                }
-                self.cycles_en_attente += c as u32;
-                if self.cycles_en_attente >= Self::GRAIN_PERIPHERIQUES {
-                    let ecoules = self.cycles_en_attente;
-                    self.cycles_en_attente = 0;
-                    self.entretenir_peripheriques(ecoules, periph);
-                }
+                self.finish_execution(c as u32, periph);
                 StepResult::Ok(c)
             }
             StepResult::Breakpoint => StepResult::Breakpoint,
@@ -191,6 +201,21 @@ impl Cpu {
     /// Deux cent cinquante six cycles valent moins de trois microsecondes a
     /// 96 MHz, cent fois plus fin que la plus courte echeance du firmware.
     const GRAIN_PERIPHERIQUES: u32 = 256;
+
+    #[inline(always)]
+    pub(crate) fn finish_execution(&mut self, cycles: u32, periph: &mut Peripherals) {
+        self.cycles += u64::from(cycles);
+        if periph.dma.irq_a_lever {
+            periph.dma.irq_a_lever = false;
+            self.nvic.request_irq(crate::emulator::peripherals::dma::IRQ);
+        }
+        self.cycles_en_attente += cycles;
+        if self.cycles_en_attente >= Self::GRAIN_PERIPHERIQUES {
+            let elapsed = self.cycles_en_attente;
+            self.cycles_en_attente = 0;
+            self.entretenir_peripheriques(elapsed, periph);
+        }
+    }
 
     /// Fait avancer tout ce qui vit au rythme des cycles.
     fn entretenir_peripheriques(&mut self, ecoules: u32, periph: &mut Peripherals) {

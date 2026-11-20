@@ -3,6 +3,7 @@ pub mod cpu;
 pub mod edition;
 pub mod etat;
 pub mod loader;
+pub mod my_lab_sd;
 pub mod reprises;
 pub mod mmu;
 pub mod sauvegarde;
@@ -50,6 +51,7 @@ pub struct Machine {
     pub cpu: Cpu,
     pub bus: MemoryBus,
     pub periph: Peripherals,
+    pub my_lab_card: Option<my_lab_sd::Card>,
     pub breakpoints: HashSet<u32>,
     pub is_running: bool,
     pub instructions_per_frame: u32,
@@ -119,6 +121,7 @@ impl Machine {
             cpu,
             bus,
             periph,
+            my_lab_card: None,
             breakpoints: HashSet::new(),
             // Sans firmware charge, rien ne tourne.
             is_running: false,
@@ -206,11 +209,66 @@ impl Machine {
         self.last_stop = None;
     }
 
+    /// The supported My Lab bootloader calls a set of block-device callbacks.
+    /// Supply a card at that interface so FatFs and update parsing remain native.
+    fn step_my_lab_card(&mut self) -> Option<StepResult> {
+        let card = self.my_lab_card.as_mut()?;
+        let pc = self.cpu.regs.pc;
+        if !self.periph.display.my_lab || !self.periph.xip.is_enabled()
+            || self.periph.xip.base != 0x6001_1000
+        {
+            return None;
+        }
+        let signature: &[u8] = match pc {
+            0x1000_9110 => &[0x80, 0xb5, 0x84, 0xb0, 0x03, 0x90, 0x02, 0x91, 0x03, 0x98, 0x01, 0x28],
+            0x1000_914c => &[0x00, 0x20, 0x70, 0x47, 0x80, 0xb5, 0x82, 0xb0],
+            0x1000_9150 => &[0x80, 0xb5, 0x82, 0xb0, 0x03, 0xf0, 0x94, 0xff, 0x20, 0xb9],
+            0x1000_9178 => &[0x80, 0xb5, 0x84, 0xb0, 0x03, 0x90, 0x02, 0x91, 0x01, 0x92],
+            0x1000_9194 => &[0x80, 0xb5, 0x84, 0xb0, 0x03, 0x90, 0x02, 0x91, 0x01, 0x92],
+            _ => return None,
+        };
+        let start = self.periph.xip.flash_offset(pc - 0x1000_0000);
+        if self.bus.flash.data.get(start..start + signature.len()) != Some(signature) {
+            return None;
+        }
+        let regs = &mut self.cpu.regs;
+        let Some(return_pc) = (regs.lr & 1 != 0).then_some(regs.lr & !1) else { return None };
+        let r0 = regs.get_reg(0);
+        let r1 = regs.get_reg(1);
+        let r2 = regs.get_reg(2);
+        let offset = r0.checked_sub(mmu::map::SRAM_BASE).map(|n| n as usize);
+        let status = match pc {
+            0x1000_9110 if r0 == 1 => {
+                let target = r1.checked_sub(mmu::map::SRAM_BASE).map(|n| n as usize);
+                if let Some(out) = target.and_then(|i| self.bus.sram.data.get_mut(i..i + 8)) {
+                    out.copy_from_slice(&u64::from(card.sector_count()).to_le_bytes());
+                    0
+                } else {
+                    255
+                }
+            }
+            0x1000_914c | 0x1000_9150 => 0,
+            0x1000_9178 => {
+                let length = (r2 as usize).checked_mul(512);
+                let out = offset.zip(length).and_then(|(i, n)| self.bus.sram.data.get_mut(i..i.saturating_add(n)));
+                if out.is_some_and(|out| card.read(r1, out)) { 0 } else { 255 }
+            }
+            _ => 255, // Read-only card.
+        };
+        regs.set_reg(0, status);
+        regs.pc = return_pc;
+        self.cpu.finish_execution(12, &mut self.periph);
+        Some(StepResult::Ok(12))
+    }
+
     pub fn step(&mut self) -> StepResult {
         // Meme raison que dans run_frame : le drapeau est teste ici, l'appel
         // n'a lieu que le jour ou il y a vraiment un reveil a appliquer.
         if self.periph.snsys.reveil_demande && self.reveil_materiel() {
             return StepResult::Ok(1);
+        }
+        if let Some(result) = self.step_my_lab_card() {
+            return result;
         }
         self.cpu.step(&mut self.bus, &mut self.periph)
     }
@@ -330,6 +388,10 @@ impl Machine {
             // materiel arrive une fois par mise en veille, l'appel de fonction
             // arrivait a chaque instruction.
             if self.periph.snsys.reveil_demande && self.reveil_materiel() {
+                executed += 1;
+                continue;
+            }
+            if self.my_lab_card.is_some() && self.step_my_lab_card().is_some() {
                 executed += 1;
                 continue;
             }
@@ -551,7 +613,25 @@ impl Machine {
 
     /// Vrai quand le firmware est en train de jouer un son.
     pub fn son_en_cours(&self) -> bool {
+        if let Some(note) = self.note_programme() { return note > 0.0; }
         self.lire_sram_u8(self.adresse_son_en_cours()) != 0
+    }
+
+    /// Use the programmed PWM whenever the guest has configured its period.
+    /// Factory voice addresses vary between ROM revisions; the hardware does
+    /// not. A configured but disabled timer means silence, even if stale voice
+    /// data remains in SRAM. Older ROMs without PWM retain the voice fallback.
+    pub fn note_programme(&self) -> Option<f32> {
+        let custom_vectors = self.last_report.as_ref().is_some_and(|report| {
+            self.bus.pram.read_u32(0) != report.entry_sp
+                || self.bus.pram.read_u32(4) != report.entry_pc
+        });
+        let regs = &self.periph.timers.buzzer_regs;
+        let pwm_configured = regs[0x24 / 4] > 0
+            && regs[0x18 / 4] > 0 && regs[0x18 / 4] < regs[0x24 / 4];
+        if pwm_configured || custom_vectors || self.bus.pram.read_u32(0x140) == 0x444C4546 {
+            Some(self.periph.timers.buzzer_frequency())
+        } else { None }
     }
 
     /// Cherche le tableau des voix en memoire vive et retient ses adresses.
@@ -596,6 +676,7 @@ impl Machine {
     /// de l'interface, bien trop grossiere : une melodie dure cent cinquante
     /// millisecondes et l'interface ne rend que soixante images par seconde.
     pub fn note_courante(&self) -> f32 {
+        if let Some(note) = self.note_programme() { return note; }
         if !self.son_en_cours() {
             return 0.0;
         }
@@ -623,6 +704,9 @@ impl Machine {
     /// rend donc le vrai son, sans avoir a modeliser le peripherique de sortie,
     /// que le firmware n'atteint pas dans le modele actuel.
     pub fn voix_audio(&self) -> Vec<(f32, f32)> {
+        if let Some(note) = self.note_programme() {
+            return if note > 0.0 { vec![(note, 1.0)] } else { Vec::new() };
+        }
         if !self.son_en_cours() {
             return Vec::new();
         }
@@ -676,6 +760,19 @@ impl Machine {
     pub const ENCODEUR_1: u32 = 0x20;
     pub const ENCODEUR_2: u32 = 0x21;
 
+    /// Translate the frontend's Paradise button IDs for the My Lab board.
+    fn input_pin(&self, id: u32) -> u32 {
+        if !self.periph.display.my_lab {
+            return id;
+        }
+        match id {
+            Self::BOUTON_A => 0x1f,
+            Self::BOUTON_B => 0x1e,
+            Self::BOUTON_C => 0x1d,
+            _ => id,
+        }
+    }
+
     /// Port correspondant a un identifiant de broche, s'il est modelise.
     fn port_de(&mut self, id: u32) -> Option<&mut crate::emulator::peripherals::GpioPort> {
         match id >> 4 {
@@ -686,20 +783,12 @@ impl Machine {
         }
     }
 
-    /// Boucle de veille profonde du firmware, en PRAM.
-    ///
-    /// Elle demande la mise hors tension du coeur par le bit 0 de
-    /// `0x45000300`, execute un `WFI`, puis se rebranche sur elle meme sans
-    /// aucune condition de sortie : le saut de `0x00002432` vers `0x000023D0`
-    /// est inconditionnel, et les deux seules interruptions restees autorisees,
-    /// 2 et 3, ont des gestionnaires qui reviennent dans la boucle. Aucune
-    /// sortie logicielle n'existe donc, et le reveil ne peut venir que du
-    /// materiel, qui remet le coeur a zero. C'est ce que reproduit `appuyer`.
-    pub const VEILLE_PROFONDE: std::ops::Range<u32> = 0x0000_23D0..0x0000_2434;
-
-    /// Vrai quand le coeur est gare dans cette boucle.
+    /// Sleep is requested by hardware registers, never by an address range:
+    /// the old Water sleep-loop addresses contain ordinary GPIO code in
+    /// Tropical, where a held key otherwise reset the CPU during every boot.
     pub fn en_veille_profonde(&self) -> bool {
-        self.periph.pmu.deep_sleep_active || Self::VEILLE_PROFONDE.contains(&self.cpu.regs.pc)
+        self.periph.pmu.deep_sleep_active
+            || self.periph.snsys.power_down_active()
     }
 
     /// Reveille le coeur par une entree utilisateur et indique si un reveil a
@@ -726,6 +815,7 @@ impl Machine {
     /// que l'appui vienne du clavier, de la souris, de l'ecran ou du
     /// navigateur, la broche dit la verite.
     pub fn broche_basse(&self, id: u32) -> bool {
+        let id = self.input_pin(id);
         let masque = 1u32 << (id & 0xF);
         let port = match id >> 4 {
             0 => &self.periph.port0,
@@ -747,6 +837,7 @@ impl Machine {
     /// mais la sauvegarde est en flash et l'horloge continue de tourner, donc
     /// la partie reprend la ou elle en etait.
     pub fn appuyer(&mut self, id: u32) {
+        let id = self.input_pin(id);
         if self.reveiller_par_broche() {
             return;
         }
@@ -758,6 +849,7 @@ impl Machine {
 
     /// Relache une broche, qui remonte par sa resistance de tirage.
     pub fn relacher(&mut self, id: u32) {
+        let id = self.input_pin(id);
         let broche = id & 0xF;
         if let Some(port) = self.port_de(id) {
             port.relacher(broche);
@@ -789,7 +881,19 @@ impl Machine {
         self.voix.clear();
         // Ne pas laisser l'image de l'edition precedente visible pendant le
         // demarrage de la nouvelle.
-        self.periph.display = crate::emulator::peripherals::DisplayController::default();
+        use crate::emulator::peripherals::DisplayController;
+        // Identify the My Lab firmware by the entry of its XIP AES driver.
+        // This region is in cleartext and survives filename and save changes.
+        const MY_LAB_DRIVER: &[u8] = &[0x81, 0xb0, 0x49, 0xf2, 0x04, 0x00, 0xc4, 0xf2,
+            0x02, 0x00, 0x00, 0x68, 0x18, 0xb1, 0xff, 0xe7];
+        let my_lab = self.bus.flash.data.get(0x11000..0x11000 + MY_LAB_DRIVER.len()) == Some(MY_LAB_DRIVER);
+        use crate::emulator::peripherals::gpio_port::{TE_PIN, TE_DEMI_PERIODE};
+        self.periph.port1.periodique = Some((if my_lab { 12 } else { TE_PIN }, TE_DEMI_PERIODE));
+        self.periph.display = if my_lab {
+            DisplayController::for_my_lab()
+        } else {
+            DisplayController::default()
+        };
         self.reset();
         self.is_running = report.bootable;
         // L'afficheur n'est plus recopie depuis la SRAM : il recoit les trames

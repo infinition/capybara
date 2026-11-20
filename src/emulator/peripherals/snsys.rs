@@ -15,8 +15,9 @@ pub const CYCLES_PAR_SECONDE: u64 = 96_000_000;
 /// read-modify-write sur l'offset 0x00 retrouve l'etat precedent.
 ///
 /// La page porte aussi le compteur de temps de la console, en `0x304`. C'est
-/// un compteur de secondes libre : le firmware ne l'ecrit jamais, il lui ajoute
-/// un decalage garde en memoire pour obtenir la date affichee. Tant qu'il reste
+/// un compteur de secondes libre : le firmware lui ajoute un decalage garde
+/// en memoire pour obtenir la date affichee. Le reglage de date desactive puis
+/// reactive le RTC, remettant le compteur a zero. Tant qu'il reste
 /// fige, le calendrier du jeu ne bouge pas d'une seconde, l'oeuf n'eclot pas et
 /// les jauges ne descendent pas.
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
@@ -33,12 +34,31 @@ pub struct SnSysRegisters {
     /// materiel, qui sur la puce remet le coeur a zero.
     #[serde(default)]
     pub reveil_demande: bool,
+    #[serde(default)]
+    pub power_down_requested: bool,
 }
 
 impl SnSysRegisters {
+    pub fn power_down_active(&self) -> bool {
+        // The register is also present in snapshots made before the explicit
+        // flag existed. It is the hardware source of truth after migration.
+        self.power_down_requested || self.read_reg(0x300) & 1 != 0
+    }
+
+    pub fn clear_power_down(&mut self) {
+        self.power_down_requested = false;
+        if let Some(value) = self.regs.get_mut(&0x300) {
+            *value &= !1;
+        }
+    }
+
     /// Compteur de secondes de la console, lu par la couche date du firmware en
     /// `0x00003754`, qui n'est qu'un `ldr r0, [0x45000304]`.
     pub const COMPTEUR_SECONDES: u32 = 0x304;
+    /// ISO RTC control: bit 7 enables the counter. Disabling it resets both
+    /// whole seconds and the fractional divider before a new date is applied.
+    pub const CONTROLE_RTC: u32 = 0x200;
+    pub const RTC_ACTIF: u32 = 1 << 7;
 
     pub fn read_reg(&self, offset: u32) -> u32 {
         match offset {
@@ -65,6 +85,13 @@ impl SnSysRegisters {
     }
 
     pub fn write_reg(&mut self, offset: u32, val: u32) {
+        if offset == Self::CONTROLE_RTC && val & Self::RTC_ACTIF == 0 {
+            self.secondes = 0;
+            self.reste = 0;
+        }
+        if offset == 0x300 {
+            self.power_down_requested = val & 1 != 0;
+        }
         // 0x04 recoit la valeur magique de deblocage avant la configuration.
         if offset == 0x04 && val == 0xA55A_0000 {
             self.pll_locked = true;
@@ -100,6 +127,11 @@ impl SnSysRegisters {
     /// Sans elle, la console programme son reveil en `0x00002196` puis s'endort
     /// pour toujours, et le personnage ne vieillit plus.
     pub fn tick(&mut self, cycles: u32) {
+        // Keep compatibility with old states that never recorded ISO_CTRL;
+        // once configured, its enable bit governs the counter.
+        if self.regs.get(&Self::CONTROLE_RTC).is_some_and(|v| v & Self::RTC_ACTIF == 0) {
+            return;
+        }
         let avant = self.secondes;
         self.reste += cycles as u64;
         while self.reste >= CYCLES_PAR_SECONDE {

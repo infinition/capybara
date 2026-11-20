@@ -745,6 +745,8 @@ impl MemoryBus {
         let page = addr & !0xFFF;
         let off = addr & 0xFFF;
         match page {
+            0x4002_9000 => p.crypto.read_reg(off),
+            0x4000_7000 if off < 0x40 => p.timers.read_buzzer_reg(off),
             periph::CHECKSUM => p.crc.read_reg(off),
             // 0x4000E000 et 0x40007000 restent hors modele, et 0x4000A000
             // (UART0) aussi. La premiere porte l'interface serie de la dalle :
@@ -799,6 +801,32 @@ impl MemoryBus {
         let page = addr & !0xFFF;
         let off = addr & 0xFFF;
         match page {
+            0x4002_9000 => {
+                if let Some((source, destination, length, mut key)) = p.crypto.write_reg(off, val) {
+                    let offset = |addr: u32| addr.checked_sub(map::SRAM_BASE).map(|n| n as usize);
+                    if let (Some(src), Some(dst)) = (offset(source), offset(destination)) {
+                        let length = length as usize;
+                        if length % 16 == 0 && src.saturating_add(length) <= self.sram.data.len()
+                            && dst.saturating_add(length) <= self.sram.data.len()
+                        {
+                            key.reverse();
+                            let aes = crate::emulator::aes::Aes::new(&key);
+                            for i in (0..length).step_by(16) {
+                                let mut block: [u8; 16] = self.sram.data[src+i..src+i+16].try_into().unwrap();
+                                block.reverse();
+                                let mut result = aes.encrypt_block(&block);
+                                result.reverse();
+                                self.sram.data[dst+i..dst+i+16].copy_from_slice(&result);
+                            }
+                        }
+                    }
+                }
+            }
+            0x4000_7000 if off < 0x40 => p.timers.write_buzzer_reg(off, val),
+            periph::SPI0 if off == 0x1C => {
+                let data = p.port0.read_reg(0) & (1 << 5) != 0;
+                p.display.write_panel_byte(data, val as u8);
+            }
             periph::CHECKSUM => {
                 if let Some(c) = p.crc.write_reg(off, val) {
                     self.executer_calcul(c, p);

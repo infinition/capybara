@@ -2,6 +2,7 @@
 
 pub mod flash_map;
 pub mod uart_terminal;
+pub mod virtual_uart;
 
 pub use flash_map::{FlashInspector, FlashSectionInfo};
 pub use uart_terminal::UartBridge;

@@ -58,9 +58,33 @@ impl ConsolePanel {
                     bridge.debut_vers_hote.clear();
                     let _ = bridge.connect(&port);
                 }
+
+                #[cfg(unix)]
+                if ui.add_enabled(!bridge.is_connected, egui::Button::new(i18n.choisir(
+                    "Creer UART virtuel", "Create virtual UART",
+                ))).clicked() {
+                    uart.vider_la_ligne();
+                    let _ = bridge.start_virtual_port();
+                }
             });
 
-            let (etat, couleur) = if bridge.is_connected {
+            if let Some(path) = bridge.virtual_port_name() {
+                let path = path.to_owned();
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&path).monospace());
+                    if ui.button(i18n.choisir("Copier le chemin", "Copy path")).clicked() {
+                        ui.output_mut(|output| output.copied_text = path.clone());
+                    }
+                });
+                ui.label(RichText::new(i18n.choisir(
+                    "Ouvrir ce chemin dans un outil serie natif. Les navigateurs peuvent exiger un pilote serie virtuel pour afficher ce port.",
+                    "Open this path in a native serial tool. Browser Web Serial may require an OS virtual serial driver to list this port.",
+                )).small().color(Color32::GRAY));
+            }
+
+            let (etat, couleur) = if bridge.virtual_port_name().is_some() {
+                (i18n.choisir("UART virtuel actif, 8N1", "Virtual UART active, 8N1"), Color32::from_rgb(120, 220, 140))
+            } else if bridge.is_connected {
                 (i18n.choisir("Connecte, 460800 bauds, 8N1", "Connected, 460800 baud, 8N1"), Color32::from_rgb(120, 220, 140))
             } else {
                 (i18n.choisir("Deconnecte", "Disconnected"), Color32::GRAY)
@@ -145,7 +169,7 @@ impl ConsolePanel {
                 );
             }
             #[cfg(not(target_arch = "wasm32"))]
-            if bridge.is_connected {
+            if bridge.is_connected && bridge.virtual_port_name().is_none() {
                 ui.label(
                     RichText::new(format!(
                         "{} : {}",
@@ -204,7 +228,7 @@ impl ConsolePanel {
             if let Some(message) = &bridge.last_error {
                 ui.label(RichText::new(message).small().color(Color32::LIGHT_RED));
             }
-            ui.label(
+            if bridge.virtual_port_name().is_none() { ui.label(
                 RichText::new(
                     i18n.choisir(
                         "Utiliser une paire de ports serie virtuels : ce programme ouvre un cote, l'outil de transfert ouvre l'autre.",
@@ -213,7 +237,7 @@ impl ConsolePanel {
                 )
                 .small()
                 .color(Color32::GRAY),
-            );
+            ); }
         });
 
         ui.separator();

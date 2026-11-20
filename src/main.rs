@@ -2,6 +2,7 @@
 
 mod app;
 mod audio;
+mod capture;
 mod demarrage;
 mod emulator;
 mod gui;
@@ -29,10 +30,30 @@ pub fn icone() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result<()> {
+    let profile = std::env::args().skip(1).find_map(|arg| {
+        arg.strip_prefix("--machine=").map(str::to_owned)
+    });
+    let _profile_lock = if let Some(name) = &profile {
+        match emulator::sauvegarde::ouvrir_profil_machine(name) {
+            Ok(lock) => Some(lock),
+            Err(error) => {
+                rfd::MessageDialog::new().set_title("Capybara")
+                    .set_description(format!("Could not open machine {name}: {error}"))
+                    .set_level(rfd::MessageLevel::Error).show();
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+    let title = profile.as_ref().map_or_else(|| "Capybara".to_owned(), |name| format!("Capybara · {name}"));
     let mut fenetre = egui::ViewportBuilder::default()
         .with_inner_size([560.0, 600.0])
         .with_min_inner_size([300.0, 380.0])
-        .with_title("Capybara")
+        .with_title(title)
+        .with_close_button(true)
+        .with_minimize_button(true)
+        .with_maximize_button(true)
         // La transparence se demande a la creation : sur la plupart des
         // systemes elle ne s'allume pas apres coup. Elle ne se voit qu'en
         // mode jeu, ou le fond n'est pas peint.
@@ -76,6 +97,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Capybara",
         native_options,
-        Box::new(|cc| Ok(Box::new(TamagotchiApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(TamagotchiApp::new_for_machine(cc, profile)))),
     )
 }

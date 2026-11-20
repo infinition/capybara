@@ -8,6 +8,10 @@ pub struct Nvic {
     pub syst_rvr: u32,  // SysTick Reload Value
     pub syst_cvr: u32,  // SysTick Current Value
     pub vtor: u32,      // Vector Table Offset Register
+    #[serde(default)]
+    pub aircr_prigroup: u32,
+    #[serde(default)]
+    pub reset_requested: bool,
     /// SysTick est l'exception 15, une exception systeme. Elle ne passe pas par
     /// les registres ISER du NVIC, qui ne gouvernent que les IRQ externes : son
     /// seul interrupteur est le bit TICKINT de SYST_CSR.
@@ -33,6 +37,8 @@ impl Default for Nvic {
             syst_rvr: 0,
             syst_cvr: 0,
             vtor: 0x0000_0000,
+            aircr_prigroup: 0,
+            reset_requested: false,
             systick_pending: false,
             en_attente: true,
         }
@@ -46,6 +52,7 @@ impl Nvic {
             0xE000_E014 => self.syst_rvr,
             0xE000_E018 => self.syst_cvr,
             0xE000_ED08 => self.vtor,
+            0xE000_ED0C => 0xFA05_0000 | self.aircr_prigroup,
             0xE000_E100..=0xE000_E11C => {
                 let idx = ((addr - 0xE000_E100) / 4) as usize;
                 self.iser[idx]
@@ -65,6 +72,13 @@ impl Nvic {
             0xE000_E014 => self.syst_rvr = val & 0x00FF_FFFF,
             0xE000_E018 => self.syst_cvr = 0, // Write clears CVR
             0xE000_ED08 => self.vtor = val & 0xFFFF_FF80,
+            0xE000_ED0C => {
+                // AIRCR writes require VECTKEY; reads return VECTKEYSTAT.
+                if val >> 16 == 0x05FA {
+                    self.aircr_prigroup = val & 0x700;
+                    self.reset_requested |= val & 4 != 0;
+                }
+            }
             0xE000_E100..=0xE000_E11C => {
                 let idx = ((addr - 0xE000_E100) / 4) as usize;
                 self.iser[idx] |= val;
